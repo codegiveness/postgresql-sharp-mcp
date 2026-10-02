@@ -82,7 +82,7 @@ A successful local package installation does not establish registry publication.
 
 ## Badges and recognition
 
-README workflow badges link to their actual workflows; Scorecard links to published findings; .NET names the implementation target; the security-policy badge links to the reporting policy. None guarantees a vulnerability-free server. Registry-version badges are appropriate only after the corresponding registry package exists.
+README workflow badges link to their actual workflows; Scorecard links to published findings; Best Practices displays the project's saved owner self-assessment, including its in-progress state; .NET names the implementation target; the security-policy badge links to the reporting policy. Local answer proposals do not update the hosted badge until an authorized owner reviews and saves them. None guarantees a vulnerability-free server. Registry-version badges are appropriate only after the corresponding registry package exists.
 
 GitHub profile Achievements are separate from repository status badges. Useful issues, coherent PRs, substantive reviews and helpful answers may be relevant under GitHub's current rules, but configuration or activity counts do not guarantee an award. See [contribution guidance](../CONTRIBUTING.md#github-profile-recognition); do not manufacture activity.
 
