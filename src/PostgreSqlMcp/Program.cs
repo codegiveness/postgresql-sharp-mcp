@@ -10,8 +10,10 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
 {
     Console.WriteLine("""
         postgresql-sharp-mcp — database-agnostic PostgreSQL MCP over stdio
+        Recommended: inherit POSTGRES_CONNECTION_STRING from a prepared shell or secret manager.
+        No targets JSON file is required for a single PostgreSQL server.
         --targets-file PATH      JSON object: connection profile -> Npgsql seed connection
-        --connection-string STR  Server credentials (POSTGRES_CONNECTION_STRING overrides CLI)
+        --connection-string STR  Optional CLI value; prefer environment input to avoid exposed secret arguments
         --databases JSON         Optional explicit database allowlist (JSON string array)
         --access-mode MODE       unrestricted (default) or restricted
         --query-timeout SECONDS  1..600 (default 30)
@@ -20,6 +22,7 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
         --version                Print executable version
         Environment: POSTGRES_CONNECTION_STRING, POSTGRES_TARGETS or POSTGRES_TARGETS_FILE.
         POSTGRES_DATABASES optionally limits connection-string mode. Targets JSON wins over file.
+        Connection-string environment and targets JSON/file are mutually exclusive; unset stale profile settings.
         Discover accessible databases with list_databases; select a physical name per call.
         Optional tool target selects a profile; default is primary or the first ordinal alias.
         No USE statement, shared current database, or per-database file editing is required.

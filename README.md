@@ -15,33 +15,33 @@
 
 A PostgreSQL MCP server built with C#/.NET 10 and Npgsql. One stdio server exposes nine tools for SQL, schema discovery, query plans, index analysis and database health. Configure one connection profile, discover accessible PostgreSQL databases live, and select a physical database on each call without adding an alias for every tenant. This is PostgreSQL-only, not support for other database engines.
 
-**Access mode defaults to unrestricted; SQL calls still default to `read_only=true`.** Writes require an explicit `read_only=false` on `execute_sql` and PostgreSQL permission. Opt into `restricted` mode to refuse those write requests. Use least-privileged PostgreSQL roles and keep credentials in a protected configuration file, not tool arguments. Read-only transactions are not a sandbox for privileged functions or external side effects. See [SECURITY.md](SECURITY.md) for the trust boundaries.
+**Access mode defaults to unrestricted; SQL calls still default to `read_only=true`.** Writes require an explicit `read_only=false` on `execute_sql` and PostgreSQL permission. Opt into `restricted` mode to refuse those write requests. Use least-privileged PostgreSQL roles and keep credentials in the prepared process environment or an optional protected configuration file, not tool arguments. Read-only transactions are not a sandbox for privileged functions or external side effects. See [SECURITY.md](SECURITY.md) for the trust boundaries.
 
 The server, npm installation helper, packaging, verification and release automation are C#/.NET. No maintained JavaScript, Python or Bash implementation is required. npm itself requires Node.js for installation; the installed server runs directly as a .NET executable, without a Node process. Workflow badges and Scorecard report checks and practices, not certifications or profile achievements. Best Practices shows the saved owner self-assessment, which may still be in progress. See [Security posture](docs/security-posture.md) for supply-chain evidence and limits.
 
 ## Quick start
 
-**Version boundary:** automatic discovery and the unrestricted default described below require **0.3.0 or newer**. These changes are currently unreleased; the published 0.2.0 executable still uses configured database aliases and a restricted default. Until a 0.3.0 release is published, use a [source build from this revision](CONTRIBUTING.md#build-from-source) or a locally built and verified package. Changing the targets file does not upgrade an old executable.
+**Version boundary:** automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets the **0.3.1 patch follow-on**, which makes setup environment-first; it is not another discovery/minor-version boundary. These changes are currently unreleased; the published 0.2.0 executable still uses configured database aliases and a restricted default. For this workflow now, use a [source build from this revision](CONTRIBUTING.md#build-from-source) or a locally built and verified 0.3.1 package. Neither changing configuration nor these instructions establishes package publication or upgrades an old executable.
 
-**Use the release archive for your first setup.** It includes the .NET runtime: no .NET SDK, npm, Node.js or Docker installation is needed for this route. You still need an existing PostgreSQL database and an MCP client. This app does not create a database or automatically edit your client's configuration.
+**When a compatible release is available, the release archive is the simplest first install.** It includes the .NET runtime: no .NET SDK, npm, Node.js or Docker installation is needed for that route. You still need an existing PostgreSQL database and an MCP client. This app does not create a database or automatically edit your client's configuration.
 
-You will download the app and create **two different JSON files**:
+For one PostgreSQL server, prepare a session environment and register **one nonsecret MCP configuration file**. No `targets.json` is required:
 
 | Item | Purpose | Where it goes |
 |---|---|---|
-| `PostgreSqlMcp` (`PostgreSqlMcp.exe` on Windows) | The server your MCP client launches | `postgresql-mcp/app/` inside your home folder |
-| `targets.json` | Your PostgreSQL connection details, including credentials | `postgresql-mcp/targets.json` inside your home folder |
-| Your client's MCP configuration, such as OMP's `mcp.json` | Tells the client which executable to launch and which targets file to read | The MCP client's configuration location, **not** the app folder |
+| `PostgreSqlMcp` (`PostgreSqlMcp.exe` on Windows) | The server your MCP client launches | `postgresql-mcp/app/` inside your home folder for the archive route |
+| `POSTGRES_CONNECTION_STRING` | Your Npgsql bootstrap connection details, including credentials | The prepared shell's process environment, inherited by the client and server |
+| Your client's MCP configuration, such as OMP's `mcp.json` | Tells the client which executable to launch, with nonsensitive options | The MCP client's configuration location, **not** the app folder |
 
 Follow steps 1–4 in order. Use the same paths throughout.
 
-**Already installed?** Keep your existing targets file and paths. If your executable is 0.2.0, upgrade the binary to use automatic discovery; no per-database entries or file rename are needed. With 0.3.0 or newer, skip the download and use your actual paths in steps 3–4.
+**Already installed?** If your executable is 0.2.0, upgrade the binary to use automatic discovery. With 0.3.0 or newer, use your actual executable path below. Existing protected targets files and names remain supported: keep them if you choose the [optional file workflow](#optional-protected-targets-file). Switching to the environment workflow is manual; step 2 removes stale settings from the current shell, and step 3 explains which client entries to remove. Do not delete your protected files merely to switch workflows.
 
 **Breaking behavior:** a targets-file entry is now a connection profile/seed, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode now means `unrestricted`, and `list_databases` returns a live database page instead of configured aliases. Keep an existing explicit `POSTGRES_ACCESS_MODE=restricted` if you want to continue refusing write requests; it is not overridden by the new default. Review PostgreSQL grants before upgrading.
 
 ### 1. Install or run
 
-Open [the latest release](https://github.com/codegiveness/postgresql-sharp-mcp/releases/latest) and download **one** archive:
+For the archive route, open [the latest release](https://github.com/codegiveness/postgresql-sharp-mcp/releases/latest), check its version against the boundary above, and download **one** archive. If it is still 0.2.0, use the source/local-package route instead:
 
 | Your computer | Archive to download |
 |---|---|
@@ -101,7 +101,7 @@ Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Destina
 & "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --version
 ```
 
-**Checkpoint:** you should see `postgresql-sharp-mcp` followed by **0.3.0 or newer** for this discovery workflow. If the available archive is still 0.2.0, stop and use the source/local-package route above instead. Keep all extracted files together; do not copy just the executable.
+**Checkpoint:** you should see `postgresql-sharp-mcp` followed by **0.3.0 or newer** for discovery; a build of this revision should report **0.3.1**. If the available archive is still 0.2.0, stop and use the source/local-package route above instead. Keep all extracted files together; do not copy just the executable.
 
 Your app folder should now look like this:
 
@@ -114,29 +114,13 @@ postgresql-mcp/
 
 On Debian/Ubuntu, a missing GSS/Kerberos native library may require `libgssapi-krb5-2`. Other authentication/TLS requirements are described in [Npgsql security](https://www.npgsql.org/doc/security.html).
 
-### 2. Configure database targets
+### 2. Prepare the connection environment
 
-Create a file named **`targets.json`**, next to the `app` folder—not inside it. It will hold one connection profile used to discover and connect to databases. Use a plain-text editor, not a word processor.
+Enter one complete **Npgsql `key=value` connection string** at the hidden prompt below. Replace every `<...>` placeholder, including angle brackets, using your provider's details; change the port if needed. This text block describes the format—it is not a command to execute or a JSON value:
 
-On Linux/macOS, create the empty file with private permissions **before** pasting credentials:
-
-```bash
-chmod 700 "$HOME/postgresql-mcp"
-touch "$HOME/postgresql-mcp/targets.json"
-chmod 600 "$HOME/postgresql-mcp/targets.json"
+```text
+Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=<YOUR_PASSWORD>;SSL Mode=VerifyFull
 ```
-
-On Windows, save it as `targets.json` in your home folder's `postgresql-mcp` directory. In Notepad's Save As dialog choose **All files**, so it is not accidentally saved as `targets.json.txt`. Keep the folder private to your account and administrators; do not put it in a shared or publicly synced folder.
-
-Paste this whole JSON object into `targets.json`, then replace each `<...>` placeholder with your database's actual connection details. Remove the angle brackets too:
-
-```json
-{
-  "primary": "Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=<YOUR_PASSWORD>;SSL Mode=VerifyFull"
-}
-```
-
-Also change `Port=5432` if your provider uses another port:
 
 | Field | What to enter |
 |---|---|
@@ -147,30 +131,97 @@ Also change `Port=5432` if your provider uses another port:
 | `Password` | That PostgreSQL role's password |
 | `SSL Mode` | `VerifyFull` for a remote TLS-enabled database; see the local-only exception below |
 
-**`primary` is a connection profile name, not a database allowlist.** Leave it as `primary` for this guide. `"database":"primary"` still selects its configured bootstrap database; `"database":"tenant_b"` selects the real `tenant_b` database using the same host, credentials and TLS settings. Newly accessible databases need no targets-file edits or server restart. See [database selection](#database-selection-and-live-discovery) for optional profiles and selection rules.
-
 For a PostgreSQL server on **this same computer** that does not support TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`. Do not disable TLS to work around a remote server's certificate error. For a remote server needing a provider CA certificate, retain `VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`; follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html).
 
-If your provider gives you a `postgres://` or `postgresql://` URL, it cannot be pasted here unchanged. Map its hostname, port, database, username and password to the fields above, decode URL-escaped values, and preserve its required TLS/authentication options. Prefer the provider's **.NET/Npgsql connection string** when available.
+If your provider gives you a `postgres://` or `postgresql://` URL, it cannot be entered unchanged. Map its hostname, port, database, username and password to the fields above, decode URL-escaped values, and preserve required TLS/authentication options. Prefer the provider's **.NET/Npgsql connection string** when available.
 
-<details>
-<summary>My password contains a semicolon, quote or backslash</summary>
+**Quoting at the prompt has only one layer: Npgsql, not JSON or shell syntax.** Quote a value containing a semicolon, for example the synthetic fragment `Password="sample;value"`. Inside a double-quoted value, double a literal double quote (`Password="sample""value"`). Do not add JSON's `\"` or double backslashes for JSON when entering the full string at the prompt. Prefer a provider-generated Npgsql string over constructing one by hand.
 
-There are two layers of escaping: the connection string, then JSON. A password containing `;` must be quoted inside the connection string. For example, the **synthetic** password `sample;value` is written as `Password=\"sample;value\"` inside the JSON string:
+#### Bash hidden credential prompt
 
-```json
-{
-  "primary": "Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=\"sample;value\";SSL Mode=VerifyFull"
+**Linux/macOS — run these commands in Bash.** On macOS the default shell may be zsh: first run `bash`, then stay in that Bash shell for validation and launching the client, or use the native Zsh function below. A child Bash cannot export its changes back to the parent Zsh. These commands clear conflicting target settings from this shell, hide typed input and export it to future children:
+
+```bash
+unset POSTGRES_TARGETS POSTGRES_TARGETS_FILE
+IFS= read -r -s -p 'Npgsql connection string (hidden): ' POSTGRES_CONNECTION_STRING
+printf '\n'
+if [ -n "$POSTGRES_CONNECTION_STRING" ]; then
+  export POSTGRES_CONNECTION_STRING
+else
+  unset POSTGRES_CONNECTION_STRING
+  printf 'No connection string entered; repeat this step before continuing.\n' >&2
+fi
+```
+
+#### PowerShell hidden credential prompt
+
+**Windows — PowerShell 7.1 or newer (`pwsh`) in an interactive terminal, not with piped/redirected input.** `-MaskInput` is not supported by built-in Windows PowerShell 5.1. Check `$PSVersionTable.PSVersion` and open a supported PowerShell before using this block. The prompt returns a plaintext string into the process environment:
+
+```powershell
+Remove-Item Env:POSTGRES_TARGETS, Env:POSTGRES_TARGETS_FILE -ErrorAction SilentlyContinue
+$env:POSTGRES_CONNECTION_STRING = Read-Host 'Npgsql connection string (hidden)' -MaskInput
+if ([string]::IsNullOrWhiteSpace($env:POSTGRES_CONNECTION_STRING)) {
+    Remove-Item Env:POSTGRES_CONNECTION_STRING -ErrorAction SilentlyContinue
+    throw 'No connection string entered; repeat this step before continuing.'
 }
 ```
 
-Replace that sample password with your own; keep the surrounding `\"` markers. Inside a quoted connection-string value, double a literal double quote, then escape each quote for JSON. JSON backslashes must also be doubled. If your provider can export an Npgsql connection string, prefer that over constructing one by hand; still escape it as a JSON string.
+Keep this shell open through steps 3–4. Do not put a literal real secret into a command, shell history/profile, `setx`, MCP JSON, chat or public bug reports. Masked entry avoids displaying the input; it is **not encrypted environment storage**. This session environment is plaintext in process memory, can be inspected by sufficiently privileged local processes, and is inherited by child processes. It is not automatically persisted across sessions, but launchers, supervisors, container tooling or deliberate persistence can store it. It is not inherently safer than an owner-only file; see [credential storage tradeoffs](SECURITY.md#credentials-and-diagnostics).
 
-</details>
+The connection string alone creates the **`primary` connection profile**, not a database allowlist. `"database":"primary"` selects its bootstrap database; `"database":"tenant_b"` selects the real `tenant_b` database with the same host, credentials and TLS. Newly accessible databases need no recurring JSON edits or server restart. See [database selection](#database-selection-and-live-discovery).
 
-**File naming:** `targets.json` is our simple convention, not a required magic name. `targets-0.2.0.json` also works, but a version number is unnecessary. The name and location must exactly match `POSTGRES_TARGETS_FILE` in step 3. Do not commit this file or paste its contents into chat or public bug reports.
+**Checkpoint:** input was entered at the hidden prompt, not as a command. Do not print the variable to check it; use step 4's connectivity check. When migrating, also remove stale client `env` entries in step 3: combining a connection string with targets JSON/file is rejected, not silently prioritized.
 
-**Checkpoint:** your file should contain one JSON object with a `primary` key and a populated connection string. No trailing comma after that entry.
+#### Optional reusable Bash/Zsh prompt in your rc file
+
+You may save a **function definition without credentials** in your shell startup file, then invoke it when needed. Edit/add the function to your chosen file, creating that file if absent; preserve all existing configuration rather than replacing the file. Do not save the entered connection string, an automatic secret export/echo, or an automatic invocation in an rc/profile file. The function only prepares a session when you explicitly call it; the same plaintext/inheritance limits above still apply.
+
+- **Bash:** put the Bash function below in `~/.bashrc` for interactive non-login shells. Login Bash reads the first existing, readable file in this order: `~/.bash_profile`, `~/.bash_login`, `~/.profile`—not all three. It does not automatically read `.bashrc`. If needed, have your existing Bash login file conditionally source `.bashrc` when it exists and the shell is interactive Bash, rather than copying the function into every file or replacing existing login configuration. Noninteractive Bash does not normally load `.bashrc`. Do not put Bash-specific commands into a shared `.profile` used by other shells. See [Bash startup files](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files.html).
+- **Zsh:** put the Zsh function below in `~/.zshrc` (or `$ZDOTDIR/.zshrc` if customized). Interactive Zsh reads it, including interactive login shells; `~/.zprofile` is for login startup, not a substitute for `.zshrc` in non-login terminals. Do not put a secret prompt in `.zshenv`, which is used by noninteractive shells too. See [Zsh startup files](https://zsh.sourceforge.io/Doc/Release/Files.html).
+
+**Bash function — add only to your chosen Bash rc file:**
+
+```bash
+postgres_mcp_env() {
+  unset POSTGRES_TARGETS POSTGRES_TARGETS_FILE POSTGRES_CONNECTION_STRING
+  if ! IFS= read -r -s -p 'Npgsql connection string (hidden): ' POSTGRES_CONNECTION_STRING; then
+    printf '\n'
+    unset POSTGRES_CONNECTION_STRING
+    return 1
+  fi
+  printf '\n'
+  if [ -z "$POSTGRES_CONNECTION_STRING" ]; then
+    unset POSTGRES_CONNECTION_STRING
+    printf 'No connection string entered.\n' >&2
+    return 1
+  fi
+  export POSTGRES_CONNECTION_STRING
+}
+```
+
+**Zsh function — add only to your chosen Zsh rc file:**
+
+```zsh
+postgres_mcp_env() {
+  unset POSTGRES_TARGETS POSTGRES_TARGETS_FILE POSTGRES_CONNECTION_STRING
+  if ! IFS= read -r -s 'POSTGRES_CONNECTION_STRING?Npgsql connection string (hidden): '; then
+    printf '\n'
+    unset POSTGRES_CONNECTION_STRING
+    return 1
+  fi
+  printf '\n'
+  if [ -z "$POSTGRES_CONNECTION_STRING" ]; then
+    unset POSTGRES_CONNECTION_STRING
+    printf 'No connection string entered.\n' >&2
+    return 1
+  fi
+  export POSTGRES_CONNECTION_STRING
+}
+```
+
+Zsh's [`read -p`](https://zsh.sourceforge.io/Doc/Release/Shell-Builtin-Commands.html#index-REPLY_002c-use-of-2) reads from a coprocess; it is **not Bash's prompt option**. The Zsh function uses its native `name?prompt` form instead. Do not paste the Bash prompt block into Zsh unchanged.
+
+After adding the function and saving the chosen file, reload **only the rc file for your current shell**: `source "$HOME/.bashrc"` in Bash **or** `source "${ZDOTDIR:-$HOME}/.zshrc"` in Zsh, not both. Review that file before sourcing: sourcing executes all its commands. After completing step 3's client registration, in that same shell, `postgres_mcp_env && omp` prompts and launches OMP only on success; for another client, replace `omp` with its documented launcher. Fully quit an existing client first. Do not run the function in a subprocess or a separate script and expect it to change the parent shell. No protected credential file is modified or deleted by these functions.
 
 ### 3. Add a stdio MCP client entry
 
@@ -180,7 +231,7 @@ For **OMP**, edit or create `~/.omp/agent/mcp.json` on Linux/macOS, or `%USERPRO
 
 If the file already contains other servers, add only the `"postgresql": { ... }` entry **inside its existing `mcpServers` object**. Preserve the other entries and separate adjacent entries with a comma. Do not add a second `mcpServers` object.
 
-For a new configuration file, use the whole example for your OS below. Replace **`YOUR_USER` in both paths** with your home-folder name. On Linux/macOS, `echo "$HOME"` shows your home path; on Windows, `$HOME` in PowerShell shows it. If your home is elsewhere, replace the entire example home prefix with that actual path. Use full absolute paths in JSON, not literal `~`, `$HOME` or `%USERPROFILE%`.
+For a new configuration file, use the whole example for your OS below. Replace **`YOUR_USER` in the executable path** with your home-folder name. On Linux/macOS, `echo "$HOME"` shows your home path; on Windows, `$HOME` in PowerShell shows it. If your home is elsewhere, replace the entire example home prefix with that actual path. Use full absolute paths in JSON, not literal `~`, `$HOME` or `%USERPROFILE%`. These examples rely on inherited process environment; they do not assume a client's `${ENV}` interpolation.
 
 <details open>
 <summary>Linux: complete MCP configuration</summary>
@@ -193,7 +244,6 @@ For a new configuration file, use the whole example for your OS below. Replace *
       "command": "/home/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp",
       "timeout": 30000,
       "env": {
-        "POSTGRES_TARGETS_FILE": "/home/YOUR_USER/postgresql-mcp/targets.json",
         "POSTGRES_QUERY_TIMEOUT": "10"
       }
     }
@@ -214,7 +264,6 @@ For a new configuration file, use the whole example for your OS below. Replace *
       "command": "/Users/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp",
       "timeout": 30000,
       "env": {
-        "POSTGRES_TARGETS_FILE": "/Users/YOUR_USER/postgresql-mcp/targets.json",
         "POSTGRES_QUERY_TIMEOUT": "10"
       }
     }
@@ -235,7 +284,6 @@ For a new configuration file, use the whole example for your OS below. Replace *
       "command": "C:\\Users\\YOUR_USER\\postgresql-mcp\\app\\PostgreSqlMcp.exe",
       "timeout": 30000,
       "env": {
-        "POSTGRES_TARGETS_FILE": "C:\\Users\\YOUR_USER\\postgresql-mcp\\targets.json",
         "POSTGRES_QUERY_TIMEOUT": "10"
       }
     }
@@ -245,29 +293,33 @@ For a new configuration file, use the whole example for your OS below. Replace *
 
 </details>
 
-`command` points to the **executable**, not its folder or downloaded archive. `POSTGRES_TARGETS_FILE` points to your **credentials file**, not the client's `mcp.json`. These examples omit access mode, so it is **unrestricted**; SQL calls remain read-only unless they explicitly set `read_only=false`. To refuse writes at the server, add `"POSTGRES_ACCESS_MODE": "restricted"` to `env`. OMP's `timeout` is in milliseconds (`30000` = 30 seconds); `POSTGRES_QUERY_TIMEOUT` is in seconds (`10` = 10 seconds). Other clients may use different timeout settings.
+`command` points to the **executable**, not its folder or downloaded archive. The `env` object contains only nonsensitive options; `POSTGRES_CONNECTION_STRING` comes from the client's inherited environment, not this JSON. These examples omit access mode, so it is **unrestricted**; SQL calls remain read-only unless they explicitly set `read_only=false`. To refuse writes at the server, add `"POSTGRES_ACCESS_MODE": "restricted"` to `env`. OMP's `timeout` is in milliseconds (`30000` = 30 seconds); `POSTGRES_QUERY_TIMEOUT` is in seconds (`10` = 10 seconds). Other clients may use different timeout settings and environment policies; ensure yours passes its inherited environment to stdio servers.
 
-**Checkpoint:** save the client configuration. Neither path contains `YOUR_USER`, and both files exist at those exact paths. Credentials belong only in `targets.json`.
+**Migrating an existing entry:** remove `POSTGRES_TARGETS`, `POSTGRES_TARGETS_FILE` and any literal `POSTGRES_CONNECTION_STRING` from the client's PostgreSQL `env` object, along with `--targets-file`/`--connection-string` launch arguments. Keep other nonsensitive settings, especially an intentional restricted access mode. Clear stale target variables in step 2; do not combine the two credential sources and expect one to win. Protected files may remain on disk for later use.
+
+**Checkpoint:** save the client configuration. The executable exists at the exact `command` path, no `YOUR_USER` placeholder remains, and no credentials or targets-file setting were added to the primary MCP JSON examples.
 
 ### 4. Validate and connect
 
-First check database connectivity, before troubleshooting the MCP client.
+In the **same prepared Bash/PowerShell session from step 2**, first check database connectivity, before troubleshooting the MCP client. Substitute your source/local-package executable if you did not install an archive.
 
 **Linux / macOS:**
 
 ```bash
-"$HOME/postgresql-mcp/app/PostgreSqlMcp" --targets-file "$HOME/postgresql-mcp/targets.json" --validate
+"$HOME/postgresql-mcp/app/PostgreSqlMcp" --validate
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --targets-file "$HOME\postgresql-mcp\targets.json" --validate
+& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --validate
 ```
 
 **Checkpoint:** the command should exit successfully and print a result with your actual database name. That output is on **stderr** and can contain private database identity; keep it private. `--validate` performs a read-only check and exits. It does **not** register the server or start an ongoing MCP session.
 
-Now reload the client's MCP configuration: in **OMP, run `/mcp reload`**. In other clients, use their server reload control or fully quit and reopen the client.
+**Start the MCP client from this same prepared shell**, so the client—and the server it launches—inherits `POSTGRES_CONNECTION_STRING`. For OMP, run `omp` in that shell. For another client, use its documented executable/launcher that starts a new process from that shell. Fully quit any existing client first, including background/tray processes: opening a new window may reuse an old process. A desktop/Start-menu launch or a client already running in another terminal does not acquire this shell's changed environment. `/mcp reload` alone cannot repair an environment the client never inherited.
+
+**After changing the session secret**, fully quit the client, repeat step 2 in the shell and launch a new client process from that shell. Restarting only its server from an old client retains the old inherited value. If your GUI client cannot be launched this way or strips inherited variables, use the [optional protected file workflow](#optional-protected-targets-file) instead of persisting secrets in MCP JSON.
 
 Call `list_databases` with no arguments. It connects to `primary`'s bootstrap database and returns real accessible database names in `databases.rows`, not the alias `primary`. Then call:
 
@@ -277,7 +329,52 @@ Call `list_databases` with no arguments. It connects to `primary`'s bootstrap da
 
 **You are ready when the SQL call succeeds with one row containing `1`.** In OMP you can ask: “Use the PostgreSQL MCP server to run `SELECT 1 AS connection_ok` against the bootstrap database using alias `primary`.” No extensions or application tables are needed for this check.
 
-To query another discovered database, replace `"database":"primary"` with its real name, for example `"database":"tenant_b"`. Discovery checks CONNECT permission, but PostgreSQL still enforces connection rules, object privileges and RLS on the actual call. After changing profile configuration or credentials, reload/restart the server; database creation and grant changes need no configuration edits.
+To query another discovered database, replace `"database":"primary"` with its real name, for example `"database":"tenant_b"`. Discovery checks CONNECT permission, but PostgreSQL still enforces connection rules, object privileges and RLS on the actual call. Database creation and grant changes need no configuration edits. For environment credential changes, fully restart the client from the newly prepared shell as above.
+
+When finished, fully quit the client/server, then clear the shell value with `unset POSTGRES_CONNECTION_STRING` in Bash or `Remove-Item Env:POSTGRES_CONNECTION_STRING -ErrorAction SilentlyContinue` in PowerShell. Unsetting the parent value does not erase copies already inherited by running children or deliberately persisted elsewhere.
+
+### Optional protected targets file
+
+Choose this **instead of step 2's connection-string environment** when you need multiple profiles with independent credentials, or automation/GUI launch where session environment propagation is impractical. It is not required for one-server discovery. Existing `targets.json`, `targets-0.2.0.json` or other protected file names continue to work: keep the file and use its actual path, with no rename or per-database entries required.
+
+Before switching to the file route, fully quit the client/server. Clear `POSTGRES_CONNECTION_STRING` from the launching environment (`unset POSTGRES_CONNECTION_STRING` in Bash; `Remove-Item Env:POSTGRES_CONNECTION_STRING -ErrorAction SilentlyContinue` in PowerShell), and remove any client `env` entry or `--connection-string` argument for it. Clear stale `POSTGRES_TARGETS` too, because that JSON source takes precedence over a file. Combining a connection string and targets JSON/file fails closed.
+
+For a **new** Linux/macOS file, create private permissions before adding credentials:
+
+```bash
+mkdir -p "$HOME/postgresql-mcp"
+chmod 700 "$HOME/postgresql-mcp"
+touch "$HOME/postgresql-mcp/targets.json"
+chmod 600 "$HOME/postgresql-mcp/targets.json"
+```
+
+On Windows, keep the folder and file accessible only to your account and administrators using Windows permissions. In Notepad's Save As dialog choose **All files** to avoid `targets.json.txt`. Do not use a shared or publicly synced folder. OS permissions do not encrypt file contents; consider backup/sync exposure and privileged local access.
+
+Use a plain-text editor to populate the JSON object with a bootstrap connection string using step 2's field/TLS guidance:
+
+```json
+{
+  "primary": "Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=<YOUR_PASSWORD>;SSL Mode=VerifyFull"
+}
+```
+
+Unlike the hidden prompt, this file has **two escaping layers**: Npgsql followed by JSON. For example, the synthetic Npgsql fragment `Password="sample;value"` becomes `Password=\"sample;value\"` inside a JSON string. Double a literal double quote inside an Npgsql double-quoted value, then escape each quote for JSON; JSON backslashes must also be doubled. A JSON-aware editor/serializer can help. No trailing commas are allowed. Do not commit the file or paste its contents into chat/public reports.
+
+For multiple profiles, add additional case-sensitive keys with their own bootstrap strings (for example `reporting`), not an entry per physical database. Each key is a profile/seed, **not an allowlist**. Use optional `target` to choose one explicitly; see [selection rules](#database-selection-and-live-discovery).
+
+In the step 3 client entry, add only the file path as `"POSTGRES_TARGETS_FILE"` in `env`, alongside nonsensitive options. Use your real absolute path: `/home/YOUR_USER/postgresql-mcp/targets.json` on Linux, `/Users/YOUR_USER/postgresql-mcp/targets.json` on macOS, or `C:\\Users\\YOUR_USER\\postgresql-mcp\\targets.json` in Windows JSON. The path points to the credentials file, not the client's MCP JSON. Do not add a connection-string value too.
+
+Validate this alternative in the shell where the conflicting variables were cleared:
+
+```bash
+"$HOME/postgresql-mcp/app/PostgreSqlMcp" --targets-file "$HOME/postgresql-mcp/targets.json" --validate
+```
+
+```powershell
+& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --targets-file "$HOME\postgresql-mcp\targets.json" --validate
+```
+
+Use your actual executable/file paths if different. Keep validation stderr private. Reload the saved client configuration (OMP: `/mcp reload`) or fully restart the client to start the server with this file. After editing credentials/profiles, restart the server; new physical databases and grant changes still need no file edits or restart. A GUI file workflow avoids relying on a session secret, but any conflicting inherited connection string must still be removed before launching it.
 
 ### If setup does not work
 
@@ -285,10 +382,10 @@ To query another discovered database, replace `"database":"primary"` with its re
 |---|---|
 | Executable not found / spawn error | `command` must be the full executable path, including `.exe` on Windows. Extract the archive first and keep its files together. |
 | Wrong architecture / cannot execute binary | Download the archive matching your OS and CPU from step 1. |
-| Invalid targets configuration / file not found | Check the exact `POSTGRES_TARGETS_FILE` path, JSON quotes/commas, and that the file is not `targets.json.txt`. Do not paste a PostgreSQL URI as the connection string. |
+| Invalid configuration / missing credentials | Repeat the hidden prompt, remove stale targets variables/client entries, and fully launch the client from the prepared shell. A base string combined with targets JSON/file is rejected. Do not enter a PostgreSQL URI unchanged. For the optional file route, check the exact path, JSON quotes/commas and accidental `.txt` extension. |
 | Connection refused, timeout or authentication error | Run step 4's `--validate` command. Check host, port, database, login/password, network/VPN and the database's access rules. Installation does not grant database access. |
 | Certificate validation error | Use the provider's correct hostname and CA certificate. Do not disable TLS for a remote database. |
-| No PostgreSQL tools in the client | Check the client's configuration location/schema, save it, then reload MCP or fully restart the client. |
+| No PostgreSQL tools in the client | Check its configuration location/schema and executable path, then fully quit and launch it from the prepared shell. MCP reload can refresh a saved nonsecret entry only after the client has the correct environment. |
 | Invalid target / database missing or denied | `target` must match a configured profile such as `primary`. `database` can be a real name; check spelling, CONNECT and object permissions. There is no fallback to the bootstrap database. |
 | Server seems to wait silently when run without `--validate` | Normal: stdio mode waits for MCP messages from a client. Use `--validate` for a terminal connectivity check; let the client launch normal mode. |
 
@@ -296,7 +393,7 @@ Normal operation reserves stdout for MCP JSON-RPC; diagnostics go to stderr. Kee
 
 ### Other installation methods
 
-Finish the same targets-file and client-configuration steps above with whichever executable you install. **Choose one install method; do not install all of them.**
+Finish the same environment and client-configuration steps above with whichever executable you install. **Choose one install method; do not install all of them.** Registry examples below require an available compatible version; until 0.3.1 is published, use this revision's source/local-package route, not an older registry executable.
 
 **NuGet/.NET tool:** requires the **.NET 10 SDK** to install, the **.NET 10 runtime** to run, and the package to be available on NuGet.org:
 
@@ -307,7 +404,7 @@ postgresql-sharp-mcp --version
 
 In the client configuration, replace `command` with the installed tool's absolute path: normally `~/.dotnet/tools/postgresql-sharp-mcp` on Linux/macOS or `%USERPROFILE%\.dotnet\tools\postgresql-sharp-mcp.exe` on Windows. Expand the home path before putting it in JSON. For a custom `--tool-path` installation, use that directory's executable instead; a path containing a version such as `tools/0.2.0/` is valid but not required. Keep the .NET runtime available to the client; nonstandard installations may require `DOTNET_ROOT`.
 
-If the package is unavailable on NuGet.org, use the recommended release archive or [install a verified release `.nupkg` locally](CONTRIBUTING.md#install-a-verified-release-artifact). Local artifact installation does not establish registry publication. Do not point the MCP client directly at a `.nupkg`.
+If the package is unavailable on NuGet.org, use a compatible release archive or [install a verified release `.nupkg` locally](CONTRIBUTING.md#install-a-verified-release-artifact). Local artifact installation does not establish registry publication. Do not point the MCP client directly at a `.nupkg`.
 
 **npm/npx:** requires **Node.js 22 or newer**, the **.NET 10 runtime** with `dotnet` on `PATH` during installation, and the package to be available in npm:
 
@@ -319,7 +416,7 @@ Use `"command": "npx"` with `"args": ["-y", "--allow-scripts=@codegiveness/postg
 
 The C# installer uses bundled native apphosts; it does not download a runtime or binaries. After installation the server runs directly as .NET, without a JavaScript launcher or Node child process. Custom .NET installations also need an appropriate `DOTNET_ROOT`.
 
-**Build from source:** follow [CONTRIBUTING.md](CONTRIBUTING.md#build-from-source), then use `dotnet` as `command` and the absolute path to `PostgreSqlMcp.dll` as its first `args` item. Keep the same targets-file environment settings.
+**Build from source:** follow [CONTRIBUTING.md](CONTRIBUTING.md#build-from-source), then use `dotnet` as `command` and the absolute path to `PostgreSqlMcp.dll` as its first `args` item. Keep step 3's nonsensitive `env` object and launch the client from the shell prepared in step 2.
 
 ## Tools
 
@@ -353,7 +450,7 @@ Focused inspection:
 
 ### Database selection and live discovery
 
-A profile is a case-sensitive targets-file key mapped to a bootstrap connection string. The default profile is `primary` when configured, otherwise the ordinal-first profile name.
+A profile is a case-sensitive name mapped to a bootstrap connection string: `POSTGRES_CONNECTION_STRING` alone creates `primary`, while optional targets JSON/file defines named profiles. The default profile is `primary` when configured, otherwise the ordinal-first profile name.
 
 - **Without `target`:** an exact configured alias in `database` selects that alias's bootstrap database for compatibility. Any other value is a physical database name on the default profile.
 - **With `target`:** that profile supplies the host, authentication and TLS settings; `database` is always a physical database name. Use this form to select a database whose name happens to match an alias.
@@ -464,7 +561,7 @@ SDK/provider payload logging is disabled even at debug/trace levels; host diagno
 
 ## Configuration reference
 
-Choose targets JSON/file **or** a base connection string with an optional database allowlist; do not combine them. `POSTGRES_TARGETS` takes precedence over the file. CLI flags override corresponding environment variables, except that `POSTGRES_CONNECTION_STRING` overrides `--connection-string`. Profile/credential configuration changes require a restart; live database/grant changes do not.
+For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `primary` seed and enables live discovery without targets JSON. Choose a base connection string (optionally with a database allowlist) **or** targets JSON/file. Combining a connection string with either targets source is rejected, not silently prioritized. Within the targets-only route, `POSTGRES_TARGETS` takes precedence over the file. CLI flags override corresponding environment variables, except that `POSTGRES_CONNECTION_STRING` overrides `--connection-string`; avoid CLI secrets because process arguments/history can expose them. Profile/credential changes require a server restart; environment secret changes also require fully restarting the client from the newly prepared shell. Live database/grant changes do not.
 
 | Environment | Default / bounds |
 |---|---|
@@ -481,7 +578,7 @@ Choose targets JSON/file **or** a base connection string with an optional databa
 | `POSTGRES_MAX_CONCURRENT_CALLS` | 16; 1–64 |
 | `POSTGRES_LOG_LEVEL` | warning; trace/debug/information/warning/error/critical/none; `--log-level` supported |
 
-A base connection string alone creates the `primary` profile and supports live discovery. With an explicit `POSTGRES_DATABASES` JSON array, each allowlisted name becomes a seed alias and replaces any `Database` in the base string; catalog results are filtered to these names and selection of a nonallowlisted physical database is rejected. This allowlist is optional and must be maintained if used. Targets-file aliases are **not** an implicit allowlist. Prefer a protected targets file for independent credentials and to avoid exposing secrets in process arguments.
+A base connection string alone creates the `primary` profile and supports live discovery. With an explicit `POSTGRES_DATABASES` JSON array, each allowlisted name becomes a seed alias and replaces any `Database` in the base string; catalog results are filtered to these names and selection of a nonallowlisted physical database is rejected. This allowlist is optional and must be maintained if used. Targets-file aliases are **not** an implicit allowlist. The [optional protected targets file](#optional-protected-targets-file) supports independent credentials/multiple profiles and launch environments where session propagation is impractical; neither method requires putting secrets in process arguments. Environment variables are plaintext inherited state, while files are persistent plaintext protected by OS permissions—choose according to the deployment's exposure and lifecycle, not a blanket safety claim.
 
 Framework-dependent packages require the .NET 10 runtime. Self-contained executables still require native OS libraries. For example, Debian/Ubuntu GSS/Kerberos support uses `libgssapi-krb5-2`; install the platform's appropriate library if that authentication is needed. Password fallback does not verify Kerberos support. The container includes this dependency. See [Npgsql security and encryption](https://www.npgsql.org/doc/security.html).
 

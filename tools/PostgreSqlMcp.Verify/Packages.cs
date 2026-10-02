@@ -71,28 +71,20 @@ internal static class Packages
         // Exercise the actual apphost too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), environment);
         await using var fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
-        string? fixtureSeed = null;
         if (fixture is not null)
-        {
             await fixture.StartAsync();
-            fixtureSeed = Path.Combine(stage, "disposable-seed.json");
-            await File.WriteAllTextAsync(fixtureSeed, JsonSerializer.Serialize(new
-            {
-                package_seed = $"Host=127.0.0.1;Port={fixture.Port};Database=tenant_a;Username=mcp_writer;Password=writer-disposable"
-            }));
-        }
         await using (var unavailable = new UnavailableEndpoint())
         {
             var configured = new Dictionary<string, string>(environment)
             {
-                ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { package_smoke = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1" }),
+                ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1",
                 ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
             };
             foreach (var (name, command) in commands)
             {
                 await VerifyCliAsync(name, command, version, environment, configured);
-                await VerifyMcpAsync(command, configured, ["package_smoke"]);
-                if (!OperatingSystem.IsWindows()) await VerifyMcpAsync(command, configured, ["package_smoke"], terminate: true);
+                await VerifyMcpAsync(command, configured, ["primary"]);
+                if (!OperatingSystem.IsWindows()) await VerifyMcpAsync(command, configured, ["primary"], terminate: true);
                 if (targetsFile is not null)
                 {
                     string[] aliases = await SafeFixtureAliasesAsync(targetsFile);
@@ -113,14 +105,15 @@ internal static class Packages
                 {
                     var fixtureEnvironment = new Dictionary<string, string>(environment)
                     {
-                        ["POSTGRES_TARGETS_FILE"] = fixtureSeed!, ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
+                        ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={fixture.Port};Database=tenant_a;Username=mcp_writer;Password=writer-disposable",
+                        ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
                     };
-                    await VerifyMcpAsync(command, fixtureEnvironment, ["package_seed"], query: true, fixture: fixture);
-                    Console.WriteLine($"{name}: disposable single-seed live discovery, physical selection and default unrestricted writes passed");
+                    await VerifyMcpAsync(command, fixtureEnvironment, ["primary"], query: true, fixture: fixture);
+                    Console.WriteLine($"{name}: environment-only primary bootstrap, live discovery, physical selection, read-only default, write opt-in and cleanup passed");
                 }
                 Console.WriteLine($"{name}: installed CLI, validation, MCP initialize/tools/list/list_databases and shutdown passed");
             }
-            if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["package_smoke"]);
+            if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["primary"]);
         }
         Console.WriteLine("Package verification passed; offline local installs, real native commands, missing .NET prerequisite and shutdown verified.");
         if (installationOnly)
@@ -227,7 +220,6 @@ internal static class Packages
             }
             if (fixture is not null)
             {
-                string seed = await File.ReadAllTextAsync(environment["POSTGRES_TARGETS_FILE"]);
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
                     new[] { new[] { "tenant_b", "B_ONLY" } }, "Installed single-seed package did not select a discovered physical database.");
                 string database = "package_after_start_" + Guid.NewGuid().ToString("N");
@@ -236,11 +228,15 @@ internal static class Packages
                     "Installed package cached database discovery across catalog changes.");
                 Check.Equal((await client.OkAsync("execute_sql", new { database, sql = "SELECT current_database(),value FROM marker" }))["rows"],
                     new[] { new[] { database, "DYNAMIC_ONLY" } }, "Installed package could not select a database created after startup.");
+                await client.FailsAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')" }, "postgresql_error", "25006");
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
+                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package committed a default read-only mutation.");
                 await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')", read_only = false });
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker ORDER BY value" }))["rows"],
-                    new[] { new[] { "B_ONLY" }, new[] { "PACKAGE_WRITE" } }, "Installed package omitted-mode write did not commit.");
+                    new[] { new[] { "B_ONLY" }, new[] { "PACKAGE_WRITE" } }, "Installed environment-only package write opt-in did not commit.");
                 await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "DELETE FROM marker WHERE value='PACKAGE_WRITE'", read_only = false });
-                Check.That(await File.ReadAllTextAsync(environment["POSTGRES_TARGETS_FILE"]) == seed, "Installed discovery rewrote its seed file.");
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
+                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package write cleanup did not commit.");
             }
         }
         await client.StopAsync(terminate);

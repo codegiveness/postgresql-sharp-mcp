@@ -326,7 +326,39 @@ internal static class Integration
         string path = Path.Combine(temporary.Path, "seed.json");
         string seed = JsonSerializer.Serialize(new { primary = connection + "tenant_a" });
         await File.WriteAllTextAsync(path, seed);
-        var discoveryEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS_FILE"] = path };
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var fileEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS_FILE"] = path };
+        fileEnvironment.Remove("POSTGRES_TARGETS");
+        await using (var client = await McpClient.StartAsync(command, fileEnvironment))
+        {
+            Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", target = "primary", sql = "SELECT current_database(),value FROM marker" }))["rows"],
+                new[] { new[] { "tenant_b", "B_ONLY" } }, "Optional seed file did not select another physical database.");
+            Check.That(await File.ReadAllTextAsync(path) == seed, "Dynamic selection rewrote the protected seed file.");
+            await client.StopAsync();
+            Check.Confidential(client.StandardError, "reader-disposable", path);
+        }
+        foreach (var (key, value, validationCommand) in new[]
+        {
+            ("POSTGRES_TARGETS", seed, command.With("--validate")),
+            ("POSTGRES_TARGETS_FILE", path, command.With("--validate")),
+            ("", path, command.With("--targets-file", path, "--validate"))
+        })
+        {
+            var conflictEnvironment = new Dictionary<string, string>(environment)
+            {
+                ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a"
+            };
+            conflictEnvironment.Remove("POSTGRES_TARGETS");
+            if (key.Length != 0) conflictEnvironment[key] = value;
+            ProcessResult conflict = await Processes.RunAsync(validationCommand, conflictEnvironment, expected: 1);
+            Check.That(conflict.Output.Length == 0, "Conflicting environment/profile configuration contaminated stdout.");
+            Check.Confidential(conflict.Error, "reader-disposable", connection + "tenant_a", path);
+        }
+        var discoveryEnvironment = new Dictionary<string, string>(environment)
+        {
+            ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a"
+        };
         discoveryEnvironment.Remove("POSTGRES_TARGETS");
         await using (var client = await McpClient.StartAsync(command, discoveryEnvironment))
         {
@@ -334,7 +366,7 @@ internal static class Integration
             var initial = Check.Rows(listed["databases"]!).ToArray();
             Check.That(initial.Any(row => row["name"].Text() == "tenant_a" && row["is_current"].Flag())
                 && initial.Any(row => row["name"].Text() == "tenant_b" && !row["is_current"].Flag()),
-                "Single seed file did not discover other physical databases or mark the bootstrap database.");
+                "Environment-only primary seed did not discover other physical databases or mark the bootstrap database.");
             var requests = Enumerable.Range(0, 24).Select(index =>
             {
                 string database = index % 2 == 0 ? "tenant_a" : "tenant_b";
@@ -364,7 +396,8 @@ internal static class Integration
             await client.FailsAsync("execute_sql", new { database = "tenant_b", target = "unknown_profile", sql = "SELECT 1" }, "invalid_target");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
                 new[] { new[] { "B_ONLY" } }, "Failed dynamic selection fell back or poisoned another database.");
-            Check.That(await File.ReadAllTextAsync(path) == seed, "Dynamic discovery rewrote the protected seed file.");
+            await client.StopAsync();
+            Check.Confidential(client.StandardError, "reader-disposable");
         }
         var precedenceEnvironment = new Dictionary<string, string>(environment)
         {
@@ -382,7 +415,7 @@ internal static class Integration
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", target = "primary", sql = "SELECT current_database()" }))["rows"],
                 new[] { new[] { "tenant_b" } }, "Explicit profile treated a physical database name as an alias.");
         }
-        Console.WriteLine("PASS one immutable seed file, concurrent physical selection, nine optional targets, live create/revoke, profile precedence and punctuation-safe names");
+        Console.WriteLine("PASS optional immutable protected seed file, env/profile conflict rejection, environment-only primary seed, concurrent physical selection, nine optional targets, live create/revoke, profile precedence and punctuation-safe names");
     }
 
     private static async Task VerifyOptionalTargetAsync(McpClient client)
@@ -413,9 +446,10 @@ internal static class Integration
         foreach (string database in databases) await fixture.CreateDatabaseAsync(database);
         var poolEnvironment = new Dictionary<string, string>(environment)
         {
-            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { primary = connection + "tenant_a" }),
+            ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a",
             ["POSTGRES_POOL_SIZE"] = "32", ["POSTGRES_MAX_CONCURRENT_CALLS"] = "16"
         };
+        poolEnvironment.Remove("POSTGRES_TARGETS");
         await using (var client = await McpClient.StartAsync(command, poolEnvironment))
         {
             foreach (string database in databases)
@@ -446,7 +480,7 @@ internal static class Integration
                 new[] { new[] { "DYNAMIC_ONLY" } }, "Timed-out capacity wait leaked a lease or poisoned later selection.");
         }
         Check.That(await fixture.RuntimeBackendCountAsync() == 0, "Runtime disposal retained physical-database backends.");
-        Console.WriteLine("PASS bounded idle churn, failed-name recovery, busy-pool capacity, original-deadline cancellation and deterministic disposal");
+        Console.WriteLine("PASS environment-only bounded idle churn, failed-name recovery, busy-pool capacity, original-deadline cancellation and deterministic disposal");
     }
 
     private static async Task VerifyConfigurationAsync(Command command, Dictionary<string, string> environment, Dictionary<string, string> targets, string connection)
@@ -474,10 +508,6 @@ internal static class Integration
             await client.FailsAsync("execute_sql", new { database = "postgres", target = "tenant_a", sql = "SELECT 1" }, "invalid_target");
         }
         baseEnvironment.Remove("POSTGRES_DATABASES");
-        baseEnvironment["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a";
-        await using (var client = await McpClient.StartAsync(command, baseEnvironment))
-            Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-                new[] { new[] { "tenant_b", "B_ONLY" } }, "Bare connection configuration still required a database allowlist.");
         baseEnvironment["POSTGRES_CONNECTION_STRING"] = connection[..^"Database=".Length];
         await using (var client = await McpClient.StartAsync(command, baseEnvironment))
         {

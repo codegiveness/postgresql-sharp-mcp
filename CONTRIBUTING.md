@@ -18,18 +18,17 @@ dotnet build postgresql-sharp-mcp.slnx -c Release
 dotnet src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll --help
 ```
 
-Run the source entrypoint with a protected connection-profile/seed file configured as described in [README.md](README.md):
+Prepare `POSTGRES_CONNECTION_STRING` using the README's [hidden Bash/PowerShell prompt](README.md#2-prepare-the-connection-environment), then run the source entrypoint from that same shell; no targets file is required for one server:
 
 ```bash
-dotnet src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll \
-  --targets-file "<absolute-path-to-protected-targets-file>" --validate
+dotnet src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll --validate
 ```
 
 Omit `--validate` to start the stdio server. Access mode defaults to unrestricted, but SQL calls remain read-only unless `execute_sql` explicitly sets `read_only=false`. Add `--access-mode restricted` or `POSTGRES_ACCESS_MODE=restricted` to refuse writes. Never commit populated targets files, credentials, customer SQL or database results.
 
 The source layout is `src/PostgreSqlMcp.Core` (configuration, SQL and database behavior), `src/PostgreSqlMcp.Tools` (MCP tools), and `src/PostgreSqlMcp` (stdio host and CLI). Preserve dependency direction `Core <- Tools <- App`. MCP stdout is reserved for JSON-RPC; diagnostics belong on stderr.
 
-Treat targets-file entries as connection profiles, not per-database registration or implicit allowlists. Preserve exact alias selection for bootstrap compatibility, optional `target` for explicit profile selection, and physical database selection without rewriting configuration. Catalog discovery must be live and CONNECT-filtered; PostgreSQL enforces object privileges and RLS. Calls must not share a current database, fall back after selection errors, or grow unbounded pools. A base connection string's optional explicit database allowlist must constrain both listing and selection. See [selection and discovery](README.md#database-selection-and-live-discovery) and [resource boundaries](README.md#access-and-resource-boundaries).
+An inherited base connection string alone creates the `primary` bootstrap profile and supports live discovery. Optional targets-file entries remain connection profiles for independent credentials, not per-database registration or implicit allowlists. Preserve exact alias selection for bootstrap compatibility, optional `target` for explicit profile selection, and physical database selection without rewriting configuration. Keep combining a base connection string with targets JSON/file fail-closed; do not silently prefer one credential source. Catalog discovery must be live and CONNECT-filtered; PostgreSQL enforces object privileges and RLS. Calls must not share a current database, fall back after selection errors, or grow unbounded pools. A base connection string's optional explicit database allowlist must constrain both listing and selection. See [selection and discovery](README.md#database-selection-and-live-discovery) and [resource boundaries](README.md#access-and-resource-boundaries).
 
 Dependencies use current compatible stable releases verified against [official .NET release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json) and NuGet package indexes, not preview feeds. Central transitive pins keep the portable/five-RID graphs aligned; restore each RID with explicit `-p:RuntimeIdentifier=<rid> -p:RuntimeIdentifiers=<rid>` so its lockfile stays separate. Recheck compatibility and regenerate every affected lock on upgrades; do not infer that today's pins remain the latest indefinitely.
 
@@ -41,7 +40,7 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 
 The .NET verifier builds the application and exercises real MCP calls against a disposable PostgreSQL 17 Docker fixture with `pg_stat_statements` and HypoPG. It creates and removes its own container; do not substitute a production or unrelated database.
 
-For database-discovery changes, exercise one protected seed selecting an unregistered physical database, live creation/grant/revoke changes, explicit profiles, optional allowlists, missing/denied selections without fallback, and concurrent per-call isolation. Verify omitted-mode write commit/rollback with `read_only=false` separately from explicit restricted-mode refusal. Use disposable data; do not treat existing historical verification results as evidence that new behavior passed.
+For database-discovery/setup changes, exercise one inherited connection string selecting an unregistered physical database with no targets file, live creation/grant/revoke changes, optional protected multi-profile files, optional allowlists, missing/denied selections without fallback, conflicting credential sources failing closed, and concurrent per-call isolation. Verify omitted-mode write commit/rollback with `read_only=false` separately from explicit restricted-mode refusal. Use disposable data; do not treat existing historical verification results as evidence that new behavior passed.
 
 Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Linux subprocess and MCP-client regressions exercise blocked stdin, inherited output pipes, failed-writer disposal and owned-child cleanup. Verification command deadlines cover stdin, exit and output drains; release capture deadlines cover exit and drains. MCP verification requests also bound semaphore wait, stdin writing and response wait with one cancellation-aware deadline. Asynchronous stdin close is bounded, and cleanup observes readers before disposal. An already-orphaned descendant is outside the exited parent's `Process.Kill` tree, so this is not an OS process-group/job-object containment guarantee. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
 
@@ -77,7 +76,7 @@ dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output ar
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages
 ```
 
-The package smoke installs into isolated locations with fresh caches and exercises the actual CLI and MCP entrypoints. By default it creates and removes its own PostgreSQL Docker fixture, requiring Docker and the same network/extension prerequisites as `integration`; installed npm and NuGet entrypoints must discover/select a newly created database without seed-file edits and commit/clean up an explicitly requested write. An optional `--targets-file PATH` instead enables database calls against separately authorized disposable targets. Package generation verifies that npm and application versions match and includes dependency licenses and notices.
+The package smoke installs into isolated locations with fresh caches and exercises the actual CLI and MCP entrypoints. By default it creates and removes its own PostgreSQL Docker fixture, requiring Docker and the same network/extension prerequisites as `integration`; installed npm and NuGet entrypoints must use an inherited connection string without a targets file, discover/select a newly created database without recurring configuration edits and commit/clean up an explicitly requested write. An optional `--targets-file PATH` instead enables database calls against separately authorized disposable profiles. Package generation verifies that npm and application versions match and includes dependency licenses and notices.
 
 Windows/macOS CI uses `packages --artifacts artifacts/packages --installation-only` because those runners do not provide the Docker fixture. This explicit mode still installs both artifacts offline, exercises their actual native CLI and MCP entrypoints, checks missing-.NET diagnostics, requires structured unavailable-database errors and verifies shutdown. It does not claim live discovery/query/write coverage; the Linux package job retains the full disposable-database scenarios above. Do not combine this mode with `--targets-file`, and do not use it to bypass a failed database verification run.
 
@@ -101,7 +100,7 @@ dotnet tool install --tool-path ./artifacts/tools --configfile ./artifacts/packa
 
 On Windows, the tool executable ends in `.exe`. The generated `NuGet.Config` contains only the artifact directory and does not change user-level feeds. Regenerate it after moving the artifacts directory. Use a fresh tool directory or `dotnet tool update` when reinstalling. Do not point an MCP client at a `.nupkg` file.
 
-Both installed entrypoints accept the same `--targets-file` and `--validate` flags as the source entrypoint. Runtime requirements remain those in [README.md](README.md).
+Both installed entrypoints accept the inherited `POSTGRES_CONNECTION_STRING` and `--validate` used by the source entrypoint; optional `--targets-file` remains supported as an alternative, not combined with the base string. Runtime requirements remain those in [README.md](README.md).
 
 ### Install a verified release artifact
 
@@ -132,18 +131,18 @@ The downloaded artifact does not contain the build's generated local-feed config
 </configuration>
 ```
 
-Install into a fresh dedicated tool directory using only that local source:
+Install into a fresh dedicated tool directory using only that local source. For the final `--validate` command, first prepare the connection string with the [hidden prompt](README.md#2-prepare-the-connection-environment) in this same shell:
 
 ```bash
 dotnet tool install codegiveness.postgresql-sharp-mcp --version "<version>" \
   --tool-path ./postgresql-mcp-tool --configfile ./release-artifacts/NuGet.Config
 ./postgresql-mcp-tool/postgresql-sharp-mcp --version
-./postgresql-mcp-tool/postgresql-sharp-mcp --targets-file "<protected-targets-file>" --validate
+./postgresql-mcp-tool/postgresql-sharp-mcp --validate
 ```
 
 `--validate` performs a read-only connectivity query and can print the PostgreSQL database identity on stderr. Keep that output private; do not paste it into public reports or CI evidence for a real database.
 
-Use the absolute installed executable path in your MCP client's stdio entry and keep the .NET 10 runtime available. Follow [target configuration and MCP setup](README.md#2-configure-database-targets), reload the client's MCP configuration, then verify live database discovery and an authorized `SELECT 1`. To keep this installation check in restricted mode, explicitly set `POSTGRES_ACCESS_MODE=restricted` in the client environment; the README's primary example otherwise defaults to unrestricted. Do not use application data or attempt writes merely to prove installation.
+Use the absolute installed executable path in your MCP client's stdio entry and keep the .NET 10 runtime available. Follow [connection environment and MCP setup](README.md#2-prepare-the-connection-environment), fully quit the client and launch it from that prepared shell, then verify live database discovery and an authorized `SELECT 1`. `/mcp reload` alone cannot give an existing client a new parent environment. To keep this installation check in restricted mode, explicitly set `POSTGRES_ACCESS_MODE=restricted` in the client environment; the README's primary example otherwise defaults to unrestricted. Do not use application data or attempt writes merely to prove installation. Protected files remain an [optional alternative](README.md#optional-protected-targets-file), including for GUI clients that cannot inherit the prepared environment.
 
 ### Self-contained executable and container
 
@@ -156,16 +155,24 @@ dotnet publish src/PostgreSqlMcp/PostgreSqlMcp.csproj -c Release -r linux-x64 --
 
 Self-contained builds still require platform-native libraries. Cross-compiling does not establish runtime compatibility; exercise each platform you claim to support.
 
-Build and run the container with a read-only configuration mount:
+Build and run the container from a shell prepared with the README's [hidden connection-string prompt](README.md#2-prepare-the-connection-environment), with stale targets settings cleared:
 
 ```bash
 docker build -t postgresql-sharp-mcp .
+docker run --rm -i -e POSTGRES_CONNECTION_STRING postgresql-sharp-mcp
+```
+
+`-e POSTGRES_CONNECTION_STRING` passes the existing shell value without putting its literal contents in command history; Docker/container inspection and sufficiently privileged operators can still see the plaintext container environment. It is not a secret store. Restart the container after credential changes.
+
+For an optional protected file instead, clear the conflicting connection-string/targets-JSON settings as described in the README, then use a read-only mount:
+
+```bash
 docker run --rm -i \
   --mount "type=bind,src=<absolute-path-to-protected-targets-file>,dst=/run/postgres.targets.json,readonly" \
   -e POSTGRES_TARGETS_FILE=/run/postgres.targets.json postgresql-sharp-mcp
 ```
 
-The database hostname must be reachable from the container; `localhost` refers to the container itself. Ensure its non-root runtime user can read the mount using a suitable group/UID or secret mount, not world-readable permissions. `-i` keeps stdin available for MCP stdio.
+The database hostname must be reachable from the container; `localhost` refers to the container itself. Retain certificate validation for remote connections and mount any required CA material at the connection string's container path. For the optional credentials file, ensure the non-root runtime user can read it using a suitable group/UID or secret mount, not world-readable permissions. `-i` keeps stdin available for MCP stdio. Both routes use one bootstrap profile to select live physical databases without per-database JSON edits.
 
 ## Issues, pull requests and reviews
 
@@ -178,6 +185,8 @@ The database hostname must be reachable from the container; `localhost` refers t
 Keep versions, affected help/docs and release notes consistent. Update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and bundled licenses when shipped dependencies change. Contributions are under the project's [MIT license](LICENSE); dependencies retain their own terms.
 
 ## Automation and releases
+
+Compatible documentation, setup improvements and fixes use a patch increment, such as **0.3.0 → 0.3.1**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. The **0.3.1** version in this revision is the unreleased environment-first patch candidate, not evidence of a NuGet/npm/GitHub Release publication.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
