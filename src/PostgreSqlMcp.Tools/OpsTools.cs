@@ -12,7 +12,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
     [McpServerTool(Name = "analyze_db_health", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Current-database health summary or focused vacuum, index, constraints, sequences, replication, or blocking evidence. Results are paged; no changes are made.")]
     public Task<CallToolResult> AnalyzeDbHealth(CancellationToken ct, string database,
-        string section = "summary", string? schema = null, int? limit = null, int offset = 0) =>
+        string section = "summary", string? schema = null, int? limit = null, int offset = 0, string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string sql = section.ToLowerInvariant() switch
@@ -26,7 +26,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
                 "blocking" => BlockingSql,
                 _ => throw new ToolException("invalid_section", "section must be summary, vacuum, index, constraints, sequences, replication, or blocking.")
             };
-            QueryPage page = await executor.QueryAsync(database, sql, Filters(schema), limit, offset, ct: ct);
+            QueryPage page = await executor.QueryAsync(database, sql, Filters(schema), limit, offset, ct: ct, target: target);
             return new
             {
                 database, section, result = page,
@@ -46,7 +46,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
     [McpServerTool(Name = "get_top_queries", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Rank pg_stat_statements for the current database only. Requires an installed, preloaded extension; query text clipping is explicit.")]
     public Task<CallToolResult> GetTopQueries(CancellationToken ct, string database,
-        string order_by = "total_time", int? limit = null, int offset = 0) =>
+        string order_by = "total_time", int? limit = null, int offset = 0, string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string order = order_by.ToLowerInvariant() switch
@@ -88,16 +88,16 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
                 {
                     throw new ToolException("extension_not_ready", "pg_stat_statements is installed but not initialized (SQLSTATE 55000). Ask the administrator to configure shared_preload_libraries and restart PostgreSQL; this tool does not change server configuration.");
                 }
-            }, ct: ct);
+            }, ct: ct, target: target);
         });
 
     [McpServerTool(Name = "analyze_indexes", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Paged current-database index validity, usage, size and structurally duplicate evidence. Recommendations are contextual, never fabricated missing-index predictions.")]
     public Task<CallToolResult> AnalyzeIndexes(CancellationToken ct, string database,
-        string? schema = null, string? table = null, int? limit = null, int offset = 0) =>
+        string? schema = null, string? table = null, int? limit = null, int offset = 0, string? target = null) =>
         ToolReply.Run(database, async () =>
         {
-            QueryPage page = await executor.QueryAsync(database, IndexSql, Filters(schema, table), limit, offset, ct: ct);
+            QueryPage page = await executor.QueryAsync(database, IndexSql, Filters(schema, table), limit, offset, ct: ct, target: target);
             return new { database, result = page, notes = IndexNotes,
                 evaluation = "Use explain_query on the actual workload. Supply candidate CREATE INDEX statements there to compare real planner costs through an already-installed hypopg extension. No indexes are created by these tools." };
         });

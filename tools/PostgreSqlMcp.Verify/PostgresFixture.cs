@@ -8,6 +8,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
     private bool started;
     private bool attempted;
     public int Port { get; private set; }
+    public const string PunctuationDatabase = "tenant ' ; \" = punctuation";
 
     public async Task StartAsync()
     {
@@ -32,8 +33,24 @@ internal sealed class PostgresFixture : IAsyncDisposable
     }
 
     public Task<ProcessResult> SqlAsync(string database, string sql) => Processes.RunAsync(
-        new("docker", "exec", "-i", name, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", database), input: sql);
+        new("docker", "exec", "-i", "-e", "PGDATABASE=" + database, name, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres"), input: sql);
 
+    public async Task CreateDatabaseAsync(string database)
+    {
+        await SqlAsync("postgres", $"CREATE DATABASE {Identifier(database)};");
+        await SqlAsync(database, "CREATE TABLE marker(value text NOT NULL); INSERT INTO marker VALUES ('DYNAMIC_ONLY'); GRANT SELECT ON marker TO mcp_reader,mcp_writer;");
+    }
+
+    public async Task<int> RuntimeBackendCountAsync(bool activeOnly = false)
+    {
+        ProcessResult result = await SqlAsync("postgres", "SELECT count(*) FROM pg_stat_activity WHERE application_name='postgresql-sharp-mcp'"
+            + (activeOnly ? " AND state='active'" : "") + ";");
+        string value = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim())
+            .Single(line => int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out _));
+        return int.Parse(value, CultureInfo.InvariantCulture);
+    }
+
+    public static string Identifier(string value) => "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     private async Task SeedAsync()
     {
         await SqlAsync("postgres", """

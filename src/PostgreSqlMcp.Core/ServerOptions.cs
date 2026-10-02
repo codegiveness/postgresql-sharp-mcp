@@ -8,7 +8,8 @@ namespace PostgreSqlMcp.Core;
 public sealed class ServerOptions
 {
     public required IReadOnlyDictionary<string, string> Targets { get; init; }
-    public bool Unrestricted { get; init; }
+    public IReadOnlySet<string>? AllowedDatabases { get; init; }
+    public bool Unrestricted { get; init; } = true;
     public int QueryTimeout { get; init; } = 30;
     public int MaxRows { get; init; } = 1000;
     public int MaxResultBytes { get; init; } = 65536;
@@ -45,6 +46,7 @@ public sealed class ServerOptions
             return n;
         }
         var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        HashSet<string>? allowedDatabases = null;
         try
         {
             string? json = Env("TARGETS");
@@ -62,17 +64,28 @@ public sealed class ServerOptions
                     if (!targets.TryAdd(item.Name, item.Value.GetString() ?? ""))
                         throw new ToolException("configuration", "Duplicate target alias.");
             }
-            else if (baseString is not null && names is not null)
+            else if (baseString is not null)
             {
-                using var doc = JsonDocument.Parse(names);
-                foreach (var name in doc.RootElement.EnumerateArray())
+                var builder = new NpgsqlConnectionStringBuilder(baseString);
+                if (names is not null)
                 {
-                    string db = name.GetString() ?? "";
-                    var builder = new NpgsqlConnectionStringBuilder(baseString) { Database = db };
-                    if (!targets.TryAdd(db, builder.ConnectionString)) throw new ToolException("configuration", "Duplicate database target.");
+                    using var doc = JsonDocument.Parse(names);
+                    allowedDatabases = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var name in doc.RootElement.EnumerateArray())
+                    {
+                        string db = name.GetString() ?? "";
+                        builder.Database = db;
+                        if (!allowedDatabases.Add(db) || !targets.TryAdd(db, builder.ConnectionString))
+                            throw new ToolException("configuration", "Duplicate database target.");
+                    }
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(builder.Database)) builder.Database = "postgres";
+                    targets.Add("primary", builder.ConnectionString);
                 }
             }
-            else throw new ToolException("configuration", "Set POSTGRES_TARGETS, POSTGRES_TARGETS_FILE, or POSTGRES_CONNECTION_STRING + POSTGRES_DATABASES (JSON array).");
+            else throw new ToolException("configuration", "Set POSTGRES_CONNECTION_STRING, POSTGRES_TARGETS, or POSTGRES_TARGETS_FILE.");
             if (targets.Count is < 1 or > 32) throw new ToolException("configuration", "Configure 1..32 database targets.");
             foreach (var (alias, connectionString) in targets)
             {
@@ -90,13 +103,14 @@ public sealed class ServerOptions
             // Provider/parser messages can contain secrets; never echo connection-string input.
             throw new ToolException("configuration", "Invalid targets configuration. Check JSON, file access and Npgsql connection-string syntax.");
         }
-        string mode = Value("--access-mode", "ACCESS_MODE") ?? "restricted";
+        string mode = Value("--access-mode", "ACCESS_MODE") ?? "unrestricted";
         if (mode is not ("restricted" or "unrestricted")) throw new ToolException("configuration", "Access mode must be restricted or unrestricted.");
         int poolSize = Number("POOL_SIZE", 8, 1, 32);
         if (poolSize * targets.Count > 256) throw new ToolException("configuration", "Targets × POSTGRES_POOL_SIZE must not exceed 256.");
         return new ServerOptions
         {
-            Targets = new ReadOnlyDictionary<string, string>(targets), Unrestricted = mode == "unrestricted",
+            Targets = new ReadOnlyDictionary<string, string>(targets), AllowedDatabases = allowedDatabases,
+            Unrestricted = mode == "unrestricted",
             QueryTimeout = Number("QUERY_TIMEOUT", 30, 1, 600, "--query-timeout"),
             MaxRows = Number("MAX_ROWS", 1000, 1, 5000), MaxResultBytes = Number("MAX_RESULT_BYTES", 65536, 4096, 1048576),
             MaxCellChars = Number("MAX_CELL_CHARS", 4096, 1, 16384), PoolSize = poolSize,

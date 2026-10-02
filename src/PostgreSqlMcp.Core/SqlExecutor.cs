@@ -10,23 +10,24 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     private readonly SemaphoreSlim _calls = new(options.MaxConcurrentCalls);
 
     public Task<QueryPage> QueryAsync(string database, string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default) =>
-        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token), readOnly, ct);
+        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null) =>
+        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token), readOnly, ct, target);
 
     public async Task<T> WithSessionAsync<T>(string database, Func<SqlSession, CancellationToken, Task<T>> action,
-        bool readOnly = true, CancellationToken ct = default)
+        bool readOnly = true, CancellationToken ct = default, string? target = null)
     {
-        // Resolve before queueing: an unknown target cannot allocate a pool or reach any database.
-        NpgsqlDataSource source = registry.Get(database);
+        DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target);
         if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "Writes require server access-mode unrestricted and read_only=false.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.QueryTimeout));
         CancellationToken token = deadline.Token;
         bool entered = false;
+        DatabaseRegistry.SourceEntry? source = null;
         try
         {
             await _calls.WaitAsync(token).ConfigureAwait(false); entered = true;
-            await using var connection = await source.OpenConnectionAsync(token).ConfigureAwait(false);
+            source = await registry.AcquireAsync(selection, token).ConfigureAwait(false);
+            await using var connection = await source.Source.OpenConnectionAsync(token).ConfigureAwait(false);
             await using var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
             // Control statements are fixed server text. User SQL cannot end this transaction.
             await using (var setup = new NpgsqlCommand($"SET TRANSACTION {(readOnly ? "READ ONLY" : "READ WRITE")}; SET LOCAL standard_conforming_strings=on; SET LOCAL statement_timeout='{options.QueryTimeout * 1000}ms'; SET LOCAL lock_timeout='{options.QueryTimeout * 1000}ms'", connection, transaction)
@@ -40,7 +41,14 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         { throw new ToolException("timeout", $"Operation exceeded {options.QueryTimeout}s (including pool/queue wait)."); }
-        finally { if (entered) _calls.Release(); }
+        finally
+        {
+            try
+            {
+                if (source is not null) await registry.ReleaseAsync(source).ConfigureAwait(false);
+            }
+            finally { if (entered) _calls.Release(); }
+        }
     }
 
     public void Dispose() => _calls.Dispose();

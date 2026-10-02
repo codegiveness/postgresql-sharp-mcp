@@ -17,7 +17,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
     public Task<CallToolResult> ExplainQuery(CancellationToken ct, string database, string sql,
-        string format = "summary", bool analyze = false, string[]? indexes = null) =>
+        string format = "summary", bool analyze = false, string[]? indexes = null, string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string statement = SqlGuard.Validate(sql);
@@ -127,7 +127,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                             throw new ToolException("hypopg_cleanup_failed", "Hypothetical index cleanup failed. The connection pool was cleared so this session cannot leak candidates to later calls.");
                     }
                 }
-            }, ct: ct);
+            }, ct: ct, target: target);
         });
 
     private string[] ValidateCandidates(string[]? indexes)

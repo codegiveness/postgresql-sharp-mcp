@@ -9,17 +9,20 @@ using PostgreSqlMcp.Tools;
 if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", StringComparer.Ordinal))
 {
     Console.WriteLine("""
-        postgresql-sharp-mcp — PostgreSQL MCP over stdio
-        --targets-file PATH      JSON object: target alias -> Npgsql connection string
-        --connection-string STR  Base credentials (POSTGRES_CONNECTION_STRING overrides CLI)
-        --databases JSON         Explicit database allowlist (JSON string array)
-        --access-mode MODE       restricted (default) or unrestricted
+        postgresql-sharp-mcp — database-agnostic PostgreSQL MCP over stdio
+        --targets-file PATH      JSON object: connection profile -> Npgsql seed connection
+        --connection-string STR  Server credentials (POSTGRES_CONNECTION_STRING overrides CLI)
+        --databases JSON         Optional explicit database allowlist (JSON string array)
+        --access-mode MODE       unrestricted (default) or restricted
         --query-timeout SECONDS  1..600 (default 30)
         --log-level LEVEL        trace|debug|information|warning|error|critical|none
-        --validate               Check each configured target and exit; diagnostics on stderr
+        --validate               Check each configured seed connection and exit; diagnostics on stderr
         --version                Print executable version
-        Environment: POSTGRES_TARGETS or POSTGRES_TARGETS_FILE, or
-          POSTGRES_CONNECTION_STRING + POSTGRES_DATABASES. Targets JSON wins over file.
+        Environment: POSTGRES_CONNECTION_STRING, POSTGRES_TARGETS or POSTGRES_TARGETS_FILE.
+        POSTGRES_DATABASES optionally limits connection-string mode. Targets JSON wins over file.
+        Discover accessible databases with list_databases; select a physical name per call.
+        Optional tool target selects a profile; default is primary or the first ordinal alias.
+        No USE statement, shared current database, or per-database file editing is required.
         Limits: POSTGRES_MAX_ROWS, POSTGRES_MAX_RESULT_BYTES, POSTGRES_MAX_CELL_CHARS,
           POSTGRES_POOL_SIZE, POSTGRES_MAX_CONCURRENT_CALLS.
         """);
