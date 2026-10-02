@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Update artifact uploads to the verified Node 24-based action; link the enabled private vulnerability-reporting route and clarify observed registry-account prerequisites and Scorecard measurement limits.
+
 ## 0.2.0
 
 - Replace the JavaScript npm launcher with a .NET installation helper and bundled native apphosts; the installed server runs without a Node process. Installation requires .NET 10 and package-specific lifecycle approval on npm 12; custom installations require `DOTNET_ROOT`.
