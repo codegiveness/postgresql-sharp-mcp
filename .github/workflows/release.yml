@@ -1,0 +1,30 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  publish:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify real MCP behavior
+        run: bash scripts/verify.sh
+      - name: Build release artifacts
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for rid in linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64; do
+            dotnet publish src/PostgreSqlMcp/PostgreSqlMcp.csproj -c Release -r "$rid" --self-contained -p:Version="$version" -o "artifacts/$rid"
+            tar -czf "artifacts/postgresql-sharp-mcp-$rid.tar.gz" -C "artifacts/$rid" .
+          done
+          dotnet pack src/PostgreSqlMcp/PostgreSqlMcp.csproj -c Release -p:Version="$version" -o artifacts
+      - name: Create release with completed artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.tar.gz artifacts/*.nupkg --title "$GITHUB_REF_NAME" --generate-notes

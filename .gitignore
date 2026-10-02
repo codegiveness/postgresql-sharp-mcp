@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+artifacts/
+.env
+.env.*
+!.env.example
+*targets.local.json
+.vs/
+.idea/
+*.user
+.scratch/

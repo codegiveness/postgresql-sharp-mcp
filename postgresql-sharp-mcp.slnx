@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PostgreSqlMcp.Core/PostgreSqlMcp.Core.csproj" />
+    <Project Path="src/PostgreSqlMcp.Tools/PostgreSqlMcp.Tools.csproj" />
+    <Project Path="src/PostgreSqlMcp/PostgreSqlMcp.csproj" />
+  </Folder>
+</Solution>

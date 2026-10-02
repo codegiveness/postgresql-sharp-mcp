@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Version>0.1.0</Version>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>codegiveness.postgresql-sharp-mcp</PackageId>
+    <ToolCommandName>postgresql-sharp-mcp</ToolCommandName>
+    <Authors>codegiveness</Authors>
+    <Copyright>Copyright (c) 2026 codegiveness</Copyright>
+    <Description>Bounded, explicit multi-database PostgreSQL MCP server using Npgsql.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/codegiveness/postgresql-sharp-mcp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/codegiveness/postgresql-sharp-mcp.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../PostgreSqlMcp.Tools/PostgreSqlMcp.Tools.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSES/*.txt" Link="LICENSES/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="LICENSES/" />
+  </ItemGroup>
+</Project>
