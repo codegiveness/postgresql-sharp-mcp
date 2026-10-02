@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Update artifact uploads to the verified Node 24-based action; link the enabled private vulnerability-reporting route and clarify observed registry-account prerequisites and Scorecard measurement limits.
+- Pin stable SDK 10.0.401 and SourceLink 10.0.401; align compatible transitive dependencies with current stable NuGet versions, including AI abstractions 10.10.1, and regenerate portable/five-RID lock graphs.
+- Bound subprocess stdin/output-drain lifetimes with the command deadline, and MCP verifier request writes/response waits with one cancelable deadline. Bound asynchronous stdin close after a failed write; observe canceled readers before disposal, close failed-start/socket resources, and wait for the fixture's final TCP server. Add blocked-input/inherited-pipe and failed-MCP-writer cleanup regression checks.
+- Modernize result serialization, generated regex properties, asynchronous PostgreSQL text reads, `ReadAtLeastAsync`-based bounded binary reads and pooled plan scratch buffers. Remove redundant archive-scanning copies and use modern temporary-directory creation.
+- Document measured allocation/retained-heap behavior and the limits of a finite leak review; keep C# 14 SDK defaults and preserve MCP/package contracts.
+- Add fixed-seed, real-PostgreSQL SQL fuzz/property scenarios and a fail-closed C# SARIF severity-delta comparator with meaningful regression coverage.
+- Upgrade runtime OpenSSL packages to address CVE-2026-84782 in the pinned base image; retain non-root execution and native GSS support.
 
 ## 0.2.0
 

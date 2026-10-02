@@ -9,6 +9,7 @@ Configured controls are not proof that a scan passed, an artifact was attested, 
 - Configured aliases select allowlisted connections, with no fallback database and no connection strings accepted from tool arguments. Tenant separation requires appropriate PostgreSQL credentials and permissions.
 - SDK/provider payload logging is disabled. Tool errors preserve SQLSTATE with fixed summaries, not PostgreSQL messages, hints or details. Successful results can contain sensitive authorized data.
 - Bounded pools, operation deadlines, server-side read-only pagination and response limits constrain resource use, but do not prevent expensive SQL or guarantee a total process memory/CPU ceiling.
+- Connections, transactions, commands/readers, cancellation sources and query/plan scratch buffers have scoped ownership. HypoPG failure cleanup resets session-local state or clears the pool. A finite repeated-call heap/handle review and in-flight shutdown smoke found no progressive retention on the exercised paths; see [measured resource limits](../README.md#access-and-resource-boundaries), not a blanket leak-free guarantee.
 
 See [SECURITY.md](../SECURITY.md) for credentials, TLS, extension privileges, reporting and operational limits.
 
@@ -20,6 +21,7 @@ See [SECURITY.md](../SECURITY.md) for credentials, TLS, extension privileges, re
 - Actions use verified full commit pins, checkout credentials are not persisted, and publishing secrets are scoped to the `release` environment. No privileged `pull_request_target` or `workflow_run` execution of untrusted code is configured.
 - Main requires PRs, up-to-date required checks from GitHub Actions, and blocks force pushes/deletion, including administrators. The solo-maintainer policy does not require another person's approval; it does not claim independent review.
 - Installation checks execute native npm and NuGet entrypoints on Linux, Windows and macOS in CI. Database integration runs against disposable PostgreSQL, not an operator's configured database. Cross-built ARM64/Intel archives are not proof of execution on all architectures.
+- Fixed-seed SQL fuzz/property scenarios exercise real PostgreSQL literal round trips, statement/control boundaries and malformed inputs. They supplement existing permissions, rollback and cancellation coverage; they are not exhaustive fuzzing or OSS-Fuzz enrollment.
 
 Scorecard's published results can have measurement blind spots: its default Actions token cannot read classic branch-protection rules, and packaging heuristics may not recognize compiled release orchestration. Check protection through the repository API and publication/attestations through the actual release evidence instead of adding a broad token or changing code merely to satisfy a heuristic. A young repository, solo-maintainer reviews and lack of Best Practices enrollment can also lower the score; no artificial activity or unsupported badge is used to inflate it.
 

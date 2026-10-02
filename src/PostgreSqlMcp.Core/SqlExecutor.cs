@@ -101,7 +101,7 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
                 Type fieldType = reader.GetFieldType(col);
                 if (fieldType == typeof(string))
                 {
-                    using TextReader text = reader.GetTextReader(col);
+                    using TextReader text = await reader.GetTextReaderAsync(col, ct).ConfigureAwait(false);
                     int cap = Math.Min(options.MaxCellChars, Math.Max(1, budget / 6));
                     char[] buffer = ArrayPool<char>.Shared.Rent(cap + 1);
                     try
@@ -121,12 +121,8 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
                     byte[] buffer = ArrayPool<byte>.Shared.Rent(cap + 1);
                     try
                     {
-                        int count = 0;
-                        while (count <= cap)
-                        {
-                            int n = await stream.ReadAsync(buffer.AsMemory(count, cap + 1 - count), ct).ConfigureAwait(false);
-                            if (n == 0) break; count += n;
-                        }
+                        int count = await stream.ReadAtLeastAsync(buffer.AsMemory(0, cap + 1), cap + 1,
+                            throwOnEndOfStream: false, cancellationToken: ct).ConfigureAwait(false);
                         clipped = count > cap; row[col] = Convert.ToBase64String(buffer, 0, Math.Min(count, cap));
                     }
                     finally { ArrayPool<byte>.Shared.Return(buffer); }

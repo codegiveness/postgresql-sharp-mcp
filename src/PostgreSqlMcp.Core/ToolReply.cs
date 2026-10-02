@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
@@ -65,11 +66,11 @@ public static class ToolReply
 
     public static CallToolResult Success(object value, string database = "")
     {
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
-        if (bytes.Length > _maxBytes)
+        JsonElement element = JsonSerializer.SerializeToElement(value, JsonOptions);
+        string text = element.GetRawText();
+        if (Encoding.UTF8.GetByteCount(text) > _maxBytes)
             return Error(database, "result_too_large", "Result exceeds the configured byte budget. Request a smaller limit, focused section or shorter SQL projection.");
-        using var doc = JsonDocument.Parse(bytes);
-        return Result(doc.RootElement.Clone(), false);
+        return Result(element, false, text);
     }
 
     public static CallToolResult Error(string database, string code, string message, string? sqlState = null)
@@ -82,9 +83,9 @@ public static class ToolReply
         return Result(value, true);
     }
     private static string Clip(string value, int max) => value.Length <= max ? value : value[..max] + "… [truncated]";
-    private static CallToolResult Result(JsonElement value, bool error) => new()
+    private static CallToolResult Result(JsonElement value, bool error, string? text = null) => new()
     {
         IsError = error, StructuredContent = value,
-        Content = [new TextContentBlock { Text = value.GetRawText() }]
+        Content = [new TextContentBlock { Text = text ?? value.GetRawText() }]
     };
 }

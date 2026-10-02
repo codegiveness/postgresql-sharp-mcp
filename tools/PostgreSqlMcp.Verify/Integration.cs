@@ -9,6 +9,8 @@ internal static class Integration
     public static async Task RunAsync(string root)
     {
         await Processes.RunAsync(new("dotnet", "build", Path.Combine(root, "postgresql-sharp-mcp.slnx"), "-c", "Release"), timeout: 180);
+        await ResourceChecks.RunAsync();
+        SarifRegression.Run();
         await using var fixture = new PostgresFixture();
         await fixture.StartAsync();
         var command = new Command("dotnet", Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net10.0", "PostgreSqlMcp.dll"));
@@ -36,6 +38,7 @@ internal static class Integration
             await VerifyBoundariesAsync(client);
             await VerifyPaginationAsync(client);
             await VerifySqlAsync(client);
+            await FuzzChecks.RunAsync(client);
             await VerifyCatalogAsync(client);
             await VerifyOperationsAsync(client, fixture);
             await VerifyPlansAsync(client);

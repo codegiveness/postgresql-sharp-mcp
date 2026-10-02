@@ -89,8 +89,7 @@ internal static class Release
         Directory.CreateDirectory(output);
         foreach (string rid in Rids)
         {
-            string temporary = Path.Combine(Path.GetTempPath(), "postgresql-release-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(temporary);
+            string temporary = Directory.CreateTempSubdirectory("postgresql-release-").FullName;
             try
             {
                 await RunAsync("dotnet", ["publish", "src/PostgreSqlMcp/PostgreSqlMcp.csproj", "-c", "Release", "-r", rid, "--self-contained", "-p:RestoreLockedMode=true", "-o", temporary], root);
@@ -223,12 +222,35 @@ internal static class Release
         var start = new ProcessStartInfo(executable) { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (string argument in args) start.ArgumentList.Add(argument);
         if (environment is not null) foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Unable to start release tool.");
-        Task<string> output = process.StandardOutput.ReadToEndAsync();
-        Task<string> error = process.StandardError.ReadToEndAsync();
+        using var process = new Process { StartInfo = start };
+        if (!process.Start()) throw new InvalidOperationException("Unable to start release tool.");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(15));
-        try { await process.WaitForExitAsync(deadline.Token); }
-        catch { if (!process.HasExited) process.Kill(true); await process.WaitForExitAsync(); throw; }
-        return (process.ExitCode, await output, await error);
+        Task<string> output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        Task<string> error = process.StandardError.ReadToEndAsync(deadline.Token);
+        Task drains = Task.WhenAll(output, error);
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+            await drains;
+            return (process.ExitCode, output.Result, error.Result);
+        }
+        finally
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    try { process.Kill(entireProcessTree: true); }
+                    catch (InvalidOperationException) when (process.HasExited) { }
+                    await process.WaitForExitAsync();
+                }
+            }
+            finally
+            {
+                await deadline.CancelAsync();
+                // Timed-out captures still own their drains until both have finished.
+                await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+        }
     }
 }
