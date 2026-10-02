@@ -28,7 +28,7 @@ public sealed class ServerOptions
             if (args[i] == "--validate") { validate = true; continue; }
             int equals = args[i].IndexOf('=');
             string key = equals < 0 ? args[i] : args[i][..equals];
-            if (!allowed.Contains(key, StringComparer.Ordinal)) throw new ToolException("configuration", $"Unknown option: {key}.");
+            if (!allowed.Contains(key, StringComparer.Ordinal)) throw new ToolException("configuration", "Unknown option. Use --help for supported options.");
             string value = equals < 0
                 ? ++i < args.Length ? args[i] : throw new ToolException("configuration", $"Missing value for {key}.")
                 : args[i][(equals + 1)..];
@@ -85,7 +85,7 @@ public sealed class ServerOptions
                     throw new ToolException("configuration", "No Reset On Close and Multiplexing are not supported.");
             }
         }
-        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException or IOException)
+        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             // Provider/parser messages can contain secrets; never echo connection-string input.
             throw new ToolException("configuration", "Invalid targets configuration. Check JSON, file access and Npgsql connection-string syntax.");

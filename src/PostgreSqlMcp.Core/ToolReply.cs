@@ -23,7 +23,8 @@ public static class ToolReply
         catch (PostgresException ex)
         {
             string code = ex.SqlState == "57014" ? "timeout" : "postgresql_error";
-            return Error(database, code, ex.MessageText, ex.SqlState, ex.Hint);
+            // MessageText and Hint can contain values even when IncludeErrorDetail is disabled.
+            return Error(database, code, PostgreSqlMessage(ex.SqlState), ex.SqlState);
         }
         catch (OperationCanceledException) { throw; }
         catch (NpgsqlException ex) when (ex.InnerException is TimeoutException)
@@ -35,6 +36,33 @@ public static class ToolReply
         { return Error(database, "internal_error", "Unexpected server failure; no fallback was used."); }
     }
 
+    private static string PostgreSqlMessage(string sqlState) => sqlState switch
+    {
+        "57014" => "PostgreSQL canceled the operation (statement timeout or cancellation).",
+        "42501" => "The configured PostgreSQL role does not have permission for this operation.",
+        "25006" => "PostgreSQL rejected this operation in a read-only transaction.",
+        "25001" => "PostgreSQL rejected a transaction setting change after the transaction became active.",
+        "28P01" or "28000" => "PostgreSQL authentication failed. Check the configured credentials and authentication policy.",
+        "3D000" => "The configured PostgreSQL database does not exist.",
+        "42601" => "PostgreSQL rejected the SQL syntax. Check the statement using the returned SQLSTATE.",
+        "42P01" => "A referenced relation does not exist or is not visible in the current search path.",
+        "42703" => "A referenced column does not exist.",
+        "42883" => "No matching PostgreSQL function or operator was found. Check argument types and search path.",
+        "22P02" => "A value has invalid syntax for its PostgreSQL type. Check input values and casts.",
+        "22003" => "A numeric value is outside the PostgreSQL type's range.",
+        "22012" => "PostgreSQL rejected division by zero.",
+        "23502" => "The operation violates a NOT NULL constraint.",
+        "23503" => "The operation violates a foreign key constraint.",
+        "23505" => "The operation violates a unique constraint.",
+        "23514" => "The operation violates a check constraint.",
+        "40001" => "PostgreSQL could not serialize the transaction.",
+        "40P01" => "PostgreSQL detected a deadlock and aborted the transaction.",
+        "55P03" => "PostgreSQL could not acquire a required lock.",
+        "53300" => "PostgreSQL has no available connection slots.",
+        "57P01" or "57P02" or "57P03" => "PostgreSQL is shutting down or is not ready to accept connections.",
+        _ => "PostgreSQL rejected the operation. Use the SQLSTATE to investigate; server-provided message and hint are withheld because they may contain sensitive values."
+    };
+
     public static CallToolResult Success(object value, string database = "")
     {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
@@ -44,12 +72,12 @@ public static class ToolReply
         return Result(doc.RootElement.Clone(), false);
     }
 
-    public static CallToolResult Error(string database, string code, string message, string? sqlState = null, string? hint = null)
+    public static CallToolResult Error(string database, string code, string message, string? sqlState = null)
     {
-        // Diagnostics are bounded too; SQL values can appear in PostgreSQL messages.
+        // Bound diagnostics without forwarding provider-controlled text.
         var value = JsonSerializer.SerializeToElement(new
         {
-            database = Clip(database, 128), error = new { code, message = Clip(message, 768), sql_state = sqlState, hint = hint is null ? null : Clip(hint, 384) }
+            database = Clip(database, 128), error = new { code, message = Clip(message, 768), sql_state = sqlState }
         }, JsonOptions);
         return Result(value, true);
     }

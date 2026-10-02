@@ -57,11 +57,17 @@ public sealed class PlanTools(SqlExecutor executor, ServerOptions options)
                     await ExecuteControl(session, reset, token);
                     using JsonDocument baseline = await ReadPlan(session, statement, false, token);
                     var hypotheticalIndexes = new List<HypotheticalIndex>();
+                    // Candidates are independent; send one batch rather than one round trip per index.
+                    await using var batch = new NpgsqlBatch(session.Connection, session.Transaction) { Timeout = options.QueryTimeout };
+                    foreach (string candidate in candidates)
+                    {
+                        var command = new NpgsqlBatchCommand($"SELECT indexrelid::bigint, indexname FROM {ns}.hypopg_create_index(@candidate)");
+                        command.Parameters.AddWithValue("candidate", candidate);
+                        batch.BatchCommands.Add(command);
+                    }
+                    await using (var reader = await batch.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token))
                     for (int candidate = 0; candidate < candidates.Length; candidate++)
                     {
-                        await using var command = Command(session, $"SELECT indexrelid::bigint, indexname FROM {ns}.hypopg_create_index(@candidate)");
-                        command.Parameters.AddWithValue("candidate", candidates[candidate]);
-                        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token);
                         int created = 0;
                         while (await reader.ReadAsync(token))
                         {
@@ -75,6 +81,8 @@ public sealed class PlanTools(SqlExecutor executor, ServerOptions options)
                         }
                         if (created != 1)
                             throw new ToolException("invalid_index", $"Candidate {candidate} did not create a hypothetical index. Supply a supported CREATE INDEX definition.");
+                        if (candidate + 1 < candidates.Length && !await reader.NextResultAsync(token))
+                            throw new ToolException("invalid_index", "HypoPG did not return a result for each candidate.");
                     }
                     using JsonDocument evaluated = await ReadPlan(session, statement, false, token);
                     PlanSummary before = Summarize(baseline.RootElement);

@@ -52,6 +52,9 @@ if (options.Validate)
 // Disable default file watchers/providers; stdout belongs exclusively to MCP.
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
 builder.Logging.SetMinimumLevel(logLevel).AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+// SDK diagnostics include complete JSON-RPC bodies, including SQL, parameters and results.
+// Provider diagnostics may also contain SQL or server-controlled exception text.
+builder.Logging.AddFilter("ModelContextProtocol", LogLevel.None).AddFilter("Npgsql", LogLevel.None);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<DatabaseRegistry>();
 builder.Services.AddSingleton<SqlExecutor>();
