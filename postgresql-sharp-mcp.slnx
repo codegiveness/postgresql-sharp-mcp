@@ -4,4 +4,10 @@
     <Project Path="src/PostgreSqlMcp.Tools/PostgreSqlMcp.Tools.csproj" />
     <Project Path="src/PostgreSqlMcp/PostgreSqlMcp.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/PostgreSqlMcp.Build/PostgreSqlMcp.Build.csproj" />
+    <Project Path="tools/PostgreSqlMcp.NpmInstall/PostgreSqlMcp.NpmInstall.csproj" />
+    <Project Path="tools/PostgreSqlMcp.Release/PostgreSqlMcp.Release.csproj" />
+    <Project Path="tools/PostgreSqlMcp.Verify/PostgreSqlMcp.Verify.csproj" />
+  </Folder>
 </Solution>
