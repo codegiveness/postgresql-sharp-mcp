@@ -140,7 +140,7 @@ gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main 
 
 Only run publication after account permissions/policy and the existing version tag are ready. For a failed release run, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse verified artifacts.
 
-The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); NuGet returned HTTP 401 (“no matching trust policy”). Those are registry-account prerequisites, not missing GitHub secrets or evidence that either package is published. After correcting the npm scope/new-package permission and the target NuGet policy, rerun the failed jobs:
+The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); that response does not identify the exact npm permission or account mismatch. NuGet returned HTTP 401 (“no matching trust policy”). GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization, configure the matching target NuGet policy, then rerun the failed jobs:
 
 ```bash
 gh run rerun 36967428485 --failed --repo codegiveness/postgresql-sharp-mcp

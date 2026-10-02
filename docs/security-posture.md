@@ -39,7 +39,7 @@ Download and verify actual evidence for the version being installed:
 gh release download v0.2.0 --repo codegiveness/postgresql-sharp-mcp --dir release-verification
 ```
 
-On Linux, run `sha256sum --check SHA256SUMS` in that directory. On macOS, use `shasum -a 256 --check SHA256SUMS`; on Windows use `Get-FileHash -Algorithm SHA256` and compare each filename/digest. For an attested asset:
+On Linux, run `sha256sum --check SHA256SUMS` in that directory. On macOS, use `shasum -a 256 --check SHA256SUMS`; on Windows use `Get-FileHash -Algorithm SHA256` and compare each filename/digest. For an attested asset, use a current [GitHub CLI](https://cli.github.com/) with `gh attestation` support; older CLI versions do not provide this command:
 
 ```bash
 gh attestation verify ./release-verification/postgresql-sharp-mcp-linux-x64.tar.gz --repo codegiveness/postgresql-sharp-mcp
