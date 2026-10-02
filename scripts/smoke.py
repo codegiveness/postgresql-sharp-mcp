@@ -220,6 +220,10 @@ async def verify(dll, container, port):
             assert clipped["clipped_cells"] == [{"row":0,"column":0}], clipped
             assert len(clipped["rows"][0][0]) <= 256
         await m.fails("execute_sql", "unsupported_result_type", database="a", sql="SELECT ARRAY[1,2]")
+        await m.fails("execute_sql", "unsupported_result_value", database="a", sql="SELECT interval '1 month'")
+        await m.fails("execute_sql", "unsupported_result_value", database="a", sql="SELECT 1e100::numeric")
+        assert (await m.ok("execute_sql", database="a", sql="SELECT 1e100::numeric::text"))["rows"] == [["1" + "0"*100]]
+        assert (await m.ok("execute_sql", database="a", sql="SELECT extract(month FROM interval '1 month')::integer"))["rows"] == [[1]]
         await m.fails("execute_sql", "invalid_limit", database="a", sql="SELECT 1", limit=51)
         await m.fails("execute_sql", "invalid_offset", database="a", sql="SELECT 1", offset=-1)
         print("PASS row/byte pagination without omissions; explicit text/binary/Unicode clipping; limits")

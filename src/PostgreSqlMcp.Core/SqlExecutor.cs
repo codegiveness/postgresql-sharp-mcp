@@ -137,7 +137,12 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
                     if (!fieldType.IsPrimitive && fieldType != typeof(decimal) && fieldType != typeof(Guid) && fieldType != typeof(DateTime)
                         && fieldType != typeof(DateTimeOffset) && fieldType != typeof(DateOnly) && fieldType != typeof(TimeOnly) && fieldType != typeof(TimeSpan))
                         throw new ToolException("unsupported_result_type", $"Cast {columns[col].Type} to bounded text in SQL.");
-                    row[col] = reader.GetValue(col);
+                    try { row[col] = reader.GetValue(col); }
+                    catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or OverflowException)
+                    {
+                        throw new ToolException("unsupported_result_value",
+                            $"Column {col} ({columns[col].Type}) cannot fit its scalar .NET mapping. Cast to text or extract a bounded scalar in SQL.");
+                    }
                 }
                 if (clipped) (rowClips ??= []).Add(new(rows.Count, col));
             }

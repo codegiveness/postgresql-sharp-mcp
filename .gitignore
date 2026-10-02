@@ -9,3 +9,4 @@ artifacts/
 .idea/
 *.user
 .scratch/
+__pycache__/
