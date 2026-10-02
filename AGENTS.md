@@ -3,7 +3,7 @@
 ## Scope and authority
 
 - Work only on the requested change. Preserve unrelated work and inspect existing patterns before editing.
-- Development builds, disposable fixtures and artifact installation do not authorize remote activity. Pushing commits/tags, opening issues/PRs, creating releases, publishing packages or changing repository settings require explicit user authorization. Workflow files do not grant that authority.
+- For completed, substantive repository changes, automatically commit only task-owned files, push the work branch and open or update an unmerged pull request before the final response. This is standing authorization for change publication; development builds, fixtures and workflow files do not authorize merging, pushing release tags, creating releases, publishing packages or changing repository settings. Those operations still require explicit user authorization.
 - Never include credentials, real connection strings, private application identifiers, customer SQL or database results in code, logs, documentation, issue drafts or evidence. Use placeholder configuration and disposable synthetic data.
 
 ## Meaningful and traceable changes
@@ -12,6 +12,8 @@
 - For a bug, capture a reproducible failure and demonstrate the same scenario after the fix. Prefer regression coverage for plausible consumer-visible errors rather than source-text, wiring or mock-echo assertions.
 - Keep changes focused and reviewable. Useful issues and PRs record the problem, relevant alternatives, behavior, compatibility/security impact and observed evidence. Existing issue links are helpful, not mandatory for small corrections.
 - Do not manufacture commits, split trivial changes into extra PRs, invent reviews, approve your own PR, trade stars/answers or create empty discussions for profile recognition. Attribute work truthfully.
+- Run applicable local verification before committing, then inspect actual hosted PR checks and report their observed status. Include the problem, supported changes, verification and remaining blockers in the PR. Do not treat an open PR as deployed code or merge it automatically.
+- Chat-only replies and investigations with no repository changes do not warrant commits or PRs. Update an existing task PR rather than create duplicate PRs, never make empty commits, and never include unrelated user changes.
 
 ## Implementation and evidence
 
