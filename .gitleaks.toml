@@ -53,7 +53,7 @@ description = "README connection configuration placeholders"
 condition = "AND"
 paths = ['''^README\.md$''']
 regexTarget = "match"
-regexes = ['''^Password=<(?:database-password|other-password)>$''']
+regexes = ['''^Password=<(?:database-password|other-password|YOUR_PASSWORD)>$''']
 
 # The verifier creates its own loopback-only disposable PostgreSQL containers.
 # These values must remain tied to these exact paths, not entire test files.
