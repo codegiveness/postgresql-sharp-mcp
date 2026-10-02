@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,6 +53,13 @@ GRANT USAGE ON SCHEMA public,app TO mcp_reader,mcp_writer;
 GRANT SELECT ON marker,orders,tuning,app.marker_view TO mcp_reader,mcp_writer;
 GRANT USAGE,SELECT ON SEQUENCE app.counter TO mcp_reader,mcp_writer;
 GRANT INSERT,UPDATE,DELETE ON marker TO mcp_writer;
+CREATE TABLE scoped_rows(id integer, owner_name text NOT NULL);
+INSERT INTO scoped_rows VALUES (1,'mcp_reader'),(2,'mcp_writer');
+ALTER TABLE scoped_rows ENABLE ROW LEVEL SECURITY;
+CREATE POLICY own_rows ON scoped_rows USING (owner_name=current_user);
+GRANT SELECT ON scoped_rows TO mcp_reader,mcp_writer;
+CREATE FUNCTION app.fail_with_sensitive_diagnostic() RETURNS integer LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'sensitive-error-marker' USING HINT='sensitive-hint-marker'; END$$;
 GRANT CREATE ON SCHEMA public TO mcp_writer;
 """)
     docker_sql(container, "tenant_a", """
@@ -66,12 +74,12 @@ SELECT value AS a_workload_marker FROM marker;
 
 class Mcp:
     def __init__(self, dll, env):
-        self.dll, self.env = dll, env
+        self.command, self.env = dll if isinstance(dll, list) else ["dotnet", str(dll)], env
         self.pending, self.next_id = {}, 0
         self.stderr = b""
 
     async def __aenter__(self):
-        self.process = await asyncio.create_subprocess_exec("dotnet", str(self.dll), env=self.env,
+        self.process = await asyncio.create_subprocess_exec(*self.command, env=self.env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         self.reader = asyncio.create_task(self.read_loop())
         self.errors = asyncio.create_task(self.process.stderr.read())
@@ -146,13 +154,15 @@ def rows(page):
 
 
 async def verify(dll, container, port):
+    command = dll if isinstance(dll, list) else ["dotnet", str(dll)]
     base = f"Host=127.0.0.1;Port={port};Username=mcp_reader;Password=reader-disposable;Database="
     targets = {"a": base + "tenant_a", "a_copy": base + "tenant_a", "b": base + "tenant_b", "denied": base + "tenant_denied",
                "missing": base + "does_not_exist", "bad_auth": base.replace("reader-disposable", "wrong") + "tenant_a",
                "offline": "Host=127.0.0.1;Port=1;Username=mcp_reader;Password=reader-disposable;Database=tenant_a"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("POSTGRES_")}
     env.update(POSTGRES_TARGETS=json.dumps(targets), POSTGRES_POOL_SIZE="2", POSTGRES_MAX_CONCURRENT_CALLS="8",
-               POSTGRES_MAX_RESULT_BYTES="4096", POSTGRES_MAX_CELL_CHARS="256", POSTGRES_MAX_ROWS="50", POSTGRES_QUERY_TIMEOUT="3")
+               POSTGRES_MAX_RESULT_BYTES="4096", POSTGRES_MAX_CELL_CHARS="256", POSTGRES_MAX_ROWS="50", POSTGRES_QUERY_TIMEOUT="3",
+               POSTGRES_LOG_LEVEL="trace")
     async with Mcp(dll, env) as m:
         tools = (await m.request("tools/list", {}))["result"]["tools"]
         expected = {"list_databases", "list_schemas", "list_objects", "get_object_details", "execute_sql", "explain_query",
@@ -197,6 +207,7 @@ async def verify(dll, container, port):
         await m.fails("execute_sql", "connection_error", database="offline", sql="SELECT 1")
         await m.fails("execute_sql", "postgresql_error", "42501", database="a", sql="SELECT * FROM secret")
         assert rows(await m.ok("execute_sql", database="b", sql="SELECT value FROM marker"))[0]["value"] == "B_ONLY"
+        assert (await m.ok("execute_sql", database="a", sql="SELECT id FROM scoped_rows ORDER BY id"))["rows"] == [[1]]
         print("PASS unknown, denied, nonexistent, wrong credentials, offline; no fallback; table permissions")
         for alias in ("a", "b"):
             seen = []
@@ -238,6 +249,11 @@ async def verify(dll, container, port):
         quoted = await m.ok("execute_sql", database="a", sql="SELECT $$a;b$$ AS d, E'escaped\\\';still-string' AS e, 'ordinary;string' AS s; -- tail")
         assert quoted["rows"][0] == ["a;b", "escaped';still-string", "ordinary;string"]
         assert rows(await m.ok("execute_sql", database="a", sql="SELECT value FROM marker"))[0]["value"] == "A_ONLY"
+        for sql, state in (("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"),
+                           ("SELECT app.fail_with_sensitive_diagnostic()", "P0001")):
+            diagnostic = await m.fails("execute_sql", "postgresql_error", state, database="a", sql=sql)
+            assert "sensitive-" not in json.dumps(diagnostic) and "hint" not in diagnostic["error"], diagnostic
+        assert (await m.ok("execute_sql", database="a", sql="SELECT 'sensitive-result-marker'"))["rows"] == [["sensitive-result-marker"]]
         print("PASS single-statement guard, read-only DML/CTE protection, syntax errors, timeout and quoted SQL")
         schemas = rows(await m.ok("list_schemas", database="a", prefix="app"))
         assert [row["schema_name"] for row in schemas] == ["app"]
@@ -296,10 +312,18 @@ async def verify(dll, container, port):
         await m.fails("explain_query", "postgresql_error", database="a", sql="SELECT * FROM tuning WHERE customer=42", indexes=candidate + ["CREATE INDEX ON public.no_such_table(customer)"])
         recovered = await asyncio.gather(*(m.ok("explain_query", database="a", sql="SELECT * FROM tuning WHERE customer=42") for _ in range(8)))
         assert all(plan["plan"]["total_cost"] == baseline["plan"]["total_cost"] for plan in recovered), recovered
+        combined = await m.ok("explain_query", database="a", sql="SELECT * FROM tuning WHERE customer=42",
+                              indexes=candidate + ["CREATE INDEX ON public.tuning(id)"])
+        assert [item["candidate"] for item in combined["hypothetical_indexes"]] == [0, 1], combined
+        assert combined["comparison"]["with_indexes_total_cost"] == what_if["comparison"]["with_indexes_total_cost"], combined
+        await m.fails("explain_query", "invalid_options", database="a", sql="SELECT * FROM tuning", analyze=True, indexes=candidate)
         permanent = await m.ok("execute_sql", database="a", sql="SELECT count(*) AS n FROM pg_indexes WHERE tablename='tuning'")
         assert permanent["rows"] == [[0]], permanent
         assert rows(await m.ok("execute_sql", database="a", sql="SELECT value FROM marker"))[0]["value"] == "A_ONLY"
         print(f"PASS estimated/JSON/ANALYZE plans, HypoPG cost {what_if['comparison']['baseline_total_cost']} -> {what_if['comparison']['with_indexes_total_cost']}, cleanup after success/failure; no permanent index")
+    assert all(marker not in m.stderr.decode() for marker in
+               ("reader-disposable", "sensitive-error-marker", "sensitive-hint-marker", "sensitive-result-marker")), m.stderr.decode()
+    print("PASS PostgreSQL error/RAISE hint masking and trace-level request/result log confidentiality")
     writer_env = dict(env)
     writer_env["POSTGRES_ACCESS_MODE"] = "unrestricted"
     writer_env["POSTGRES_TARGETS"] = json.dumps({"a": f"Host=127.0.0.1;Port={port};Username=mcp_writer;Password=writer-disposable;Database=tenant_a"})
@@ -316,6 +340,9 @@ async def verify(dll, container, port):
         await m.ok("execute_sql", database="a", sql="DELETE FROM marker WHERE value='WRITE_OK'", read_only=False)
         await m.ok("execute_sql", database="a", sql="CREATE TABLE mcp_write_test(id integer)", read_only=False)
         assert (await m.ok("execute_sql", database="a", sql="SELECT to_regclass('public.mcp_write_test')::text"))["rows"] == [["mcp_write_test"]]
+        await m.fails("execute_sql", "postgresql_error", "22012", database="a",
+                      sql="INSERT INTO mcp_write_test SELECT 100/(g-2) FROM generate_series(1,3) g", read_only=False)
+        assert (await m.ok("execute_sql", database="a", sql="SELECT count(*) FROM mcp_write_test"))["rows"] == [[0]]
         returning = await m.ok("execute_sql", database="a", sql="INSERT INTO mcp_write_test SELECT g FROM generate_series(1,10) g RETURNING id", limit=3, read_only=False)
         assert returning["truncated"] and "next_offset" not in returning, returning
         assert (await m.ok("execute_sql", database="a", sql="SELECT count(*) FROM mcp_write_test"))["rows"] == [[10]]
@@ -323,7 +350,7 @@ async def verify(dll, container, port):
         print("PASS unrestricted annotations, explicit write opt-in, committed DML/DDL and truncated RETURNING, credential boundaries, no write replay pagination")
     validate_env = dict(env)
     validate_env["POSTGRES_TARGETS"] = json.dumps({key: targets[key] for key in ("a","b")})
-    preflight = subprocess.run(["dotnet", str(dll), "--validate"], env=validate_env, capture_output=True, text=True)
+    preflight = subprocess.run([*command, "--validate"], env=validate_env, capture_output=True, text=True)
     assert preflight.returncode == 0 and preflight.stdout == "", preflight
     checked = [json.loads(line) for line in preflight.stderr.splitlines()]
     assert {row["database"] for row in checked} == {"a","b"} and {row["rows"][0][0] for row in checked} == {"tenant_a","tenant_b"}, checked
@@ -335,7 +362,19 @@ async def verify(dll, container, port):
         assert (await m.ok("execute_sql", database="tenant_b", sql="SELECT current_database(),value FROM marker"))["rows"] == [["tenant_b","B_ONLY"]]
     invalid_env = dict(env)
     invalid_env["POSTGRES_TARGETS"] = '{"a":"Host=localhost;Username=test"}'
-    bad = subprocess.run(["dotnet", str(dll), "--validate"], env=invalid_env, capture_output=True, text=True)
+    unsafe_cli = subprocess.run([*command, "--sensitive-cli-marker"], env=env, capture_output=True, text=True)
+    assert unsafe_cli.returncode == 1 and unsafe_cli.stdout == "" and "sensitive-cli-marker" not in unsafe_cli.stderr, unsafe_cli
+    if os.name == "posix" and os.geteuid() != 0:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sensitive-target-file-marker.json"
+            path.write_text("{}")
+            path.chmod(0)
+            file_env = {k: v for k, v in env.items() if not k.startswith("POSTGRES_")}
+            denied_file = subprocess.run([*command, "--targets-file", str(path), "--validate"],
+                                         env=file_env, capture_output=True, text=True)
+            assert denied_file.returncode == 1 and denied_file.stdout == "", denied_file
+            assert str(path) not in denied_file.stderr and "Exception" not in denied_file.stderr, denied_file
+    bad = subprocess.run([*command, "--validate"], env=invalid_env, capture_output=True, text=True)
     assert bad.returncode == 1 and bad.stdout == "", bad
     print("PASS --validate on both targets, base connection plus explicit allowlist, missing Database startup rejection")
     print("ALL MCP SMOKE SCENARIOS PASSED")
@@ -345,12 +384,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--container", required=True)
     parser.add_argument("--dll", type=Path, default=ROOT / "src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll")
+    parser.add_argument("--command", nargs="+", help="Installed server command and optional arguments (instead of --dll)")
     parser.add_argument("--seed", action="store_true")
     args = parser.parse_args()
     if args.seed: seed(args.container)
     endpoint = subprocess.check_output(["docker", "port", args.container, "5432/tcp"], text=True).strip()
     port = int(endpoint.rsplit(":", 1)[1])
-    asyncio.run(verify(args.dll.resolve(), args.container, port))
+    asyncio.run(verify(args.command or args.dll.resolve(), args.container, port))
 
 
 if __name__ == "__main__": main()

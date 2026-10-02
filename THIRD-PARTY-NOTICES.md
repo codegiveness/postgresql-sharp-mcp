@@ -2,10 +2,9 @@
 
 Project source: MIT, Copyright (c) 2026 codegiveness; see LICENSE.
 
-## References and reuse
+## Source attribution
 
-- **codegiveness/mssql-mcp**, MIT, Copyright (c) 2026 codegiveness: starting architecture (Core/Tools/Host), stdio transport, environment/CLI configuration conventions, explicit error surface, runtime tool annotations, .NET tool packaging and smoke tooling. PostgreSQL provider/queries/guard/resource management are adapted implementations. https://github.com/codegiveness/mssql-mcp
-- **crystaldba/postgres-mcp**, MIT, Copyright (c) 2025 Crystal Corp: capability reference only; no Python implementation copied or redistributed. https://github.com/crystaldba/postgres-mcp
+- Portions adapted from **codegiveness/mssql-mcp**, MIT, Copyright (c) 2026 codegiveness. https://github.com/codegiveness/mssql-mcp
 
 ## Distributed dependencies
 
