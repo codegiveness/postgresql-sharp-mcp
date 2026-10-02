@@ -15,11 +15,19 @@ jobs:
   analyze:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
       actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: manual
+          - language: actions
+            build-mode: none
     env:
       RestoreLockedMode: 'true'
     steps:
@@ -27,46 +35,113 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: matrix.language == 'csharp'
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
       - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          languages: csharp
-          build-mode: none
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          tools: linked # CodeQL bundle 2.27.1, identical across all revisions/languages.
           queries: security-extended
+      - name: Build real solution including compiler-generated code
+        if: matrix.language == 'csharp'
+        run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          category: /language:csharp
-  pull-request-analysis:
+          output: artifacts/codeql
+          category: /language:${{ matrix.language }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: codeql-trusted-${{ matrix.language }}
+          path: artifacts/codeql/*.sarif
+          if-no-files-found: error
+          retention-days: 14
+  pull-request-scans:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    # Analyze PR source without a security-events write token or publication secrets.
+    timeout-minutes: 30
+    # Real C# builds run only with a read-only token, no publishing secrets or uploads.
+    permissions:
+      contents: read
+    env:
+      RestoreLockedMode: 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp, actions]
+        revision: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.revision == 'baseline' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: matrix.language == 'csharp'
+        with:
+          dotnet-version: '10.0.x'
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.language == 'csharp' && 'manual' || 'none' }}
+          tools: linked
+          queries: security-extended
+      - name: Build scanned revision including compiler-generated code
+        if: matrix.language == 'csharp'
+        run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          upload: never
+          upload-database: false
+          output: artifacts/codeql
+          category: /language:${{ matrix.language }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: codeql-${{ matrix.revision }}-${{ matrix.language }}
+          path: artifacts/codeql/*.sarif
+          if-no-files-found: error
+          retention-days: 14
+  pull-request-analysis:
+    if: always() && github.event_name == 'pull_request'
+    needs: pull-request-scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
       RestoreLockedMode: 'true'
     steps:
+      # Use the trusted base verifier; reviewers must still inspect workflow changes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
-      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          languages: csharp
-          build-mode: none
-          queries: security-extended
-      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+          name: codeql-baseline-csharp
+          path: artifacts/baseline/csharp
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          upload: false
-          output: artifacts/codeql
-          category: /language:csharp
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          name: codeql-candidate-csharp
+          path: artifacts/candidate/csharp
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: codeql-pull-request
-          path: artifacts/codeql/*.sarif
-          if-no-files-found: error
+          name: codeql-baseline-actions
+          path: artifacts/baseline/actions
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-candidate-actions
+          path: artifacts/candidate/actions
+      - name: Require all scan jobs to succeed
+        env:
+          SCAN_RESULT: ${{ needs.pull-request-scans.result }}
+        run: test "$SCAN_RESULT" = success
+      - name: Reject new high-severity findings
+        run: >-
+          dotnet run --project tools/PostgreSqlMcp.Verify --configuration Release
+          -- sarif --baseline artifacts/baseline --candidate artifacts/candidate
