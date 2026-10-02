@@ -79,6 +79,8 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifac
 
 The package smoke installs into isolated locations with fresh caches and exercises the actual CLI and MCP entrypoints. By default it creates and removes its own PostgreSQL Docker fixture, requiring Docker and the same network/extension prerequisites as `integration`; installed npm and NuGet entrypoints must discover/select a newly created database without seed-file edits and commit/clean up an explicitly requested write. An optional `--targets-file PATH` instead enables database calls against separately authorized disposable targets. Package generation verifies that npm and application versions match and includes dependency licenses and notices.
 
+Windows/macOS CI uses `packages --artifacts artifacts/packages --installation-only` because those runners do not provide the Docker fixture. This explicit mode still installs both artifacts offline, exercises their actual native CLI and MCP entrypoints, checks missing-.NET diagnostics, requires structured unavailable-database errors and verifies shutdown. It does not claim live discovery/query/write coverage; the Linux package job retains the full disposable-database scenarios above. Do not combine this mode with `--targets-file`, and do not use it to bypass a failed database verification run.
+
 To inspect the npm package manually, replace `<version>` with the version in `npm/package.json`:
 
 ```bash

@@ -61,4 +61,5 @@ jobs:
           node-version: '24'
       - run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
       - run: dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages
-      - run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages
+      - name: Install and exercise native entrypoints without a database service
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages --installation-only

@@ -12,7 +12,7 @@ namespace PostgreSqlMcp.Verify;
 
 internal static class Packages
 {
-    public static async Task RunAsync(string root, string artifacts, string? targetsFile)
+    public static async Task RunAsync(string root, string artifacts, string? targetsFile, bool installationOnly)
     {
         JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "npm", "package.json")))!;
         XDocument project = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
@@ -70,7 +70,7 @@ internal static class Packages
         };
         // Exercise the actual apphost too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), environment);
-        await using var fixture = targetsFile is null ? new PostgresFixture() : null;
+        await using var fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
         string? fixtureSeed = null;
         if (fixture is not null)
         {
@@ -109,7 +109,7 @@ internal static class Packages
                     await VerifyMcpAsync(command, fixtureEnvironment, aliases, query: true);
                     Console.WriteLine($"{name}: all explicit loopback fixture targets validated and SELECT current_database() passed");
                 }
-                else
+                else if (fixture is not null)
                 {
                     var fixtureEnvironment = new Dictionary<string, string>(environment)
                     {
@@ -123,6 +123,8 @@ internal static class Packages
             if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["package_smoke"]);
         }
         Console.WriteLine("Package verification passed; offline local installs, real native commands, missing .NET prerequisite and shutdown verified.");
+        if (installationOnly)
+            Console.WriteLine("Installation-only mode: live database discovery/query/write scenarios were not run; use default package verification for that coverage.");
     }
 
     private static Command NpmInstall(string npm, string home, string tarball) => new(npm, "install", "--prefix", home,
