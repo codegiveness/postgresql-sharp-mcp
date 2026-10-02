@@ -1,0 +1,1 @@
+SELECT dollar$tag$identifier, xe'quoted;value'

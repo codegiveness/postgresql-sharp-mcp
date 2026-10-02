@@ -5,6 +5,10 @@
     "cyclonedx": {
       "version": "6.2.0",
       "commands": ["dotnet-CycloneDX"]
+    },
+    "sharpfuzz.commandline": {
+      "version": "2.3.0",
+      "commands": ["sharpfuzz"]
     }
   }
 }

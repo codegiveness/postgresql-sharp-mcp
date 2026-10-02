@@ -1,0 +1,1 @@
+SELECT $$literal; COMMIT$$, $tag$value; SELECT$tag$

@@ -1,0 +1,1 @@
+SELECT 'a''; COMMIT', E'\\\'; SELECT', "identifier;"

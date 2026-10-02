@@ -6,6 +6,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/PostgreSqlMcp.Build/PostgreSqlMcp.Build.csproj" />
+    <Project Path="tools/PostgreSqlMcp.Fuzz/PostgreSqlMcp.Fuzz.csproj" />
     <Project Path="tools/PostgreSqlMcp.NpmInstall/PostgreSqlMcp.NpmInstall.csproj" />
     <Project Path="tools/PostgreSqlMcp.Release/PostgreSqlMcp.Release.csproj" />
     <Project Path="tools/PostgreSqlMcp.Verify/PostgreSqlMcp.Verify.csproj" />
