@@ -1,7 +1,7 @@
 {
   "name": "@codegiveness/postgresql-sharp-mcp",
-  "version": "0.1.0",
-  "description": "Bounded, explicit multi-database PostgreSQL MCP server over stdio. Requires the .NET 10 runtime on PATH; no runtime downloads.",
+  "version": "0.2.0",
+  "description": "Bounded, explicit multi-database PostgreSQL MCP server over stdio. Requires the .NET 10 runtime; set DOTNET_ROOT for nonstandard installations. No runtime downloads.",
   "license": "MIT",
   "author": "codegiveness",
   "homepage": "https://github.com/codegiveness/postgresql-sharp-mcp#readme",
@@ -11,20 +11,23 @@
   },
   "keywords": ["mcp", "mcp-server", "postgresql", "database"],
   "bin": {
-    "postgresql-sharp-mcp": "bin/postgresql-sharp-mcp.js"
+    "postgresql-sharp-mcp": "bin/postgresql-sharp-mcp.exe"
   },
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "dotnet installer/PostgreSqlMcp.NpmInstall.dll"
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "files": [
-    "bin/postgresql-sharp-mcp.js",
-    "payload/*.dll",
-    "payload/PostgreSqlMcp.deps.json",
-    "payload/PostgreSqlMcp.runtimeconfig.json",
+    "bin/postgresql-sharp-mcp.exe",
+    "payload/",
+    "apphosts/",
+    "installer/",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "LICENSES/*.txt",

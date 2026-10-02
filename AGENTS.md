@@ -16,9 +16,11 @@
 ## Implementation and evidence
 
 - Preserve the `Core <- Tools <- App` dependency direction. Read affected callers and update the full contract when behavior changes.
+- Keep all maintained implementation and automation in C#/.NET. npm JSON and workflow/container configuration may invoke external package/runner tools; do not reintroduce JavaScript/Python/Bash launchers or scripts. The npm CLI's Node prerequisite is installation-only, not the server runtime.
+- Restore committed portable/per-RID NuGet locks in locked mode. Regenerate changed graphs deliberately and review actual versions/hashes; never disable locking to get a release green.
 - Keep MCP stdout reserved for JSON-RPC and diagnostics on stderr. Respect PostgreSQL permissions and read-only transaction boundaries; a SQL lexer or static scan does not prove isolation.
 - Use the verification entrypoints in [CONTRIBUTING.md](CONTRIBUTING.md). Exercise changed runtime behavior, not just compilation. For packaging changes, install built artifacts and run their actual entrypoints. Documentation-only changes require link and command review.
-- Test only databases you own or are explicitly authorized to use. `scripts/verify.sh` creates a disposable Docker fixture; do not substitute an operator's database.
+- Test only databases you own or are explicitly authorized to use. The .NET verifier's `integration` command creates a disposable Docker fixture; do not substitute an operator's database.
 - State which commands/scenarios ran, observed results and verification gaps. Never infer hosted workflow success, registry publication, profile awards or repository protection from configuration alone.
 - Update affected help, docs, release notes, dependency notices and callers. Remove throwaway scaffolding; do not commit generated artifacts or secrets.
 

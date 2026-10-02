@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Replace the JavaScript npm launcher with a .NET installation helper and bundled native apphosts; the installed server runs without a Node process. Installation requires .NET 10 and package-specific lifecycle approval on npm 12; custom installations require `DOTNET_ROOT`.
+- Replace Python/Bash packaging and MCP smoke tooling with C#/.NET CLIs while preserving real PostgreSQL integration, security, failure, concurrency and package-installation coverage.
+- Commit portable and per-platform NuGet dependency locks; pin Docker base manifests and update Actions to verified current commits.
+- Add dedicated C# CodeQL `security-extended` analysis, read-only PR SARIF analysis, OpenSSF Scorecard and cross-platform npm/NuGet installation jobs.
+- Add application CycloneDX SBOMs, release SHA-256 manifests, build attestations and npm provenance requests; use a ZIP archive on Windows.
+- Strip archive owner/group identities, retain executable permissions, and select current-version artifacts when older local packages coexist.
+- Document supply-chain evidence, platform/prerequisite changes and confidential owner-authorized publishing credential reuse.
+
 ## 0.1.0
 
 - Bundle the framework-dependent application in an npm package with a no-download Node launcher; require Node.js 22 or newer and the .NET 10 runtime.

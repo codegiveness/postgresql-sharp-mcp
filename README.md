@@ -1,7 +1,12 @@
 # postgresql-sharp-mcp
 
 [![CI](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/ci.yml)
-[![Security checks](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/security.yml)
+[![CodeQL](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/codeql.yml)
+[![Dependency audit](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/codegiveness/postgresql-sharp-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/codegiveness/postgresql-sharp-mcp)
+[![.NET](https://img.shields.io/badge/.NET-10-blue)](https://dotnet.microsoft.com/)
+[![SBOM](https://img.shields.io/badge/SBOM-CycloneDX-blue)](docs/security-posture.md#supply-chain-evidence)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-blue)](SECURITY.md)
 [![GitHub release](https://img.shields.io/github/v/release/codegiveness/postgresql-sharp-mcp)](https://github.com/codegiveness/postgresql-sharp-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -9,13 +14,15 @@ A PostgreSQL MCP server built with C#/.NET 10 and Npgsql. One stdio server expos
 
 **Read-only by default.** Use least-privileged PostgreSQL roles and keep credentials in a protected configuration file, not tool arguments. Read-only transactions are not a sandbox for privileged functions or external side effects. See [SECURITY.md](SECURITY.md) for the trust boundaries.
 
+The server, npm installation helper, packaging, verification and release automation are C#/.NET. No maintained JavaScript, Python or Bash implementation is required. npm itself requires Node.js for installation; the installed server runs directly as a .NET executable, without a Node process. Workflow badges and Scorecard report checks and practices, not certifications or profile achievements. See [Security posture](docs/security-posture.md) for supply-chain evidence and limits.
+
 ## Quick start
 
 ### 1. Install or run
 
 **GitHub release archives:** download a self-contained archive from [GitHub Releases](https://github.com/codegiveness/postgresql-sharp-mcp/releases) for installation without registry access.
 
-Choose `postgresql-sharp-mcp-<RID>.tar.gz` for your platform:
+Choose `postgresql-sharp-mcp-<RID>.tar.gz` on Linux/macOS or `postgresql-sharp-mcp-win-x64.zip` on Windows for releases from 0.2.0. Older releases use `.tar.gz` on Windows too.
 
 | Platform | RID |
 |---|---|
@@ -27,10 +34,10 @@ Extract the archive into a dedicated directory. On Linux/macOS, run `./PostgreSq
 
 **npm and NuGet alternatives:** these commands require the package to be available in the corresponding registry. If a package is unavailable, use a GitHub release archive or the [source build instructions](CONTRIBUTING.md).
 
-Using npm requires **Node.js 22 or newer** and the **.NET 10 runtime** with `dotnet` on `PATH`:
+Using npm requires **Node.js 22 or newer** for npm/npx installation and the **.NET 10 runtime** with `dotnet` on `PATH` during installation. The C# `postinstall` selects a bundled native apphost; it never downloads binaries or a runtime. npm 12 blocks unapproved dependency lifecycle scripts: approve only this package with `--allow-scripts` for npx/global installation, as below. For a custom .NET installation, also set `DOTNET_ROOT` to its installation directory so the native apphost can locate it:
 
 ```bash
-npx -y @codegiveness/postgresql-sharp-mcp --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp --version
 ```
 
 Or install the .NET tool using the **.NET 10 SDK**:
@@ -40,7 +47,7 @@ dotnet tool install --global codegiveness.postgresql-sharp-mcp
 postgresql-sharp-mcp --version
 ```
 
-Both packages run the same framework-dependent server. The npm package bundles the application but does not download or install .NET. Its launcher inherits environment and stdio, relays process termination and returns the server's exit status. Keep the .NET runtime available when launching either package.
+Both packages run the same framework-dependent .NET server. After npm installation, `postgresql-sharp-mcp` starts the native apphost directly; no JavaScript launcher or Node child process relays MCP or signals. The internal npm executable has an `.exe` filename on every OS, but the public command remains `postgresql-sharp-mcp`. Keep .NET available when launching either package. To avoid npm and Node altogether, use the NuGet tool or a self-contained release archive.
 
 ### 2. Configure database targets
 
@@ -83,7 +90,7 @@ Use `PostgreSqlMcp.exe` on Windows. With the npm package, use:
   "mcpServers": {
     "postgresql": {
       "command": "npx",
-      "args": ["-y", "@codegiveness/postgresql-sharp-mcp"],
+      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"],
       "env": {
         "POSTGRES_TARGETS_FILE": "<absolute-path-to-protected-targets-file>"
       }
@@ -94,7 +101,7 @@ Use `PostgreSqlMcp.exe` on Windows. With the npm package, use:
 
 For the globally installed .NET tool, use `"command": "postgresql-sharp-mcp"` and omit `args`. If the MCP client does not inherit the tool directory on `PATH`, use the absolute executable path.
 
-**Windows:** escape backslashes in JSON paths. npm exposes `npx.cmd`; clients that cannot launch command scripts directly can use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", "@codegiveness/postgresql-sharp-mcp"]`, or use the installed .NET tool executable instead.
+**Windows:** escape backslashes in JSON paths. npm exposes `npx.cmd`; clients that cannot launch command scripts directly can use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"]`, or use the installed .NET tool executable instead.
 
 ### 4. Validate and connect
 
@@ -107,7 +114,7 @@ For an extracted release archive on Linux/macOS:
 On Windows, use `.\PostgreSqlMcp.exe` with the same arguments. With npm:
 
 ```bash
-npx -y @codegiveness/postgresql-sharp-mcp --targets-file "<absolute-path-to-protected-targets-file>" --validate
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp --targets-file "<absolute-path-to-protected-targets-file>" --validate
 ```
 
 With the .NET tool, use the same arguments after `postgresql-sharp-mcp`. `--validate` opens each configured target, reports its actual `current_database()` or a sanitized error to **stderr**, and exits 0 only if all targets work. It does not start MCP.
@@ -206,6 +213,8 @@ Metadata sections wrap the page in `page`; health/index/workload tools use `resu
 - **Writes are never paginated or replayed.** A truncated `RETURNING` response has no next offset; the full statement still commits once. Inspect committed data separately. No automatic query retries are performed.
 
 `POSTGRES_MAX_RESULT_BYTES` bounds each payload representation, not the complete JSON-RPC envelope. Structured JSON plus compatibility text increases wire size. Actual context/token usage depends on the client and model; no cross-server efficiency claim is made.
+
+A local 0.2.0 restricted-mode `tools/list` smoke run returned nine tools: **6,133 UTF-8 bytes** for the compact tool array and **6,178 bytes** for the newline-terminated JSON-RPC response. These are discovery bytes, not model-token counts, query timings or a comparison with an “average MCP.” Client/model tokenization and result selection determine context cost.
 
 Operation errors set MCP `isError=true` and include target, error code and PostgreSQL SQLSTATE when available. PostgreSQL-provided messages, hints and details are withheld because they may contain sensitive values; fixed SQLSTATE-specific summaries provide guidance. Protocol/SDK argument-validation errors use the SDK envelope.
 
