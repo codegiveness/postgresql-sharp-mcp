@@ -21,116 +21,304 @@ The server, npm installation helper, packaging, verification and release automat
 
 ## Quick start
 
+**Use the release archive for your first setup.** It includes the .NET runtime: no .NET SDK, npm, Node.js or Docker installation is needed for this route. You still need an existing PostgreSQL database and an MCP client. This app does not create a database or automatically edit your client's configuration.
+
+You will download the app and create **two different JSON files**:
+
+| Item | Purpose | Where it goes |
+|---|---|---|
+| `PostgreSqlMcp` (`PostgreSqlMcp.exe` on Windows) | The server your MCP client launches | `postgresql-mcp/app/` inside your home folder |
+| `targets.json` | Your PostgreSQL connection details, including credentials | `postgresql-mcp/targets.json` inside your home folder |
+| Your client's MCP configuration, such as OMP's `mcp.json` | Tells the client which executable to launch and which targets file to read | The MCP client's configuration location, **not** the app folder |
+
+Follow steps 1–4 in order. Use the same paths throughout.
+
+**Already installed?** Keep your existing executable and targets file. Skip the download, then use their actual paths in steps 3–4; you do not need to move or rename working files.
+
 ### 1. Install or run
 
-**GitHub release archives:** download a self-contained archive from [GitHub Releases](https://github.com/codegiveness/postgresql-sharp-mcp/releases) for installation without registry access.
+Open [the latest release](https://github.com/codegiveness/postgresql-sharp-mcp/releases/latest) and download **one** archive:
 
-Choose `postgresql-sharp-mcp-<RID>.tar.gz` on Linux/macOS or `postgresql-sharp-mcp-win-x64.zip` on Windows for releases from 0.2.0. Older releases use `.tar.gz` on Windows too.
-
-| Platform | RID |
+| Your computer | Archive to download |
 |---|---|
-| Linux x64 / ARM64 | `linux-x64` / `linux-arm64` |
-| macOS Intel / Apple Silicon | `osx-x64` / `osx-arm64` |
-| Windows x64 | `win-x64` |
+| Linux, Intel/AMD 64-bit | `postgresql-sharp-mcp-linux-x64.tar.gz` |
+| Linux, ARM64 | `postgresql-sharp-mcp-linux-arm64.tar.gz` |
+| Mac, Apple Silicon (M-series) | `postgresql-sharp-mcp-osx-arm64.tar.gz` |
+| Mac, Intel | `postgresql-sharp-mcp-osx-x64.tar.gz` |
+| Windows, Intel/AMD 64-bit | `postgresql-sharp-mcp-win-x64.zip` |
 
-Extract the archive into a dedicated directory. On Linux/macOS, run `./PostgreSqlMcp --version`; on Windows, run `.\PostgreSqlMcp.exe --version`. Self-contained archives do not require a separate .NET runtime, but still require platform-native libraries. GSS/Kerberos connections on Debian/Ubuntu require `libgssapi-krb5-2`; see [Npgsql security](https://www.npgsql.org/doc/security.html) for authentication and TLS configuration.
+Also download `SHA256SUMS` from **that same release**. Before extracting, run the checksum command for your OS below and compare its hash with the entry for your archive in `SHA256SUMS` (ignore uppercase/lowercase differences). Stop if the hashes differ.
 
-**npm and NuGet alternatives:** these registry commands require the package to be published. If it is unavailable, use a GitHub release archive, [install a verified release `.nupkg` locally](CONTRIBUTING.md#install-a-verified-release-artifact), or follow the [source build instructions](CONTRIBUTING.md). Local artifact installation does not establish NuGet.org publication.
+These commands assume the archive is in your `Downloads` folder. Change that location if you saved it elsewhere.
 
-Using npm requires **Node.js 22 or newer** for npm/npx installation and the **.NET 10 runtime** with `dotnet` on `PATH` during installation. The C# `postinstall` selects a bundled native apphost; it never downloads binaries or a runtime. npm 12 blocks unapproved dependency lifecycle scripts: approve only this package with `--allow-scripts` for npx/global installation, as below. For a custom .NET installation, also set `DOTNET_ROOT` to its installation directory so the native apphost can locate it:
+**Linux x64:**
 
 ```bash
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp --version
+sha256sum "$HOME/Downloads/postgresql-sharp-mcp-linux-x64.tar.gz"
 ```
 
-Or install the .NET tool using the **.NET 10 SDK**:
+If the hash matches, extract and check the executable:
+
+```bash
+mkdir -p "$HOME/postgresql-mcp/app"
+tar -xzf "$HOME/Downloads/postgresql-sharp-mcp-linux-x64.tar.gz" -C "$HOME/postgresql-mcp/app"
+"$HOME/postgresql-mcp/app/PostgreSqlMcp" --version
+```
+
+For Linux ARM64, replace the archive filename in both commands with `postgresql-sharp-mcp-linux-arm64.tar.gz`.
+
+**macOS, Apple Silicon:**
+
+```bash
+shasum -a 256 "$HOME/Downloads/postgresql-sharp-mcp-osx-arm64.tar.gz"
+```
+
+If the hash matches, extract and check the executable:
+
+```bash
+mkdir -p "$HOME/postgresql-mcp/app"
+tar -xzf "$HOME/Downloads/postgresql-sharp-mcp-osx-arm64.tar.gz" -C "$HOME/postgresql-mcp/app"
+"$HOME/postgresql-mcp/app/PostgreSqlMcp" --version
+```
+
+For an Intel Mac, replace the archive filename in both commands with `postgresql-sharp-mcp-osx-x64.tar.gz`.
+
+**Windows:** open PowerShell and run:
+
+```powershell
+Get-FileHash "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Algorithm SHA256
+```
+
+If the hash matches, extract and check the executable:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\postgresql-mcp\app" | Out-Null
+Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -DestinationPath "$HOME\postgresql-mcp\app"
+& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --version
+```
+
+**Checkpoint:** you should see `postgresql-sharp-mcp` followed by a version number. Keep all extracted files together; do not copy just the executable.
+
+Your app folder should now look like this:
+
+```text
+postgresql-mcp/
+  app/
+    PostgreSqlMcp         (PostgreSqlMcp.exe on Windows)
+    ...other release files...
+```
+
+On Debian/Ubuntu, a missing GSS/Kerberos native library may require `libgssapi-krb5-2`. Other authentication/TLS requirements are described in [Npgsql security](https://www.npgsql.org/doc/security.html).
+
+### 2. Configure database targets
+
+Create a file named **`targets.json`**, next to the `app` folder—not inside it. Use a plain-text editor, not a word processor.
+
+On Linux/macOS, create the empty file with private permissions **before** pasting credentials:
+
+```bash
+chmod 700 "$HOME/postgresql-mcp"
+touch "$HOME/postgresql-mcp/targets.json"
+chmod 600 "$HOME/postgresql-mcp/targets.json"
+```
+
+On Windows, save it as `targets.json` in your home folder's `postgresql-mcp` directory. In Notepad's Save As dialog choose **All files**, so it is not accidentally saved as `targets.json.txt`. Keep the folder private to your account and administrators; do not put it in a shared or publicly synced folder.
+
+Paste this whole JSON object into `targets.json`, then replace each `<...>` placeholder with your database's actual connection details. Remove the angle brackets too:
+
+```json
+{
+  "primary": "Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=<YOUR_PASSWORD>;SSL Mode=VerifyFull"
+}
+```
+
+Also change `Port=5432` if your provider uses another port:
+
+| Field | What to enter |
+|---|---|
+| `Host` | The database hostname supplied by your provider, or `127.0.0.1` for a database on this same computer |
+| `Port` | PostgreSQL's port, usually `5432`; use your provider's port if different |
+| `Database` | Your real PostgreSQL database name |
+| `Username` | A PostgreSQL login role allowed to access that database, preferably read-only—not necessarily your computer's username |
+| `Password` | That PostgreSQL role's password |
+| `SSL Mode` | `VerifyFull` for a remote TLS-enabled database; see the local-only exception below |
+
+**`primary` is just the name you will use in MCP tool calls.** It does not need to match `Database`. Leave it as `primary` for this guide.
+
+For a PostgreSQL server on **this same computer** that does not support TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`. Do not disable TLS to work around a remote server's certificate error. For a remote server needing a provider CA certificate, retain `VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`; follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html).
+
+If your provider gives you a `postgres://` or `postgresql://` URL, it cannot be pasted here unchanged. Map its hostname, port, database, username and password to the fields above, decode URL-escaped values, and preserve its required TLS/authentication options. Prefer the provider's **.NET/Npgsql connection string** when available.
+
+<details>
+<summary>My password contains a semicolon, quote or backslash</summary>
+
+There are two layers of escaping: the connection string, then JSON. A password containing `;` must be quoted inside the connection string. For example, the **synthetic** password `sample;value` is written as `Password=\"sample;value\"` inside the JSON string:
+
+```json
+{
+  "primary": "Host=<YOUR_HOST>;Port=5432;Database=<YOUR_DATABASE>;Username=<YOUR_DATABASE_USER>;Password=\"sample;value\";SSL Mode=VerifyFull"
+}
+```
+
+Replace that sample password with your own; keep the surrounding `\"` markers. Inside a quoted connection-string value, double a literal double quote, then escape each quote for JSON. JSON backslashes must also be doubled. If your provider can export an Npgsql connection string, prefer that over constructing one by hand; still escape it as a JSON string.
+
+</details>
+
+**File naming:** `targets.json` is our simple convention, not a required magic name. `targets-0.2.0.json` also works, but a version number is unnecessary. The name and location must exactly match `POSTGRES_TARGETS_FILE` in step 3. Do not commit this file or paste its contents into chat or public bug reports.
+
+**Checkpoint:** your file should contain one JSON object with a `primary` key and a populated connection string. No trailing comma after that entry.
+
+### 3. Add a stdio MCP client entry
+
+**This step is required. Installing the app alone does not make its tools appear in your client.** The client starts the server for you; you do not need to leave a separate server terminal running.
+
+For **OMP**, edit or create `~/.omp/agent/mcp.json` on Linux/macOS, or `%USERPROFILE%\.omp\agent\mcp.json` on Windows. If you use a named OMP profile, edit that profile's MCP configuration instead. For another MCP client, open that client's MCP/server configuration; the examples below use the `mcpServers` format, not every client's schema.
+
+If the file already contains other servers, add only the `"postgresql": { ... }` entry **inside its existing `mcpServers` object**. Preserve the other entries and separate adjacent entries with a comma. Do not add a second `mcpServers` object.
+
+For a new configuration file, use the whole example for your OS below. Replace **`YOUR_USER` in both paths** with your home-folder name. On Linux/macOS, `echo "$HOME"` shows your home path; on Windows, `$HOME` in PowerShell shows it. If your home is elsewhere, replace the entire example home prefix with that actual path. Use full absolute paths in JSON, not literal `~`, `$HOME` or `%USERPROFILE%`.
+
+<details open>
+<summary>Linux: complete MCP configuration</summary>
+
+```json
+{
+  "mcpServers": {
+    "postgresql": {
+      "type": "stdio",
+      "command": "/home/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp",
+      "timeout": 30000,
+      "env": {
+        "POSTGRES_TARGETS_FILE": "/home/YOUR_USER/postgresql-mcp/targets.json",
+        "POSTGRES_ACCESS_MODE": "restricted",
+        "POSTGRES_QUERY_TIMEOUT": "10"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>macOS: complete MCP configuration</summary>
+
+```json
+{
+  "mcpServers": {
+    "postgresql": {
+      "type": "stdio",
+      "command": "/Users/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp",
+      "timeout": 30000,
+      "env": {
+        "POSTGRES_TARGETS_FILE": "/Users/YOUR_USER/postgresql-mcp/targets.json",
+        "POSTGRES_ACCESS_MODE": "restricted",
+        "POSTGRES_QUERY_TIMEOUT": "10"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Windows: complete MCP configuration</summary>
+
+```json
+{
+  "mcpServers": {
+    "postgresql": {
+      "type": "stdio",
+      "command": "C:\\Users\\YOUR_USER\\postgresql-mcp\\app\\PostgreSqlMcp.exe",
+      "timeout": 30000,
+      "env": {
+        "POSTGRES_TARGETS_FILE": "C:\\Users\\YOUR_USER\\postgresql-mcp\\targets.json",
+        "POSTGRES_ACCESS_MODE": "restricted",
+        "POSTGRES_QUERY_TIMEOUT": "10"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+`command` points to the **executable**, not its folder or downloaded archive. `POSTGRES_TARGETS_FILE` points to your **credentials file**, not the client's `mcp.json`. `restricted` keeps this guide read-only. OMP's `timeout` is in milliseconds (`30000` = 30 seconds); `POSTGRES_QUERY_TIMEOUT` is in seconds (`10` = 10 seconds). Other clients may use different timeout settings.
+
+**Checkpoint:** save the client configuration. Neither path contains `YOUR_USER`, and both files exist at those exact paths. Credentials belong only in `targets.json`.
+
+### 4. Validate and connect
+
+First check database connectivity, before troubleshooting the MCP client.
+
+**Linux / macOS:**
+
+```bash
+"$HOME/postgresql-mcp/app/PostgreSqlMcp" --targets-file "$HOME/postgresql-mcp/targets.json" --access-mode restricted --validate
+```
+
+**Windows PowerShell:**
+
+```powershell
+& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --targets-file "$HOME\postgresql-mcp\targets.json" --access-mode restricted --validate
+```
+
+**Checkpoint:** the command should exit successfully and print a result with your actual database name. That output is on **stderr** and can contain private database identity; keep it private. `--validate` performs a read-only check and exits. It does **not** register the server or start an ongoing MCP session.
+
+Now reload the client's MCP configuration: in **OMP, run `/mcp reload`**. In other clients, use their server reload control or fully quit and reopen the client.
+
+Call `list_databases` with no arguments. It should list **`primary`**. Then call:
+
+```json
+{"name":"execute_sql","arguments":{"database":"primary","sql":"SELECT 1 AS connection_ok","limit":1}}
+```
+
+**You are ready when the SQL call succeeds with one row containing `1`.** In OMP you can ask: “Use the PostgreSQL MCP server to run `SELECT 1 AS connection_ok` against database alias `primary`.” No extensions or application tables are needed for this check.
+
+`list_databases` lists configured aliases without opening a database connection, so seeing `primary` alone is not proof of connectivity. After changing credentials or targets, reload/restart the server again.
+
+### If setup does not work
+
+| What you see | What to check |
+|---|---|
+| Executable not found / spawn error | `command` must be the full executable path, including `.exe` on Windows. Extract the archive first and keep its files together. |
+| Wrong architecture / cannot execute binary | Download the archive matching your OS and CPU from step 1. |
+| Invalid targets configuration / file not found | Check the exact `POSTGRES_TARGETS_FILE` path, JSON quotes/commas, and that the file is not `targets.json.txt`. Do not paste a PostgreSQL URI as the connection string. |
+| Connection refused, timeout or authentication error | Run step 4's `--validate` command. Check host, port, database, login/password, network/VPN and the database's access rules. Installation does not grant database access. |
+| Certificate validation error | Use the provider's correct hostname and CA certificate. Do not disable TLS for a remote database. |
+| No PostgreSQL tools in the client | Check the client's configuration location/schema, save it, then reload MCP or fully restart the client. |
+| Unknown database alias | Use `"database": "primary"`, matching the key in `targets.json`, not the real PostgreSQL database name. |
+| Server seems to wait silently when run without `--validate` | Normal: stdio mode waits for MCP messages from a client. Use `--validate` for a terminal connectivity check; let the client launch normal mode. |
+
+Normal operation reserves stdout for MCP JSON-RPC; diagnostics go to stderr. Keep real credentials, SQL and database results out of public troubleshooting reports.
+
+### Other installation methods
+
+Finish the same targets-file and client-configuration steps above with whichever executable you install. **Choose one install method; do not install all of them.**
+
+**NuGet/.NET tool:** requires the **.NET 10 SDK** to install, the **.NET 10 runtime** to run, and the package to be available on NuGet.org:
 
 ```bash
 dotnet tool install --global codegiveness.postgresql-sharp-mcp
 postgresql-sharp-mcp --version
 ```
 
-Both packages run the same framework-dependent .NET server. After npm installation, `postgresql-sharp-mcp` starts the native apphost directly; no JavaScript launcher or Node child process relays MCP or signals. The internal npm executable has an `.exe` filename on every OS, but the public command remains `postgresql-sharp-mcp`. Keep .NET available when launching either package. To avoid npm and Node altogether, use the NuGet tool or a self-contained release archive.
+In the client configuration, replace `command` with the installed tool's absolute path: normally `~/.dotnet/tools/postgresql-sharp-mcp` on Linux/macOS or `%USERPROFILE%\.dotnet\tools\postgresql-sharp-mcp.exe` on Windows. Expand the home path before putting it in JSON. For a custom `--tool-path` installation, use that directory's executable instead; a path containing a version such as `tools/0.2.0/` is valid but not required. Keep the .NET runtime available to the client; nonstandard installations may require `DOTNET_ROOT`.
 
-### 2. Configure database targets
+If the package is unavailable on NuGet.org, use the recommended release archive or [install a verified release `.nupkg` locally](CONTRIBUTING.md#install-a-verified-release-artifact). Local artifact installation does not establish registry publication. Do not point the MCP client directly at a `.nupkg`.
 
-Create a JSON file outside the repository, readable only by the server's OS user or an appropriately restricted group. Replace every `<...>` placeholder with your PostgreSQL connection details:
-
-```json
-{
-  "tenant_a": "Host=<database-host>;Port=<database-port>;Database=<database-name>;Username=<database-role>;Password=<database-password>;SSL Mode=VerifyFull",
-  "tenant_b": "Host=<other-host>;Port=<other-port>;Database=<other-database>;Username=<other-role>;Password=<other-password>;SSL Mode=VerifyFull"
-}
-```
-
-Each target requires an explicit `Host` and `Database`. Choose authentication and TLS settings appropriate to your deployment; `VerifyFull` requires a trusted server certificate and matching hostname. Do not commit the populated file or make it world-readable.
-
-Targets use Npgsql key/value connection-string syntax, not `postgres://` or `postgresql://` URIs. If your secret is a URI, translate its fields privately, decode escaped values, and retain the intended authentication/TLS settings; do not paste the secret into a command line or repository file.
-
-The `database` tool argument is the **exact, case-sensitive alias** from this object, not an arbitrary PostgreSQL database name. Targets may use independent hosts and credentials. Restart the server after changing targets or credentials.
-
-### 3. Add a stdio MCP client entry
-
-Adapt this example to your client's configuration schema. Only a configuration-file path goes into the client entry:
-
-For an extracted release archive:
-
-```json
-{
-  "mcpServers": {
-    "postgresql": {
-      "command": "<absolute-path-to-extracted-PostgreSqlMcp-executable>",
-      "env": {
-        "POSTGRES_TARGETS_FILE": "<absolute-path-to-protected-targets-file>"
-      }
-    }
-  }
-}
-```
-
-Use `PostgreSqlMcp.exe` on Windows. With the npm package, use:
-
-```json
-{
-  "mcpServers": {
-    "postgresql": {
-      "command": "npx",
-      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"],
-      "env": {
-        "POSTGRES_TARGETS_FILE": "<absolute-path-to-protected-targets-file>"
-      }
-    }
-  }
-}
-```
-
-For the globally installed .NET tool, use `"command": "postgresql-sharp-mcp"` and omit `args`. If the MCP client does not inherit the tool directory on `PATH`, use the absolute executable path.
-
-**Windows:** escape backslashes in JSON paths. npm exposes `npx.cmd`; clients that cannot launch command scripts directly can use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"]`, or use the installed .NET tool executable instead.
-
-### 4. Validate and connect
-
-For an extracted release archive on Linux/macOS:
+**npm/npx:** requires **Node.js 22 or newer**, the **.NET 10 runtime** with `dotnet` on `PATH` during installation, and the package to be available in npm:
 
 ```bash
-./PostgreSqlMcp --targets-file "<absolute-path-to-protected-targets-file>" --validate
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp --version
 ```
 
-On Windows, use `.\PostgreSqlMcp.exe` with the same arguments. With npm:
+Use `"command": "npx"` with `"args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"]` in place of the archive executable; keep the same `env` object from step 3. npm 12 requires this package's lifecycle script approval. On Windows, clients unable to launch `npx.cmd` directly can use `"command": "cmd"` and `"args": ["/d", "/c", "npx", "-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp"]`.
 
-```bash
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp --targets-file "<absolute-path-to-protected-targets-file>" --validate
-```
+The C# installer uses bundled native apphosts; it does not download a runtime or binaries. After installation the server runs directly as .NET, without a JavaScript launcher or Node child process. Custom .NET installations also need an appropriate `DOTNET_ROOT`.
 
-With the .NET tool, use the same arguments after `postgresql-sharp-mcp`. `--validate` opens each configured target, reports its actual `current_database()` or a sanitized error to **stderr**, and exits 0 only if all targets work. It does not start MCP.
-
-Restart your MCP client, call `list_databases`, then try:
-
-```json
-{"name":"execute_sql","arguments":{"database":"tenant_a","sql":"SELECT current_database()","limit":1}}
-```
-
-Normal operation reserves stdout for MCP JSON-RPC and logs to stderr. `list_databases` reports allowlisted aliases, access mode and limits without opening a connection; a listed alias does not guarantee that its database is reachable.
+**Build from source:** follow [CONTRIBUTING.md](CONTRIBUTING.md#build-from-source), then use `dotnet` as `command` and the absolute path to `PostgreSqlMcp.dll` as its first `args` item. Keep the same targets-file environment settings.
 
 ## Tools
 
@@ -155,11 +343,11 @@ Each call resolves its own immutable target and leases a connection from its poo
 Focused inspection:
 
 ```json
-{"name":"list_objects","arguments":{"database":"tenant_a","schema":"public","type":"table","search":"order","limit":20}}
+{"name":"list_objects","arguments":{"database":"primary","schema":"public","type":"table","search":"order","limit":20}}
 ```
 
 ```json
-{"name":"get_object_details","arguments":{"database":"tenant_a","schema":"public","name":"orders","section":"indexes","limit":10}}
+{"name":"get_object_details","arguments":{"database":"primary","schema":"public","name":"orders","section":"indexes","limit":10}}
 ```
 
 ### Plans and optional extensions
@@ -180,7 +368,7 @@ WHERE name IN ('hypopg', 'pg_stat_statements');
 Example what-if call:
 
 ```json
-{"name":"explain_query","arguments":{"database":"tenant_a","sql":"SELECT * FROM public.orders WHERE customer=42","indexes":["CREATE INDEX ON public.orders(customer)"]}}
+{"name":"explain_query","arguments":{"database":"primary","sql":"SELECT * FROM public.orders WHERE customer=42","indexes":["CREATE INDEX ON public.orders(customer)"]}}
 ```
 
 Hypothetical candidates are passed to HypoPG, **not executed as permanent DDL**. The tool compares baseline and combined-candidate planner costs in one session, cleans hypothetical indexes after success or failure, and clears the pool if cleanup fails. At most 16 candidates are accepted; `analyze=true` cannot be combined with hypothetical indexes. Independent candidate commands are batched into one database round trip.
@@ -195,7 +383,7 @@ Successful results provide a JSON object in MCP `structuredContent` and a compac
 
 ```json
 {
-  "database":"tenant_a",
+  "database":"primary",
   "columns":[{"name":"id","type":"integer"},{"name":"customer","type":"integer"}],
   "rows":[[1,42],[2,17]],
   "offset":0,
