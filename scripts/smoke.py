@@ -289,8 +289,9 @@ async def verify(dll, container, port):
         assert what_if["comparison"]["with_indexes_total_cost"] < what_if["comparison"]["baseline_total_cost"], what_if
         assert what_if["hypothetical_indexes"], what_if
         await m.fails("explain_query", "extension_missing", database="b", sql="SELECT * FROM tuning WHERE customer=42", indexes=candidate)
-        await m.fails("explain_query", "postgresql_error", database="a", sql="SELECT * FROM tuning WHERE customer=42", indexes=["CREATE INDEX ON public.no_such_table(customer)"])
-        assert (await m.ok("explain_query", database="a", sql="SELECT * FROM tuning WHERE customer=42"))["plan"]["total_cost"] == baseline["plan"]["total_cost"]
+        await m.fails("explain_query", "postgresql_error", database="a", sql="SELECT * FROM tuning WHERE customer=42", indexes=candidate + ["CREATE INDEX ON public.no_such_table(customer)"])
+        recovered = await asyncio.gather(*(m.ok("explain_query", database="a", sql="SELECT * FROM tuning WHERE customer=42") for _ in range(8)))
+        assert all(plan["plan"]["total_cost"] == baseline["plan"]["total_cost"] for plan in recovered), recovered
         permanent = await m.ok("execute_sql", database="a", sql="SELECT count(*) AS n FROM pg_indexes WHERE tablename='tuning'")
         assert permanent["rows"] == [[0]], permanent
         assert rows(await m.ok("execute_sql", database="a", sql="SELECT value FROM marker"))[0]["value"] == "A_ONLY"
