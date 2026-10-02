@@ -19,6 +19,8 @@ A PostgreSQL MCP server built with C#/.NET 10 and Npgsql. One stdio server expos
 
 The server, npm installation helper, packaging, verification and release automation are C#/.NET. No maintained JavaScript, Python or Bash implementation is required. npm itself requires Node.js for installation; the installed server runs directly as a .NET executable, without a Node process. Workflow badges and Scorecard report checks and practices, not certifications or profile achievements. Best Practices shows the saved owner self-assessment, which may still be in progress. See [Security posture](docs/security-posture.md) for supply-chain evidence and limits.
 
+For the Best Practices questionnaire, use the [exact website questions and copy-ready answers](docs/best-practices-checklist.md). Repository proposals do not save the website's answers; the project owner must review and save them.
+
 ## Quick start
 
 ### 1. Install or run
