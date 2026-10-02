@@ -42,8 +42,9 @@ internal static class PackageBuilder
                 throw new InvalidOperationException("Temporary staging must be outside the source tree; configure TMPDIR/TEMP accordingly.");
             var stage = Path.Combine(temporary, "source");
             StageSources(root, stage);
-            var server = Path.Combine(stage, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
-            var installer = Path.Combine(stage, "tools", InstallerName, $"{InstallerName}.csproj");
+            // Resolve project identities from the child working directory; macOS temp paths can alias /private/var.
+            var server = Path.Combine("src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
+            var installer = Path.Combine("tools", InstallerName, $"{InstallerName}.csproj");
             var package = Path.Combine(temporary, "npm");
             Directory.CreateDirectory(package);
             CopyFile(Path.Combine(root, "npm", "package.json"), Path.Combine(package, "package.json"));
