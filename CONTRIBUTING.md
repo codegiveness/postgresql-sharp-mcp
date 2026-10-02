@@ -124,8 +124,8 @@ Only authorized maintainers may push release tags, publish packages or change re
 
 Use the `release` GitHub environment for narrowly scoped publishing secrets and deployment-ref restrictions. Do not put tokens in source, command history, issues or pull requests.
 
-1. In the npm account that owns `@codegiveness`, create a short-lived granular token with **Read and write (publish and stage)** access to that scope, including new package creation. For unattended publishing with account 2FA, enable **Bypass 2FA** on this token. Store it as `NPM_TOKEN` in GitHub Actions secrets. See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens).
-2. In the NuGet account that will own the package, add a **Trusted Publishing** policy for owner `codegiveness`, repository `postgresql-sharp-mcp`, workflow filename `release.yml`, and environment `release`. Permit new packages and versions matching `codegiveness.postgresql-sharp-mcp`. Store the account's NuGet profile username as `NUGET_USERNAME`, not its email or password. The workflow exchanges GitHub OIDC for a short-lived key; no persistent NuGet API key is required. See [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
+1. In the npm account authorized to publish under `@codegiveness`, create a short-lived granular token with **Read and write (publish and stage)** access to that scope, including new package creation—not only the sibling's existing package or **stage only** access. For unattended publishing with account 2FA, enable **Bypass 2FA** on this token. Store it as `NPM_TOKEN` in the `release` environment. Organization-management permission alone does not grant package publication rights. Granular tokens currently must be created on the website, not with `npm token create`. See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens).
+2. In the authorized NuGet account, add a **Trusted Publishing** policy for owner `codegiveness`, repository `postgresql-sharp-mcp`, workflow filename `release.yml`, and environment `release`. Permit new packages and versions matching `codegiveness.postgresql-sharp-mcp`. Store the **policy creator's NuGet profile username** as `NUGET_USERNAME`, not an organization/policy owner's name, email or password. The workflow exchanges GitHub OIDC for a short-lived key; no persistent NuGet API key is required. See [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
 3. Push the matching `v<version>` tag after verification, or run **Actions → Release → Run workflow** with that existing tag. Check each publication job and install the exact version from each registry before announcing availability.
 
 GitHub's secret API exposes names and public encryption keys, not plaintext values. With explicit owner authorization, a source Actions job can encrypt selected existing credentials using the target environment's public key; an authorized operator then installs that ciphertext through the target secret API. Never print plaintext, upload it as an artifact, copy an unrelated token, or retain the temporary transfer branch/artifact. Token scope still must authorize this package, and NuGet's trusted-publishing policy must separately authorize this repository/workflow/environment.
@@ -139,6 +139,12 @@ gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main 
 ```
 
 Only run publication after account permissions/policy and the existing version tag are ready. For a failed release run, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse verified artifacts.
+
+The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); that response does not identify the exact npm permission or account mismatch. NuGet returned HTTP 401 (“no matching trust policy”). GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization, configure the matching target NuGet policy, then rerun the failed jobs:
+
+```bash
+gh run rerun 36967428485 --failed --repo codegiveness/postgresql-sharp-mcp
+```
 
 ## GitHub profile recognition
 

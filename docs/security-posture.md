@@ -21,6 +21,8 @@ See [SECURITY.md](../SECURITY.md) for credentials, TLS, extension privileges, re
 - Main requires PRs, up-to-date required checks from GitHub Actions, and blocks force pushes/deletion, including administrators. The solo-maintainer policy does not require another person's approval; it does not claim independent review.
 - Installation checks execute native npm and NuGet entrypoints on Linux, Windows and macOS in CI. Database integration runs against disposable PostgreSQL, not an operator's configured database. Cross-built ARM64/Intel archives are not proof of execution on all architectures.
 
+Scorecard's published results can have measurement blind spots: its default Actions token cannot read classic branch-protection rules, and packaging heuristics may not recognize compiled release orchestration. Check protection through the repository API and publication/attestations through the actual release evidence instead of adding a broad token or changing code merely to satisfy a heuristic. A young repository, solo-maintainer reviews and lack of Best Practices enrollment can also lower the score; no artificial activity or unsupported badge is used to inflate it.
+
 ## Supply-chain evidence
 
 From release 0.2.0, the release workflow generates:
@@ -37,7 +39,7 @@ Download and verify actual evidence for the version being installed:
 gh release download v0.2.0 --repo codegiveness/postgresql-sharp-mcp --dir release-verification
 ```
 
-On Linux, run `sha256sum --check SHA256SUMS` in that directory. On macOS, use `shasum -a 256 --check SHA256SUMS`; on Windows use `Get-FileHash -Algorithm SHA256` and compare each filename/digest. For an attested asset:
+On Linux, run `sha256sum --check SHA256SUMS` in that directory. On macOS, use `shasum -a 256 --check SHA256SUMS`; on Windows use `Get-FileHash -Algorithm SHA256` and compare each filename/digest. For an attested asset, use a current [GitHub CLI](https://cli.github.com/) with `gh attestation` support; older CLI versions do not provide this command:
 
 ```bash
 gh attestation verify ./release-verification/postgresql-sharp-mcp-linux-x64.tar.gz --repo codegiveness/postgresql-sharp-mcp
