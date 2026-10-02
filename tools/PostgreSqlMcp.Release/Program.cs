@@ -11,21 +11,41 @@ return await Release.RunAsync(args);
 internal static class Release
 {
     private static readonly string[] Rids = ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"];
+    private const string TagPattern = @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z";
 
     public static async Task<int> RunAsync(string[] args)
     {
         try
         {
-            if (args.Length == 0) throw new InvalidOperationException("Expected metadata, archives, sbom, github, npm, or require-secret command.");
-            string root = FindRoot();
+            if (args.Length == 0) throw new InvalidOperationException("Expected validate-tag, metadata, context, archives, sbom, github, npm, or require-secret command.");
             string command = args[0];
             string tag = Environment.GetEnvironmentVariable("RELEASE_TAG") ?? "";
-            var metadata = ReadMetadata(root);
+            if (command == "require-secret")
+            {
+                if (args.Length != 2 || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(args[1])))
+                    throw new InvalidOperationException("The required publishing environment credential is missing.");
+                return 0;
+            }
+            bool publication = command is "github" or "npm";
+            string root = publication ? Environment.CurrentDirectory : FindRoot();
+            if (command == "validate-tag")
+            {
+                await ValidateTagAsync(root, tag);
+                return 0;
+            }
+            var metadata = publication ? ReadPublicationContext(args) : ReadMetadata(root);
             switch (command)
             {
                 case "metadata":
-                    if (!Regex.IsMatch(tag, @"^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$", RegexOptions.CultureInvariant) || tag != "v" + metadata.Version)
+                case "context":
+                    if (!Regex.IsMatch(tag, TagPattern, RegexOptions.CultureInvariant) || tag != "v" + metadata.Version)
                         throw new InvalidOperationException("Release tag must match the application and npm package versions.");
+                    if (command == "context")
+                    {
+                        await WritePublicationContextAsync(root, metadata.Version, metadata.NpmName);
+                        Console.WriteLine("Wrote internal publication context.");
+                        break;
+                    }
                     await OutputAsync("tag", tag);
                     await OutputAsync("version", metadata.Version);
                     await OutputAsync("npm_name", metadata.NpmName);
@@ -46,14 +66,10 @@ internal static class Release
                     break;
                 case "github":
                     if (tag != "v" + metadata.Version) throw new InvalidOperationException("Release tag/version mismatch.");
-                    await PublishGitHubAsync(root, tag);
+                    await PublishGitHubAsync(root, tag, metadata);
                     break;
                 case "npm":
                     await PublishNpmAsync(root, metadata.NpmName, metadata.Version);
-                    break;
-                case "require-secret":
-                    if (args.Length != 2 || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(args[1])))
-                        throw new InvalidOperationException("The required publishing environment credential is missing.");
                     break;
                 default:
                     throw new InvalidOperationException("Unknown release command.");
@@ -65,6 +81,21 @@ internal static class Release
             Console.Error.WriteLine($"Release operation failed: {error.Message}");
             return 1;
         }
+    }
+
+    private static async Task ValidateTagAsync(string root, string tag)
+    {
+        if (!Regex.IsMatch(tag, TagPattern, RegexOptions.CultureInvariant))
+            throw new InvalidOperationException("Release tag must be v<major>.<minor>.<patch> with an optional prerelease suffix.");
+        var revision = await CaptureAsync("git", ["rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"], root);
+        if (revision.ExitCode != 0)
+            throw new InvalidOperationException("Release tag must already exist and point to a commit.");
+        string commit = revision.Output.Trim();
+        var ancestry = await CaptureAsync("git", ["merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"], root);
+        if (ancestry.ExitCode != 0)
+            throw new InvalidOperationException("Release tag must point to a commit on origin/main.");
+        await OutputAsync("commit", commit);
+        Console.WriteLine($"Verified release tag {tag} is on origin/main at {commit}.");
     }
 
     private static string FindRoot()
@@ -81,6 +112,26 @@ internal static class Release
         using var npm = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "npm/package.json")));
         if (npm.RootElement.GetProperty("version").GetString() != version) throw new InvalidOperationException("Application and npm versions differ.");
         return (version, npm.RootElement.GetProperty("name").GetString()!);
+    }
+
+    private static async Task WritePublicationContextAsync(string root, string version, string npmName)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "artifacts"));
+        await File.WriteAllTextAsync(Path.Combine(root, "artifacts/publication-context.json"),
+            JsonSerializer.Serialize(new { version, npmName }));
+    }
+
+    private static (string Version, string NpmName) ReadPublicationContext(string[] args)
+    {
+        if (args.Length != 3 || args[1] != "--context")
+            throw new InvalidOperationException("Publishing requires --context <publication-context.json>.");
+        using var document = JsonDocument.Parse(File.ReadAllText(args[2]));
+        string version = document.RootElement.GetProperty("version").GetString() ?? "";
+        string name = document.RootElement.GetProperty("npmName").GetString() ?? "";
+        if (!Regex.IsMatch("v" + version, TagPattern, RegexOptions.CultureInvariant) ||
+            !Regex.IsMatch(name, @"\A(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*\z", RegexOptions.CultureInvariant))
+            throw new InvalidOperationException("Publication context must contain a valid release version and npm package name.");
+        return (version, name);
     }
 
     private static async Task ArchivesAsync(string root)
@@ -123,7 +174,7 @@ internal static class Release
 
     private static async Task ChecksumsAsync(string root)
     {
-        var files = ArtifactFiles(root).Order(StringComparer.Ordinal).ToArray();
+        var files = ArtifactFiles(root, ReadMetadata(root)).Order(StringComparer.Ordinal).ToArray();
         var checksums = new List<string>(files.Length);
         foreach (string file in files)
         {
@@ -134,9 +185,8 @@ internal static class Release
         await File.WriteAllLinesAsync(Path.Combine(root, "artifacts/SHA256SUMS"), checksums);
     }
 
-    private static string[] ArtifactFiles(string root)
+    private static string[] ArtifactFiles(string root, (string Version, string NpmName) metadata)
     {
-        var metadata = ReadMetadata(root);
         string[] archives = Rids.Select(rid => Path.Combine(root, "artifacts/archives", "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"))).ToArray();
         string nuget = Path.Combine(root, "artifacts/packages", "codegiveness.postgresql-sharp-mcp." + metadata.Version + ".nupkg");
         string npm = Path.Combine(root, "artifacts/packages", metadata.NpmName.Replace("@", "").Replace("/", "-") + "-" + metadata.Version + ".tgz");
@@ -147,10 +197,10 @@ internal static class Release
         return files;
     }
 
-    private static async Task PublishGitHubAsync(string root, string tag)
+    private static async Task PublishGitHubAsync(string root, string tag, (string Version, string NpmName) metadata)
     {
         string repo = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? throw new InvalidOperationException("GITHUB_REPOSITORY is required.");
-        string[] files = ArtifactFiles(root);
+        string[] files = ArtifactFiles(root, metadata);
         var lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
         if (lookup.ExitCode != 0)
         {

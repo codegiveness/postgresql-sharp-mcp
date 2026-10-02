@@ -41,7 +41,15 @@ The .NET verifier builds the application and exercises real MCP calls against a 
 
 Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Linux subprocess and MCP-client regressions exercise blocked stdin, inherited output pipes, failed-writer disposal and owned-child cleanup. Verification command deadlines cover stdin, exit and output drains; release capture deadlines cover exit and drains. MCP verification requests also bound semaphore wait, stdin writing and response wait with one cancellation-aware deadline. Asynchronous stdin close is bounded, and cleanup observes readers before disposal. An already-orphaned descendant is outside the exited parent's `Process.Kill` tree, so this is not an OS process-group/job-object containment guarantee. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
 
-The integration command also runs fixed-seed SQL fuzz/property scenarios against PostgreSQL: quoted literal round trips, nested comments, second-statement rejection, mixed-case control statements and malformed boundaries. These finite scenarios complement permission tests; they are not proof of exhaustive fuzzing or OSS-Fuzz enrollment.
+The integration command also runs deterministic FsCheck SQL properties against PostgreSQL: quoted literal round trips and second-statement rejection, with shrinking and replay seeds, plus nested comments, mixed-case control statements and malformed boundaries. Failures report only synthetic generated inputs and replay information. These finite scenarios complement permission tests; they are not proof of exhaustive fuzzing or OSS-Fuzz enrollment.
+
+On Linux x64, run the coverage-guided lexer campaign separately:
+
+```bash
+dotnet run --project tools/PostgreSqlMcp.Fuzz -c Release -p:RestoreLockedMode=true -- campaign 60
+```
+
+The C# orchestrator accepts 1–600 seconds (default 60), downloads and verifies the pinned native bridge, restores the pinned SharpFuzz tool, publishes with locked dependencies, instruments `Core.SqlGuard` in isolated output and replays every checked-in corpus seed before running libFuzzer. Downloads, instrumentation, seed replay and campaign failures fail closed. The CI workflow runs 60 seconds for pushes/PRs and 300 seconds on its daily schedule. Generated corpus/crashes stay under ignored `artifacts/fuzz`; use synthetic SQL only, never operator inputs or database results. The callback probes UTF-8 and UTF-16, normalization, input bounds and second-statement rejection; it does not connect to PostgreSQL or prove authorization. Keep seed filenames portable, avoiding Windows reserved basenames such as `NUL`.
 
 The maintained SARIF comparator can be exercised without a database:
 
@@ -54,7 +62,7 @@ The comparator rejects new high/critical security findings (CVSS >= 7) or error-
 
 Use raw scanner artifacts containing successful invocation evidence. GitHub-normalized API exports can omit that evidence and are intentionally rejected. An `executionSuccessful` flag does not override compiler/extraction error notifications.
 
-For a bug, reproduce the failure before changing code and exercise the same path after the fix. Add regression coverage for plausible consumer-visible failures or uncertain boundaries; avoid source-text, wiring-only and mock-echo assertions. Documentation-only changes need link and command review rather than unrelated database runs.
+For a bug, reproduce the failure before changing code and exercise the same path after the fix. Major new functionality must have automated consumer-visible behavior coverage; extend the maintained verifier with relevant boundaries, transitions and errors rather than duplicating wiring assertions. Add regression coverage for plausible consumer-visible failures or uncertain boundaries; avoid source-text, wiring-only and mock-echo assertions. Documentation-only changes need link and command review rather than unrelated database runs.
 
 ## Build and install package artifacts
 
@@ -124,7 +132,7 @@ Keep versions, affected help/docs and release notes consistent. Update [THIRD-PA
 ## Automation and releases
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
-- **Release workflow** accepts version tags and a manual rerun for an existing tag. It verifies tag/package version consistency and behavior before producing npm/NuGet packages and self-contained platform archives. Independent jobs create the GitHub release and publish registry packages. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
+- **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
 - **Dependency audit** checks direct and transitive NuGet packages against known advisories. This is not proof that all vulnerabilities are absent.
 - **CodeQL** scans C# and GitHub Actions with `security-extended`. C# uses real builds, including generated sources. Trusted main/scheduled runs publish code-scanning results; PRs scan both the base and candidate with read-only tokens, retain raw SARIF and run the trusted-base severity-delta gate. Extraction errors and missing reports fail closed. Review workflow changes as well as findings.
 - **Scorecard** publishes repository-practice findings on main and weekly. Its score is not a vulnerability-free claim or profile achievement.
@@ -139,11 +147,11 @@ Only authorized maintainers may push release tags, publish packages or change re
 
 ### Publisher setup
 
-Use the `release` GitHub environment for narrowly scoped publishing secrets and deployment-ref restrictions. Do not put tokens in source, command history, issues or pull requests.
+Use the `release` GitHub environment for narrowly scoped publishing secrets. Restrict its deployment refs to the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. This keeps release invocation available to the solo maintainer without requiring another person's approval. Do not put tokens in source, command history, issues or pull requests.
 
 1. In the npm account authorized to publish under `@codegiveness`, create a short-lived granular token with **Read and write (publish and stage)** access to that scope, including new package creation—not only the sibling's existing package or **stage only** access. For unattended publishing with account 2FA, enable **Bypass 2FA** on this token. Store it as `NPM_TOKEN` in the `release` environment. Organization-management permission alone does not grant package publication rights. Granular tokens currently must be created on the website, not with `npm token create`. See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens).
 2. In the authorized NuGet account, add a **Trusted Publishing** policy for owner `codegiveness`, repository `postgresql-sharp-mcp`, workflow filename `release.yml`, and environment `release`. Permit new packages and versions matching `codegiveness.postgresql-sharp-mcp`. Store the **policy creator's NuGet profile username** as `NUGET_USERNAME`, not an organization/policy owner's name, email or password. The workflow exchanges GitHub OIDC for a short-lived key; no persistent NuGet API key is required. See [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
-3. Push the matching `v<version>` tag after verification, or run **Actions → Release → Run workflow** with that existing tag. Check each publication job and install the exact version from each registry before announcing availability.
+3. After verification, create the matching `v<version>` tag on a commit reachable from `main`. Run **Actions → Release → Run workflow** on **main** with that existing tag, or use the explicit `--ref main` command below. A tag push alone does not publish. Check each publication job and install the exact version from each registry before announcing availability.
 
 GitHub's secret API exposes names and public encryption keys, not plaintext values. With explicit owner authorization, a source Actions job can encrypt selected existing credentials using the target environment's public key; an authorized operator then installs that ciphertext through the target secret API. Never print plaintext, upload it as an artifact, copy an unrelated token, or retain the temporary transfer branch/artifact. Token scope still must authorize this package, and NuGet's trusted-publishing policy must separately authorize this repository/workflow/environment.
 
@@ -155,13 +163,9 @@ gh secret set NUGET_USERNAME --repo codegiveness/postgresql-sharp-mcp --env rele
 gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.2.0
 ```
 
-Only run publication after account permissions/policy and the existing version tag are ready. For a failed release run, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse verified artifacts.
+Only run publication after account permissions/policy and the existing version tag are ready. For a failed run of the main-dispatched workflow, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse that run's immutable artifacts. Expired or deleted artifacts fail closed; start a new main dispatch rather than rebuilding publisher tooling from tag source.
 
-The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); that response does not identify the exact npm permission or account mismatch. NuGet returned HTTP 401 (“no matching trust policy”). GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization, configure the matching target NuGet policy, then rerun the failed jobs:
-
-```bash
-gh run rerun 36967428485 --failed --repo codegiveness/postgresql-sharp-mcp
-```
+The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); that response does not identify the exact npm permission or account mismatch. NuGet returned HTTP 401 (“no matching trust policy”). GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization and configure the matching target NuGet policy. Once the hardened workflow is reviewed and merged, use a fresh main dispatch with the verified existing tag; the release environment no longer permits the old tag-triggered run.
 
 ## GitHub profile recognition
 

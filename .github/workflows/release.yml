@@ -1,7 +1,5 @@
 name: Release
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
@@ -10,19 +8,50 @@ on:
         type: string
 permissions: {}
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      RestoreLockedMode: 'true'
+      RELEASE_TAG: ${{ inputs.tag }}
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+      tool_artifact_id: ${{ steps.tool.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Resolve an existing release tag on main
+        id: tag
+        run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- validate-tag
+      - name: Build trusted main publication tooling
+        run: dotnet publish tools/PostgreSqlMcp.Release -c Release -p:RestoreLockedMode=true -o "$RUNNER_TEMP/release-tool"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: tool
+        with:
+          name: release-tool
+          path: ${{ runner.temp }}/release-tool
+          if-no-files-found: error
   package:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     env:
       RestoreLockedMode: 'true'
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag }}
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
       version: ${{ steps.metadata.outputs.version }}
@@ -31,17 +60,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          ref: ${{ needs.preflight.outputs.commit }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
+      - name: Download trusted main publication tooling
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
+          path: release-tool
+          digest-mismatch: error
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
       - name: Verify tag and package metadata
         id: metadata
-        run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- metadata
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll metadata
       - name: Verify real PostgreSQL MCP behavior
         run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
       - name: Build .NET distributions
@@ -49,18 +84,11 @@ jobs:
       - name: Verify installed distributions
         run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages
       - name: Build self-contained archives
-        run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- archives
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll archives
       - name: Generate application SBOM and checksums
-        run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- sbom
-      - name: Attest archives, package files, SBOM and checksums
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            artifacts/archives/*
-            artifacts/packages/*.tgz
-            artifacts/packages/*.nupkg
-            artifacts/sbom/bom.json
-            artifacts/SHA256SUMS
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll sbom
+      - name: Generate internal publication context
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll context
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts
@@ -71,29 +99,68 @@ jobs:
             artifacts/sbom/bom.json
             artifacts/SHA256SUMS
           if-no-files-found: error
-  github-release:
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-context
+          path: artifacts/publication-context.json
+          if-no-files-found: error
+  attest:
     needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+      - name: Attest archives, package files, SBOM and checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/archives/*
+            artifacts/packages/*.tgz
+            artifacts/packages/*.nupkg
+            artifacts/sbom/bom.json
+            artifacts/SHA256SUMS
+  github-release:
+    needs: [preflight, package, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
     permissions:
       actions: read
       contents: write
     env:
       RestoreLockedMode: 'true'
-      GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.package.outputs.tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ needs.package.outputs.tag }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
-      - run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
-      - run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- github
+      - name: Download trusted main publication tooling
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
+          path: release-tool
+          digest-mismatch: error
+      - name: Download metadata and release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll github --context publication-context/publication-context.json
   npm:
-    needs: [package, github-release]
+    needs: [preflight, package, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -103,24 +170,31 @@ jobs:
       id-token: write
     env:
       RestoreLockedMode: 'true'
-      GH_TOKEN: ${{ github.token }}
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ needs.package.outputs.tag }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-      - run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+      - name: Download trusted main publication tooling
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
+          path: release-tool
+          digest-mismatch: error
+      - name: Download metadata and release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
       - name: Publish with npm provenance
-        run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll npm --context publication-context/publication-context.json
   nuget:
-    needs: [package, github-release]
+    needs: [preflight, package, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -130,18 +204,25 @@ jobs:
       id-token: write
     env:
       RestoreLockedMode: 'true'
-      GH_TOKEN: ${{ github.token }}
-      NUGET_USERNAME: ${{ secrets.NUGET_USERNAME }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ needs.package.outputs.tag }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet run --project tools/PostgreSqlMcp.Release -c Release -- require-secret NUGET_USERNAME
-      - run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+      - name: Download trusted main publication tooling
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
+          path: release-tool
+          digest-mismatch: error
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+      - name: Require NuGet publishing account
+        env:
+          NUGET_USERNAME: ${{ secrets.NUGET_USERNAME }}
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll require-secret NUGET_USERNAME
       - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: nuget-login
         with:

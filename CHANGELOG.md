@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Verify Best Practices enrollment as project 15155 (19%, not passing); add evidence-backed owner-review proposals and correct stale enrollment, secret-feature and Scorecard findings documentation without claiming hosted changes.
+- Display the live OpenSSF Best Practices badge in README, including its in-progress state; distinguish the saved owner self-assessment from local answer proposals and security certification.
+- Provide a Best Practices owner checklist using the questionnaire's exact visible question text, answer choices and copy-ready explanations instead of requiring manual interpretation of internal JSON identifiers.
+- Harden solo-maintainer release execution: require a manual main-branch dispatch and an existing tag reachable from main; compile trusted orchestration in read-only preflight and use digest-checked immutable artifacts in checkout-free attestation/publishing jobs. Replace source discovery in publishers with an explicit publication context.
+- Preserve zero required approvals while enabling resolved review conversations, enforced full-SHA Actions pins, a restricted action-publisher allowlist and owner approval for external fork workflows. Restrict the release environment to main; document unchanged optional secret controls and that hosted badge answers still require owner authentication.
+- Replace the coverage-guided SQL fuzz Bash launcher with checksum-verified, deadline-bounded C# orchestration and fail-closed seed replay; keep portable corpus names and repair the asynchronous FsCheck verifier entrypoint. Document distinct PostgreSQL property and lexer fuzzing layers.
+
 - Update artifact uploads to the verified Node 24-based action; link the enabled private vulnerability-reporting route and clarify observed registry-account prerequisites and Scorecard measurement limits.
 - Pin stable SDK 10.0.401 and SourceLink 10.0.401; align compatible transitive dependencies with current stable NuGet versions, including AI abstractions 10.10.1, and regenerate portable/five-RID lock graphs.
 - Bound subprocess stdin/output-drain lifetimes with the command deadline, and MCP verifier request writes/response waits with one cancelable deadline. Bound asynchronous stdin close after a failed write; observe canceled readers before disposal, close failed-start/socket resources, and wait for the fixture's final TCP server. Add blocked-input/inherited-pipe and failed-MCP-writer cleanup regression checks.
