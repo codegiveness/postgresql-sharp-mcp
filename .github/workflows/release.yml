@@ -6,6 +6,12 @@ on:
         description: Existing v<version> release tag
         required: true
         type: string
+      target:
+        description: Publication target
+        required: true
+        type: choice
+        default: all
+        options: [all, nuget]
 permissions: {}
 concurrency:
   group: release-${{ inputs.tag }}
@@ -130,6 +136,7 @@ jobs:
             artifacts/SHA256SUMS
   github-release:
     needs: [preflight, package, attest]
+    if: inputs.target == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -161,6 +168,7 @@ jobs:
         run: dotnet release-tool/PostgreSqlMcp.Release.dll github --context publication-context/publication-context.json
   npm:
     needs: [preflight, package, github-release]
+    if: inputs.target == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -194,7 +202,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: dotnet release-tool/PostgreSqlMcp.Release.dll npm --context publication-context/publication-context.json
   nuget:
-    needs: [preflight, package, github-release]
+    needs: [preflight, package, attest, github-release]
+    if: >-
+      ${{ !cancelled() && needs.preflight.result == 'success' &&
+          needs.package.result == 'success' && needs.attest.result == 'success' &&
+          (inputs.target == 'nuget' || needs.github-release.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
