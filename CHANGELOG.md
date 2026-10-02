@@ -9,6 +9,8 @@
 - Document measured allocation/retained-heap behavior and the limits of a finite leak review; keep C# 14 SDK defaults and preserve MCP/package contracts.
 - Add fixed-seed, real-PostgreSQL SQL fuzz/property scenarios and a fail-closed C# SARIF severity-delta comparator with meaningful regression coverage.
 - Upgrade runtime OpenSSL packages to address CVE-2026-84782 in the pinned base image; retain non-root execution and native GSS support.
+- Enable Dependabot vulnerability alerts and security-update PRs; add checksum-pinned full-history Gitleaks and real-image Trivy gates with narrow fixture exceptions and no broad vulnerability ignores.
+- Scan C# and GitHub Actions with CodeQL; use real C# builds after observing no-build extraction errors, and gate PR severity deltas using raw base/candidate reports and the trusted-base comparator.
 
 ## 0.2.0
 

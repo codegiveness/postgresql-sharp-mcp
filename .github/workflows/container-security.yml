@@ -1,0 +1,56 @@
+name: Container security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '43 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  container-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-verified Trivy
+        working-directory: ${{ runner.temp }}
+        run: |
+          # Official v0.75.0 release and trivy_0.75.0_checksums.txt; no install script.
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 \
+            --output trivy.tar.gz \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-64bit.tar.gz
+          printf '%s  %s\n' 'c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f' 'trivy.tar.gz' | sha256sum --check --strict
+          mkdir -p trivy-bin
+          tar -xzf trivy.tar.gz -C trivy-bin trivy
+          ./trivy-bin/trivy --version
+      - name: Build the actual application image
+        run: docker build --pull --tag postgresql-sharp-mcp:security .
+      - name: Gate OS and application vulnerabilities
+        # Include unfixed findings. Disable implicit repo-local config/ignore files;
+        # any future exception must be justified, scoped and expiry-bound in review.
+        run: |
+          mkdir -p artifacts/container-security
+          "${{ runner.temp }}/trivy-bin/trivy" image \
+            --config '' --ignorefile '' \
+            --image-src docker --scanners vuln --pkg-types os,library \
+            --severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1 \
+            --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+            --timeout 10m --no-progress --disable-telemetry --skip-version-check \
+            --format json --list-all-pkgs=false \
+            --output artifacts/container-security/trivy.json \
+            postgresql-sharp-mcp:security
+      - name: Preserve vulnerability report, including failed gates
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/container-security/trivy.json
+          if-no-files-found: error
+          retention-days: 7

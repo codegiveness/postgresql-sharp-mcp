@@ -1,0 +1,130 @@
+title = "PostgreSQL MCP secret scanning"
+minVersion = "v8.30.1"
+
+[extend]
+useDefault = true
+
+# Match complete credential assignments/URIs, not only the password. This also
+# prevents upstream placeholder allowlists from ignoring low-entropy passwords.
+# Passwords have no entropy threshold. A database keyword must be on the same
+# line, in either order; the context rules never produce standalone findings.
+[[rules]]
+id = "postgresql-uri-password"
+description = "PostgreSQL URI containing a password"
+regex = '''(?i)\bpostgres(?:ql)?://[^\s:/@'"<>]+:[^\s/@'"<>]+@[^\s'"<>]+'''
+keywords = ["postgres://", "postgresql://"]
+
+[[rules]]
+id = "npgsql-keyword-password"
+description = "Npgsql keyword connection string containing a password"
+regex = '''(?i)\b(?:password|pwd)[ \t]*=[ \t]*(?:"(?:[^"\r\n]|"")+"|'(?:[^'\r\n]|'')+'|[^;\s"'\\]+)'''
+keywords = ["password", "pwd"]
+[[rules.required]]
+id = "npgsql-connection-context"
+withinLines = 0
+
+[[rules]]
+id = "npgsql-connection-context"
+description = "Npgsql connection string keyword context"
+regex = '''(?i)\b(?:host|username|user[ \t]+name)[ \t]*='''
+keywords = ["host", "username", "user"]
+skipReport = true
+
+[[rules]]
+id = "sqlserver-keyword-password"
+description = "SQL Server keyword connection string containing a password"
+regex = '''(?i)\b(?:password|pwd)[ \t]*=[ \t]*(?:"(?:[^"\r\n]|"")+"|'(?:[^'\r\n]|'')+'|[^;\s"'\\]+)'''
+keywords = ["password", "pwd"]
+[[rules.required]]
+id = "sqlserver-connection-context"
+withinLines = 0
+
+[[rules]]
+id = "sqlserver-connection-context"
+description = "SQL Server connection string keyword context (including Npgsql aliases)"
+regex = '''(?i)\b(?:server|data[ \t]+source|address|addr|network[ \t]+address|initial[ \t]+catalog|integrated[ \t]+security|trusted_connection)[ \t]*='''
+keywords = ["server", "source", "address", "addr", "catalog", "security", "trusted_connection"]
+skipReport = true
+
+# Exact documented placeholders, never arbitrary README password assignments.
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "README connection configuration placeholders"
+condition = "AND"
+paths = ['''^README\.md$''']
+regexTarget = "match"
+regexes = ['''^Password=<(?:database-password|other-password)>$''']
+
+# The verifier creates its own loopback-only disposable PostgreSQL containers.
+# These values must remain tied to these exact paths, not entire test files.
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Disposable integration roles and invalid-configuration diagnostic marker"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/Integration\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=(?:reader-disposable|writer-disposable|sensitive-configuration-marker)$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Disposable package startup authentication marker"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/Packages\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=disposable-package-secret$''']
+
+# Default rules still run. Only these exact disposable values may be suppressed
+# if the generic provider-independent rule also recognizes them.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Disposable integration values under generic detection"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/Integration\.cs$''']
+regexTarget = "secret"
+regexes = ['''^(?:reader-disposable|writer-disposable|sensitive-configuration-marker)$''']
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Disposable package value under generic detection"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/Packages\.cs$''']
+regexTarget = "secret"
+regexes = ['''^disposable-package-secret$''']
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Disposable PostgreSQL container and seeded role values"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/PostgresFixture\.cs$''']
+regexTarget = "secret"
+regexes = ['''^(?:mcp-disposable-only|reader-disposable|writer-disposable)$''']
+
+# Legacy examples and disposable tests were removed by the .NET cutover.
+# Limit their historical exceptions to exact commits as well as paths/values;
+# the same weak literal in a new commit must still fail.
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Historical README replacement instruction, not a credential"
+condition = "AND"
+commits = ["63d30b991ddc3beab3614c67357bce5e74bcf767"]
+paths = ['''^README\.md$''']
+regexTarget = "match"
+regexes = ['''^Password=replace-me$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Historical disposable PostgreSQL integration roles"
+condition = "AND"
+commits = ["63d30b991ddc3beab3614c67357bce5e74bcf767"]
+paths = ['''^scripts/smoke\.py$''']
+regexTarget = "match"
+regexes = ['''^Password=(?:reader-disposable|writer-disposable)$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Historical unavailable-port package diagnostic fixture"
+condition = "AND"
+commits = ["3bc6be903ed39bf6e79ac4567fee590bdfed8d7a", "c4c54ef2f18dd63eb79840946000410982983ad2"]
+paths = ['''^scripts/package-smoke\.py$''']
+regexTarget = "match"
+regexes = ['''^Password=disposable$''']

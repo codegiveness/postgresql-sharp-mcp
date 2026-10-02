@@ -29,4 +29,7 @@
 - Pin Actions to verified full commit SHAs with version comments. Use least-privilege job permissions and disable persisted checkout credentials. Publishing jobs may need narrowly scoped write permissions; validation jobs should remain read-only.
 - Never execute untrusted pull-request code through privileged `pull_request_target` or `workflow_run` paths.
 - Review dependency updates and verify relevant behavior. Dependabot does not authorize automatic merging or publication.
+- Preserve the raw-SARIF fail-closed gate: baseline/candidate revisions must use the same scanner/query setup, and scan or extraction errors are not a clean result. Execute the comparator from trusted base source; review workflow changes separately.
+- Secret-scanner exceptions must combine exact synthetic values and paths; historical exceptions also name exact commits. Never blanket-ignore test directories, baseline real leaks, publish secret-bearing reports, or use inline suppression to hide a finding.
+- Container scans must examine the built image's OS and application packages. Do not replace them with Dockerfile-only scans, skip unfixed HIGH/CRITICAL findings, or silently disable a failed scanner.
 - Release artifacts are reviewable outputs, not authority to publish. Confirm each authorized publication job and registry endpoint before claiming availability.

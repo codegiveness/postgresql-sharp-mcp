@@ -15,15 +15,20 @@ See [SECURITY.md](../SECURITY.md) for credentials, TLS, extension privileges, re
 
 ## Development controls
 
-- C# CodeQL uses `security-extended`. Main and scheduled runs publish results; PR analysis uses a read-only token and uploads SARIF artifacts rather than acquiring a privileged upload token.
-- Dependency auditing checks direct and transitive NuGet packages against known advisories. Portable and per-platform lockfiles make dependency resolution explicit; locked restore rejects drift.
+- CodeQL uses `security-extended` for C# and GitHub Actions. C# scans build the real solution to capture compiler-generated code. Trusted main/scheduled runs publish results. PR base/candidate scans and the aggregate gate use read-only tokens and preserve raw SARIF artifacts, without privileged uploads or release secrets.
+- The PR gate executes the comparator from the trusted base revision and rejects new CVSS >= 7/error-level findings, incomplete reports and extraction errors. Stable fingerprints and multiplicity prevent broad rule-only suppression. Reviewers must still inspect workflow changes; this is not protection against a maintainer deliberately weakening the workflow.
+- Dependency auditing checks direct and transitive NuGet packages against known advisories. Portable and per-platform lockfiles make dependency resolution explicit; locked restore rejects drift. GitHub Dependabot alerts and automatic security-update PRs are enabled; proposed fixes still require review and passing checks.
 - OpenSSF Scorecard reports repository practices. Findings and the public score can lag configuration changes. The score is neither an independent vulnerability audit nor a certification.
 - Actions use verified full commit pins, checkout credentials are not persisted, and publishing secrets are scoped to the `release` environment. No privileged `pull_request_target` or `workflow_run` execution of untrusted code is configured.
 - Main requires PRs, up-to-date required checks from GitHub Actions, and blocks force pushes/deletion, including administrators. The solo-maintainer policy does not require another person's approval; it does not claim independent review.
 - Installation checks execute native npm and NuGet entrypoints on Linux, Windows and macOS in CI. Database integration runs against disposable PostgreSQL, not an operator's configured database. Cross-built ARM64/Intel archives are not proof of execution on all architectures.
 - Fixed-seed SQL fuzz/property scenarios exercise real PostgreSQL literal round trips, statement/control boundaries and malformed inputs. They supplement existing permissions, rollback and cancellation coverage; they are not exhaustive fuzzing or OSS-Fuzz enrollment.
+- GitHub provider secret scanning and push protection are enabled. Checksum-verified Gitleaks CLI scans all reachable history, including PR commits, with default rules plus PostgreSQL URI/Npgsql/SQL Server password rules. Logs are redacted and no secret reports are published. Exceptions require exact synthetic values and paths; removed legacy fixtures also require exact historical commits. No findings baseline or inline suppression is accepted.
+- Checksum-verified Trivy scans the actual built container's OS and application packages. HIGH/CRITICAL findings, including unfixed findings, fail; scan/network failures are not clean results. Runtime OpenSSL updates addressed the observed CVE-2026-84782. Advisory databases and package availability change, so a passing run is a point-in-time result, not a vulnerability-free guarantee.
 
 Scorecard's published results can have measurement blind spots: its default Actions token cannot read classic branch-protection rules, and packaging heuristics may not recognize compiled release orchestration. Check protection through the repository API and publication/attestations through the actual release evidence instead of adding a broad token or changing code merely to satisfy a heuristic. A young repository, solo-maintainer reviews and lack of Best Practices enrollment can also lower the score; no artificial activity or unsupported badge is used to inflate it.
+
+GitHub generic-pattern detection and validity checks remained disabled after the repository API update attempt; the available browser session could not access authenticated settings. Their eligibility/enablement is not claimed. Gitleaks supplies repository-specific database-credential detection independently. GitHub validity checks apply only to supported provider credentials, not generic database-password patterns. If these optional features are available in the owner's authenticated settings, review their eligibility and enable them there.
 
 ## Supply-chain evidence
 
@@ -59,6 +64,11 @@ GitHub profile Achievements are separate from repository status badges. Useful i
 
 - [GitHub secure use of Actions](https://docs.github.com/en/actions/reference/security/secure-use)
 - [GitHub artifact attestation verification](https://docs.github.com/en/enterprise-cloud%40latest/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations#verifying-artifact-attestations-with-the-github-cli)
+- [CodeQL supported languages](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-code-scanning)
+- [CodeQL build accuracy and generated sources](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages)
+- [GitHub secret patterns and limits](https://docs.github.com/en/code-security/reference/secret-security/supported-secret-scanning-patterns)
+- [Gitleaks CLI and configuration](https://github.com/gitleaks/gitleaks)
+- [Trivy image vulnerability scanning](https://github.com/aquasecurity/trivy)
 - [OpenSSF Scorecard](https://github.com/ossf/scorecard)
 - [CycloneDX .NET generator](https://github.com/CycloneDX/cyclonedx-dotnet)
 - [npm provenance](https://docs.npmjs.com/generating-provenance-statements)
