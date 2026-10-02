@@ -314,21 +314,49 @@ internal static class Packages
     private sealed class UnavailableEndpoint : IAsyncDisposable
     {
         private readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        private readonly CancellationTokenSource stopping = new();
+        private readonly Task rejecting;
         public int Port { get; }
         public UnavailableEndpoint()
         {
             try
             {
-                // Bound, deliberately non-listening loopback socket prevents a race with another service.
+                // Own the port and reject handshakes without OS-specific non-listening-socket behavior.
                 socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                socket.Listen(8);
                 Port = ((IPEndPoint)socket.LocalEndPoint!).Port;
+                rejecting = RejectAsync();
             }
             catch
             {
                 socket.Dispose();
+                stopping.Dispose();
                 throw;
             }
         }
-        public ValueTask DisposeAsync() { socket.Dispose(); return ValueTask.CompletedTask; }
+        private async Task RejectAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    using Socket connection = await socket.AcceptAsync(stopping.Token);
+                }
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await stopping.CancelAsync();
+            try { await rejecting; }
+            finally
+            {
+                socket.Dispose();
+                stopping.Dispose();
+            }
+        }
     }
 }
