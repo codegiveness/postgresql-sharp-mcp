@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Record the reviewed CodeQL checkout false positive without weakening the scanner or release boundary; refresh observed Scorecard/FsCheck and 70% Best Practices evidence. Require automatic verified change commits and unmerged PR publication, without authorizing merges or releases.
 - Verify Best Practices enrollment as project 15155 (19%, not passing); add evidence-backed owner-review proposals and correct stale enrollment, secret-feature and Scorecard findings documentation without claiming hosted changes.
 - Display the live OpenSSF Best Practices badge in README, including its in-progress state; distinguish the saved owner self-assessment from local answer proposals and security certification.
 - Harden solo-maintainer release execution: require a manual main-branch dispatch and an existing tag reachable from main; compile trusted orchestration in read-only preflight and use digest-checked immutable artifacts in checkout-free attestation/publishing jobs. Replace source discovery in publishers with an explicit publication context.
