@@ -6,7 +6,7 @@ Useful contributions fix reproducible problems, improve a real workflow, clarify
 
 Prerequisites:
 
-- .NET 10 SDK and Git. All maintained build, installation, test and release tooling is C#/.NET; Python and Bash are not development prerequisites.
+- .NET 10 SDK **10.0.401 or newer stable 10.0 feature band** and Git, matching `global.json`. SDK-default C# 14 is used; no preview or floating `LangVersion=latest` override. All maintained build, installation, test and release tooling is C#/.NET; Python and Bash are not development prerequisites.
 - Docker with access to a running daemon for the disposable PostgreSQL integration fixture and container checks.
 - Node.js 22 or newer and npm only for npm installation/publication checks. They are not server runtime dependencies.
 - Network access for SDK/package restore, container images and PostgreSQL extension packages.
@@ -29,6 +29,8 @@ Omit `--validate` to start the stdio server. Never commit populated targets file
 
 The source layout is `src/PostgreSqlMcp.Core` (configuration, SQL and database behavior), `src/PostgreSqlMcp.Tools` (MCP tools), and `src/PostgreSqlMcp` (stdio host and CLI). Preserve dependency direction `Core <- Tools <- App`. MCP stdout is reserved for JSON-RPC; diagnostics belong on stderr.
 
+Dependencies use current compatible stable releases verified against [official .NET release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json) and NuGet package indexes, not preview feeds. Central transitive pins keep the portable/five-RID graphs aligned; restore each RID with explicit `-p:RuntimeIdentifier=<rid> -p:RuntimeIdentifiers=<rid>` so its lockfile stays separate. Recheck compatibility and regenerate every affected lock on upgrades; do not infer that today's pins remain the latest indefinitely.
+
 ## Verify behavior
 
 ```bash
@@ -37,7 +39,18 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 
 The .NET verifier builds the application and exercises real MCP calls against a disposable PostgreSQL 17 Docker fixture with `pg_stat_statements` and HypoPG. It creates and removes its own container; do not substitute a production or unrelated database.
 
-Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
+Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Linux subprocess and MCP-client regressions exercise blocked stdin, inherited output pipes, failed-writer disposal and owned-child cleanup. Verification command deadlines cover stdin, exit and output drains; release capture deadlines cover exit and drains. MCP verification requests also bound semaphore wait, stdin writing and response wait with one cancellation-aware deadline. Asynchronous stdin close is bounded, and cleanup observes readers before disposal. An already-orphaned descendant is outside the exited parent's `Process.Kill` tree, so this is not an OS process-group/job-object containment guarantee. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
+
+The integration command also runs fixed-seed SQL fuzz/property scenarios against PostgreSQL: quoted literal round trips, nested comments, second-statement rejection, mixed-case control statements and malformed boundaries. These finite scenarios complement permission tests; they are not proof of exhaustive fuzzing or OSS-Fuzz enrollment.
+
+The maintained SARIF comparator can be exercised without a database:
+
+```bash
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- sarif-regressions
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- sarif --baseline "<baseline-report-directory>" --candidate "<candidate-report-directory>"
+```
+
+The comparator rejects new high/critical security findings (CVSS >= 7) or error-level findings, missing/malformed reports and unsuccessful scans. Matching uses tool/rule identity, stable fingerprints and multiplicity, with precise location fallback. Diagnostics omit finding messages and source snippets. Its regression scenarios cover severity escalation, shifted fingerprints/locations, duplicate findings, incomplete reports and unsafe diagnostic text.
 
 For a bug, reproduce the failure before changing code and exercise the same path after the fix. Add regression coverage for plausible consumer-visible failures or uncertain boundaries; avoid source-text, wiring-only and mock-echo assertions. Documentation-only changes need link and command review rather than unrelated database runs.
 

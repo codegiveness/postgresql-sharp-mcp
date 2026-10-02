@@ -256,8 +256,8 @@ internal static class Packages
     {
         using var content = new MemoryStream();
         await stream.CopyToAsync(content);
-        byte[] bytes = content.ToArray();
-        Check.That(paths.All(path => bytes.AsSpan().IndexOf(path) < 0), "Package artifact exposes the build-machine workspace path.");
+        ReadOnlyMemory<byte> bytes = content.GetBuffer().AsMemory(0, checked((int)content.Length));
+        Check.That(paths.All(path => bytes.Span.IndexOf(path) < 0), "Package artifact exposes the build-machine workspace path.");
     }
 
     private sealed class UnavailableEndpoint : IAsyncDisposable
@@ -266,9 +266,17 @@ internal static class Packages
         public int Port { get; }
         public UnavailableEndpoint()
         {
-            // Bound, deliberately non-listening loopback socket prevents a race with another service.
-            socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-            Port = ((IPEndPoint)socket.LocalEndPoint!).Port;
+            try
+            {
+                // Bound, deliberately non-listening loopback socket prevents a race with another service.
+                socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                Port = ((IPEndPoint)socket.LocalEndPoint!).Port;
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
         }
         public ValueTask DisposeAsync() { socket.Dispose(); return ValueTask.CompletedTask; }
     }

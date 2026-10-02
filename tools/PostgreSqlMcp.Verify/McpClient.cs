@@ -11,6 +11,7 @@ internal sealed class McpClient : IAsyncDisposable
     private readonly Process process;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonNode>> pending = new();
     private readonly SemaphoreSlim writes = new(1);
+    private readonly CancellationTokenSource reading = new();
     private readonly Task reader;
     private readonly Task<string> errors;
     private int nextId;
@@ -19,8 +20,14 @@ internal sealed class McpClient : IAsyncDisposable
 
     private McpClient(Command command, IReadOnlyDictionary<string, string> environment)
     {
-        process = Processes.Start(command, environment);
-        errors = process.StandardError.ReadToEndAsync();
+        try { process = Processes.Start(command, environment); }
+        catch
+        {
+            writes.Dispose();
+            reading.Dispose();
+            throw;
+        }
+        errors = process.StandardError.ReadToEndAsync(reading.Token);
         reader = ReadAsync();
     }
 
@@ -50,13 +57,16 @@ internal sealed class McpClient : IAsyncDisposable
         Exception failure = new VerificationException("MCP process exited before responding.");
         try
         {
-            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            while (await process.StandardOutput.ReadLineAsync(reading.Token) is { } line)
             {
                 JsonNode message = JsonNode.Parse(line) ?? throw new VerificationException("Empty JSON-RPC response.");
                 Check.That(message["jsonrpc"].Text() == "2.0", "Non-protocol output on MCP stdout.");
                 if (message["id"] is JsonValue id && id.TryGetValue<int>(out int number) && pending.TryRemove(number, out var completion))
                     completion.TrySetResult(message);
             }
+        }
+        catch (OperationCanceledException) when (reading.IsCancellationRequested)
+        {
         }
         catch (Exception)
         {
@@ -69,13 +79,13 @@ internal sealed class McpClient : IAsyncDisposable
         }
     }
 
-    private async Task SendAsync(object message)
+    private async Task SendAsync(object message, CancellationToken ct = default)
     {
-        await writes.WaitAsync();
+        await writes.WaitAsync(ct);
         try
         {
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message));
-            await process.StandardInput.FlushAsync();
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct);
+            await process.StandardInput.FlushAsync(ct);
         }
         finally { writes.Release(); }
     }
@@ -83,13 +93,17 @@ internal sealed class McpClient : IAsyncDisposable
     public async Task<JsonNode> RequestAsync(string method, object parameters)
     {
         int id = Interlocked.Increment(ref nextId);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(reading.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
         var completion = new TaskCompletionSource<JsonNode>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[id] = completion;
         try
         {
-            await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters });
-            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters }, deadline.Token);
+            return await completion.Task.WaitAsync(deadline.Token);
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !reading.IsCancellationRequested)
+        { throw new TimeoutException("MCP request exceeded its timeout."); }
         finally { pending.TryRemove(id, out _); }
     }
 
@@ -126,10 +140,15 @@ internal sealed class McpClient : IAsyncDisposable
     public async Task StopAsync(bool terminate = false)
     {
         if (stopped) return;
+        Task inputClosed = Task.CompletedTask;
         try
         {
             if (terminate) Unix.Terminate(process);
-            else process.StandardInput.Close();
+            else
+            {
+                inputClosed = process.StandardInput.DisposeAsync().AsTask();
+                await inputClosed.WaitAsync(TimeSpan.FromSeconds(10));
+            }
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
             await reader.WaitAsync(TimeSpan.FromSeconds(5));
             StandardError = await errors.WaitAsync(TimeSpan.FromSeconds(5));
@@ -137,12 +156,22 @@ internal sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            if (!process.HasExited)
+            try
             {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
+                if (!process.HasExited)
+                {
+                    try { process.Kill(entireProcessTree: true); }
+                    catch (InvalidOperationException) when (process.HasExited) { }
+                    await process.WaitForExitAsync();
+                }
             }
-            stopped = true;
+            finally
+            {
+                stopped = true;
+                await reading.CancelAsync();
+                // Join both readers even when shutdown failed, preserving its original diagnostic.
+                await Task.WhenAll(inputClosed, reader, errors).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
         }
     }
 
@@ -152,6 +181,7 @@ internal sealed class McpClient : IAsyncDisposable
         finally
         {
             process.Dispose();
+            reading.Dispose();
             writes.Dispose();
         }
     }

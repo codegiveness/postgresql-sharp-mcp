@@ -179,10 +179,23 @@ internal static class PackageBuilder
             "DebugType=None", "DebugSymbols=false", "IncludeSymbols=false", $"PathMap={stage}=/_/"
         })
             start.ArgumentList.Add($"-p:{property}");
-        using var process = Process.Start(start) ?? throw new IOException("Unable to start dotnet.");
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"dotnet {arguments[0]} failed with exit code {process.ExitCode}.");
+        using var process = new Process { StartInfo = start };
+        if (!process.Start()) throw new IOException("Unable to start dotnet.");
+        try
+        {
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException($"dotnet {arguments[0]} failed with exit code {process.ExitCode}.");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) when (process.HasExited) { }
+                await process.WaitForExitAsync();
+            }
+        }
     }
 
     private static void CreateTarball(string package, string destination)

@@ -19,7 +19,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
         bool ready = false;
         for (int attempt = 0; attempt < 60; attempt++)
         {
-            var result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-U", "postgres"), expected: null);
+            var result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"), expected: null);
             if (result.ExitCode == 0) { ready = true; break; }
             await Task.Delay(TimeSpan.FromSeconds(1));
         }

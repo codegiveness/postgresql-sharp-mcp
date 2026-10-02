@@ -14,6 +14,10 @@ internal static class Program
             string root = FindRoot();
             if (args is ["integration"])
                 await Integration.RunAsync(root);
+            else if (args is ["sarif", "--baseline", var baseline, "--candidate", var candidate])
+                SarifGate.Run(baseline, candidate, Console.Out);
+            else if (args is ["sarif-regressions"])
+                SarifRegression.Run();
             else if (args.Length > 0 && args[0] == "packages")
             {
                 string artifacts = Path.Combine(root, "artifacts", "packages");
@@ -31,7 +35,7 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile);
             }
             else
-                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json]");
+                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json] | sarif --baseline directory --candidate directory | sarif-regressions");
             return 0;
         }
         catch (Exception ex)
@@ -118,31 +122,58 @@ internal static class Processes
             info.Environment.Clear();
             foreach (var (key, value) in environment) info.Environment[key] = value;
         }
-        return Process.Start(info) ?? throw new VerificationException("Could not start verification subprocess.");
+        var process = new Process { StartInfo = info };
+        try
+        {
+            if (!process.Start()) throw new VerificationException("Could not start verification subprocess.");
+            return process;
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
     }
 
     public static async Task<ProcessResult> RunAsync(Command command, IReadOnlyDictionary<string, string>? environment = null,
         int? expected = 0, string? input = null, int timeout = 45, string? directory = null)
     {
         using Process process = Start(command, environment, directory);
-        Task<string> output = process.StandardOutput.ReadToEndAsync();
-        Task<string> error = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
+        Task<string> output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        Task<string> error = process.StandardError.ReadToEndAsync(deadline.Token);
+        Task drains = Task.WhenAll(output, error);
         try
         {
-            if (input is not null) await process.StandardInput.WriteAsync(input);
+            if (input is not null) await process.StandardInput.WriteAsync(input.AsMemory(), deadline.Token);
             process.StandardInput.Close();
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(timeout));
-            var result = new ProcessResult(process.ExitCode, await output, await error);
+            await process.WaitForExitAsync(deadline.Token);
+            await drains;
+            var result = new ProcessResult(process.ExitCode, output.Result, error.Result);
             if (expected is not null)
                 Check.That(result.ExitCode == expected, $"{Path.GetFileName(command.File)} exited with status {result.ExitCode}; expected {expected}. Captured output suppressed to protect credentials.");
             return result;
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Verification subprocess exceeded its timeout.");
+        }
         finally
         {
-            if (!process.HasExited)
+            try
             {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
+                if (!process.HasExited)
+                {
+                    try { process.Kill(entireProcessTree: true); }
+                    catch (InvalidOperationException) when (process.HasExited) { }
+                    await process.WaitForExitAsync();
+                }
+            }
+            finally
+            {
+                await deadline.CancelAsync();
+                // Observe both drains before disposing their streams, without masking the command failure.
+                await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
         }
     }
@@ -172,7 +203,6 @@ internal static class Unix
 
 internal sealed class TemporaryDirectory : IDisposable
 {
-    public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "postgresql-mcp-verify-" + Guid.NewGuid().ToString("N"));
-    public TemporaryDirectory() => Directory.CreateDirectory(Path);
+    public string Path { get; } = Directory.CreateTempSubdirectory("postgresql-mcp-verify-").FullName;
     public void Dispose() => Directory.Delete(Path, recursive: true);
 }

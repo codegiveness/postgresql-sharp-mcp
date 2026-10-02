@@ -49,17 +49,40 @@ try
         RedirectStandardError = true
     };
     start.ArgumentList.Add("--version");
-    using var process = Process.Start(start) ?? throw new IOException("Unable to start the installed executable.");
-    var stdout = process.StandardOutput.ReadToEndAsync();
-    var stderr = process.StandardError.ReadToEndAsync();
-    await process.WaitForExitAsync();
-    await stdout;
-    var diagnostics = await stderr;
-    if (process.ExitCode != 0)
+    using var process = new Process { StartInfo = start };
+    if (!process.Start()) throw new IOException("Unable to start the installed executable.");
+    using var reading = new CancellationTokenSource();
+    var stdout = process.StandardOutput.ReadToEndAsync(reading.Token);
+    var stderr = process.StandardError.ReadToEndAsync(reading.Token);
+    Task drains = Task.WhenAll(stdout, stderr);
+    try
     {
-        if (!string.IsNullOrWhiteSpace(diagnostics))
-            Console.Error.Write(diagnostics);
-        throw new InvalidOperationException("The .NET 10 runtime is required. For a nonstandard installation, set DOTNET_ROOT to its directory. This package never downloads a runtime.");
+        await process.WaitForExitAsync();
+        await drains;
+        var diagnostics = stderr.Result;
+        if (process.ExitCode != 0)
+        {
+            if (!string.IsNullOrWhiteSpace(diagnostics))
+                Console.Error.Write(diagnostics);
+            throw new InvalidOperationException("The .NET 10 runtime is required. For a nonstandard installation, set DOTNET_ROOT to its directory. This package never downloads a runtime.");
+        }
+    }
+    finally
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) when (process.HasExited) { }
+                await process.WaitForExitAsync();
+            }
+        }
+        finally
+        {
+            await reading.CancelAsync();
+            await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
     }
     return 0;
 }

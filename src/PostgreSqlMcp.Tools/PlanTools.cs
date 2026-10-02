@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.ComponentModel;
 using System.Data;
 using System.Text;
@@ -11,7 +12,7 @@ using PostgreSqlMcp.Core;
 namespace PostgreSqlMcp.Tools;
 
 [McpServerToolType]
-public sealed class PlanTools(SqlExecutor executor, ServerOptions options)
+public sealed partial class PlanTools(SqlExecutor executor, ServerOptions options)
 {
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
@@ -145,11 +146,14 @@ public sealed class PlanTools(SqlExecutor executor, ServerOptions options)
             if (bytes > options.MaxResultBytes)
                 throw new ToolException("invalid_index", "Combined candidate SQL exceeds the configured result byte limit; supply fewer/simpler candidates.");
             normalized[i] = SqlGuard.Validate(indexes[i]);
-            if (!Regex.IsMatch(normalized[i], @"\A\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            if (!IndexDefinition.IsMatch(normalized[i]))
                 throw new ToolException("invalid_index", $"Candidate {i} must start with CREATE INDEX or CREATE UNIQUE INDEX (no leading comments). HypoPG, not this server, parses the definition.");
         }
         return normalized;
     }
+
+    [GeneratedRegex(@"\A\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex IndexDefinition { get; }
 
     private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, bool analyze, CancellationToken ct)
     {
@@ -161,18 +165,22 @@ public sealed class PlanTools(SqlExecutor executor, ServerOptions options)
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");
         using TextReader text = await reader.GetTextReaderAsync(0, ct);
         int max = options.MaxResultBytes;
-        var buffer = new char[Math.Min(4096, max)];
         var builder = new StringBuilder(Math.Min(max, 4096));
-        while (true)
+        char[] buffer = ArrayPool<char>.Shared.Rent(Math.Min(4096, max));
+        try
         {
-            int remaining = max - builder.Length;
-            int read = await text.ReadAsync(buffer.AsMemory(0, remaining == 0 ? 1 : Math.Min(buffer.Length, remaining)), ct);
-            if (read == 0)
-                break;
-            if (builder.Length + read > max)
-                throw OversizedPlan();
-            builder.Append(buffer, 0, read);
+            while (true)
+            {
+                int remaining = max - builder.Length;
+                int read = await text.ReadAsync(buffer.AsMemory(0, remaining == 0 ? 1 : Math.Min(buffer.Length, remaining)), ct);
+                if (read == 0)
+                    break;
+                if (builder.Length + read > max)
+                    throw OversizedPlan();
+                builder.Append(buffer, 0, read);
+            }
         }
+        finally { ArrayPool<char>.Shared.Return(buffer); }
         string value = builder.ToString();
         if (Encoding.UTF8.GetByteCount(value) > max)
             throw OversizedPlan();
