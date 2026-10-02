@@ -365,3 +365,5 @@ Do not select Met merely because CI is green. In particular, this review does no
 ## Save
 
 Sign in as the project owner and save the questionnaire. Repository changes cannot save the website’s answers. The README badge displays the website’s saved state and may be cached; it is not a security certification.
+
+Quoted question text is attributed to the OpenSSF Best Practices badge contributors and reproduced under [CC-BY-3.0 or later](https://creativecommons.org/licenses/by/3.0/). Repository-specific explanations are this project's review.
