@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Document verified local NuGet artifact installation when registry publication is unavailable, including checksum/attestation checks, an isolated local feed and installed MCP verification. Clarify protected conversion of PostgreSQL URI secrets without claiming registry availability.
 - Add a NuGet-only manual release target that skips npm and GitHub Release publication while preserving main/tag validation, package verification, attestation and failure/cancellation gates. Keep the default all-target release behavior.
 - Verify Best Practices enrollment as project 15155 (19%, not passing); add evidence-backed owner-review proposals and correct stale enrollment, secret-feature and Scorecard findings documentation without claiming hosted changes.
 - Display the live OpenSSF Best Practices badge in README, including its in-progress state; distinguish the saved owner self-assessment from local answer proposals and security certification.

@@ -35,7 +35,7 @@ Choose `postgresql-sharp-mcp-<RID>.tar.gz` on Linux/macOS or `postgresql-sharp-m
 
 Extract the archive into a dedicated directory. On Linux/macOS, run `./PostgreSqlMcp --version`; on Windows, run `.\PostgreSqlMcp.exe --version`. Self-contained archives do not require a separate .NET runtime, but still require platform-native libraries. GSS/Kerberos connections on Debian/Ubuntu require `libgssapi-krb5-2`; see [Npgsql security](https://www.npgsql.org/doc/security.html) for authentication and TLS configuration.
 
-**npm and NuGet alternatives:** these commands require the package to be available in the corresponding registry. If a package is unavailable, use a GitHub release archive or the [source build instructions](CONTRIBUTING.md).
+**npm and NuGet alternatives:** these registry commands require the package to be published. If it is unavailable, use a GitHub release archive, [install a verified release `.nupkg` locally](CONTRIBUTING.md#install-a-verified-release-artifact), or follow the [source build instructions](CONTRIBUTING.md). Local artifact installation does not establish NuGet.org publication.
 
 Using npm requires **Node.js 22 or newer** for npm/npx installation and the **.NET 10 runtime** with `dotnet` on `PATH` during installation. The C# `postinstall` selects a bundled native apphost; it never downloads binaries or a runtime. npm 12 blocks unapproved dependency lifecycle scripts: approve only this package with `--allow-scripts` for npx/global installation, as below. For a custom .NET installation, also set `DOTNET_ROOT` to its installation directory so the native apphost can locate it:
 
@@ -64,6 +64,8 @@ Create a JSON file outside the repository, readable only by the server's OS user
 ```
 
 Each target requires an explicit `Host` and `Database`. Choose authentication and TLS settings appropriate to your deployment; `VerifyFull` requires a trusted server certificate and matching hostname. Do not commit the populated file or make it world-readable.
+
+Targets use Npgsql key/value connection-string syntax, not `postgres://` or `postgresql://` URIs. If your secret is a URI, translate its fields privately, decode escaped values, and retain the intended authentication/TLS settings; do not paste the secret into a command line or repository file.
 
 The `database` tool argument is the **exact, case-sensitive alias** from this object, not an arbitrary PostgreSQL database name. Targets may use independent hosts and credentials. Restart the server after changing targets or credentials.
 

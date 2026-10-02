@@ -97,6 +97,48 @@ On Windows, the tool executable ends in `.exe`. The generated `NuGet.Config` con
 
 Both installed entrypoints accept the same `--targets-file` and `--validate` flags as the source entrypoint. Runtime requirements remain those in [README.md](README.md).
 
+### Install a verified release artifact
+
+Registry publication can fail after the release's package and attestation jobs succeed. A maintainer-approved `release-artifacts` download from that main-branch run can still provide a verified local NuGet installation. This is not a published registry version; confirm the intended tag/version and successful package-verification and attestation jobs before installing. Access depends on GitHub artifact permissions and retention.
+
+Using a recent GitHub CLI with `gh attestation` support, replace `<run-id>` and `<version>`:
+
+```bash
+gh run download "<run-id>" --repo codegiveness/postgresql-sharp-mcp \
+  --name release-artifacts --dir ./release-artifacts
+sha256sum "./release-artifacts/packages/codegiveness.postgresql-sharp-mcp.<version>.nupkg"
+gh attestation verify "./release-artifacts/packages/codegiveness.postgresql-sharp-mcp.<version>.nupkg" \
+  --repo codegiveness/postgresql-sharp-mcp \
+  --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
+```
+
+Compare the printed checksum with the package's entry in `release-artifacts/SHA256SUMS`, and require successful attestation verification. A checksum by itself does not authenticate its source.
+
+The downloaded artifact does not contain the build's generated local-feed configuration. Create `release-artifacts/NuGet.Config` with this content; `packages` is relative to that configuration file:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="verified-release-artifact" value="packages" />
+  </packageSources>
+</configuration>
+```
+
+Install into a fresh dedicated tool directory using only that local source:
+
+```bash
+dotnet tool install codegiveness.postgresql-sharp-mcp --version "<version>" \
+  --tool-path ./postgresql-mcp-tool --configfile ./release-artifacts/NuGet.Config
+./postgresql-mcp-tool/postgresql-sharp-mcp --version
+./postgresql-mcp-tool/postgresql-sharp-mcp --targets-file "<protected-targets-file>" --validate
+```
+
+`--validate` performs a read-only connectivity query and can print the PostgreSQL database identity on stderr. Keep that output private; do not paste it into public reports or CI evidence for a real database.
+
+Use the absolute installed executable path in your MCP client's stdio entry and keep the .NET 10 runtime available. Follow [target configuration and MCP setup](README.md#2-configure-database-targets), reload the client's MCP configuration, then verify tool discovery and an authorized `SELECT 1` in restricted mode. Do not use application data or attempt writes merely to prove installation.
+
 ### Self-contained executable and container
 
 Example self-contained build:
