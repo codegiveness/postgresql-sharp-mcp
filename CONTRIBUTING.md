@@ -18,7 +18,7 @@ dotnet build postgresql-sharp-mcp.slnx -c Release
 dotnet src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll --help
 ```
 
-Prepare `POSTGRES_CONNECTION_STRING` using the README's [hidden Bash/PowerShell prompt](README.md#2-prepare-the-connection-environment), then run the source entrypoint from that same shell; no targets file is required for one server:
+Prepare `POSTGRES_CONNECTION_STRING` using the README's [hidden Bash/Zsh or Windows PowerShell prompt](README.md#2-prepare-the-connection-environment), then run the source entrypoint from that same shell; no targets file is required for one server:
 
 ```bash
 dotnet src/PostgreSqlMcp/bin/Release/net10.0/PostgreSqlMcp.dll --validate
