@@ -217,20 +217,20 @@ If entering replacement credentials yourself, these commands prompt without putt
 ```bash
 gh secret set NPM_TOKEN --repo codegiveness/postgresql-sharp-mcp --env release
 gh secret set NUGET_USERNAME --repo codegiveness/postgresql-sharp-mcp --env release
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.2.0
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.1
 ```
 
 To publish only NuGet, select `target=nuget`. This skips npm publication and GitHub Release creation; the default `target=all` preserves publication to all three destinations:
 
 ```bash
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.2.0 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.1 -f target=nuget
 ```
 
 NuGet-only publication still requires successful preflight, package verification and attestation. A failed or canceled prerequisite cannot reach publishing. Reusing another repository's NuGet username does not reuse its trust policy: the policy must match this repository, workflow and environment, with permission to create this package.
 
 Only run publication after account permissions/policy and the existing version tag are ready. For a failed run of the main-dispatched workflow, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse that run's immutable artifacts. Expired or deleted artifacts fail closed; start a new main dispatch rather than rebuilding publisher tooling from tag source.
 
-The first 0.2.0 registry attempt reached npm's publish endpoint but received HTTP 404 (“not found or no permission”); that response does not identify the exact npm permission or account mismatch. NuGet returned HTTP 401 (“no matching trust policy”). GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization and configure the matching target NuGet policy. Once the hardened workflow is reviewed and merged, use a fresh main dispatch with the verified existing tag; the release environment no longer permits the old tag-triggered run.
+The [0.3.1 release run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) published the attested GitHub Release assets, but npm's publish endpoint returned HTTP 404 (“not found or no permission”), and NuGet's OIDC exchange returned HTTP 401 (“no matching trust policy”). These repeat the first 0.2.0 registry attempt's authorization failures; npm's response does not identify the exact permission or account mismatch. GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization and configure the matching target NuGet policy. After repairing account configuration, rerun only the failed jobs from this main-dispatched run to reuse its immutable verified artifacts.
 
 ## GitHub profile recognition
 

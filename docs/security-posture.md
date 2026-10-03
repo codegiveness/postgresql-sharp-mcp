@@ -40,7 +40,7 @@ The [published report](https://api.securityscorecards.dev/projects/github.com/co
 | Finding | Published evidence | Assessment and supported action |
 |---|---|---|
 | SAST: 7 | CodeQL configuration detected; 0/6 sampled commits recognized as checked | The matching [push CodeQL run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/36975816274) completed C# and Actions analysis after this snapshot. The [PR run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/36975555833) passed all four raw scans and the trusted-base comparator. Keep read-only PR scanning; do not grant upload privileges solely to satisfy the detector. |
-| Fuzzing: 0 | No recognized fuzzer integration in the published revision | Local FsCheck PostgreSQL properties and SharpFuzz/libFuzzer lexer campaigns provide distinct testing layers. The new workflow was not yet published; local execution does not prove hosted success or a future score. Scorecard's version-matched documentation recognizes FsCheck; it does not promise direct detection of this SharpFuzz setup. |
+| Fuzzing: 0 | No recognized fuzzer integration in the published revision | FsCheck PostgreSQL properties and SharpFuzz/libFuzzer lexer campaigns provide distinct testing layers. The workflow is now on `main` after PR #17; its [head's hosted campaign](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085046683) passed. This does not establish a later Scorecard score. Scorecard's version-matched documentation recognizes FsCheck; it does not promise direct detection of this SharpFuzz setup. |
 | Code-Review: 0 | 0/9 sampled changesets approved | Main requires PRs/checks but zero independent approvals. The latest merged PR had no review entries. Obtain genuine independent human review; configuration and self-review cannot repair the historical sample. |
 | Maintained: 0 | Repository created within the preceding 90 days | The repository was created on 2026-10-02. Age and meaningful ongoing maintenance cannot be manufactured by extra commits or empty issues. |
 | Best Practices | Historical report lacked enrollment evidence | Live entry 15155 is now enrolled at 19%, not passing; see [enrollment evidence](#openssf-best-practices-enrollment). |
@@ -61,6 +61,12 @@ From release 0.2.0, the release workflow generates:
 4. Requested GitHub build attestations for the archives, npm/NuGet package files, SBOM and checksum manifest. Verify the subject digest and repository/workflow identity; do not infer attestation success from workflow configuration. The attested NuGet subject is the GitHub asset, not a claim that registry signing preserves those bytes.
 5. Requested npm provenance for a successful registry publication. NuGet trusted publishing exchanges GitHub OIDC for a short-lived API key; this authenticates publication and is not equivalent to npm provenance.
 
+### Observed 0.3.1 release
+
+[Release run 37085312914](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) on merged main commit `4f0cf2c40f41b80a7e1ff34102ad8b4641dc71a6` passed preflight, packaging, installed-distribution verification, attestation and [GitHub Release publication](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.1). The all-target run failed because npm publication returned HTTP 404 (“not found or no permission”) and NuGet's OIDC exchange returned HTTP 401 (“no matching trust policy”). Presence of GitHub secrets and npm's generated provenance statement do not establish registry publication.
+
+Downloaded GitHub assets passed all eight `SHA256SUMS` comparisons. All nine assets, including the manifest, passed `gh attestation verify` with the repository, `.github/workflows/release.yml` signer, exact source commit, `refs/heads/main` source ref and hosted-runner restriction enforced. The Linux x64 archive and installed GitHub npm/NuGet package assets passed actual CLI validation, MCP startup/tool discovery, live catalog discovery after database creation, physical database selection, default read-only rejection, explicit write commit/cleanup and shutdown against an owned disposable PostgreSQL fixture. This is GitHub-asset installation evidence, not installation from npm or NuGet.org; other platform archives were not executed locally.
+
 ### Release execution boundary
 
 The hardened workflow is manually dispatched from `main`, validates an existing version tag's ancestry against `origin/main`, and compiles release orchestration from the immutable main workflow revision. Tag application/build code runs only in read-only packaging. Attestation and publishing jobs have no source checkout; they consume explicit publication metadata and same-run immutable artifact IDs, rejecting digest mismatches. Publisher commands require the metadata context and do not discover a source tree or compile tag-source tooling.
@@ -74,7 +80,7 @@ Local release smoke used disposable Git repositories: lightweight and annotated 
 Download and verify actual evidence for the version being installed:
 
 ```bash
-gh release download v0.2.0 --repo codegiveness/postgresql-sharp-mcp --dir release-verification
+gh release download v0.3.1 --repo codegiveness/postgresql-sharp-mcp --dir release-verification
 ```
 
 On Linux, run `sha256sum --check SHA256SUMS` in that directory. On macOS, use `shasum -a 256 --check SHA256SUMS`; on Windows use `Get-FileHash -Algorithm SHA256` and compare each filename/digest. For an attested asset, use a current [GitHub CLI](https://cli.github.com/) with `gh attestation` support; older CLI versions do not provide this command:
@@ -95,7 +101,7 @@ GitHub profile Achievements are separate from repository status badges. Useful i
 
 The public [project entry 15155](https://www.bestpractices.dev/en/projects/15155) was verified on 2026-10-02: enrolled, **19% in progress**, with no passing achievement. This corrects the earlier lack-of-enrollment assessment. The form was read-only in the available unauthenticated browser session; no answers were saved.
 
-[`.bestpractices.json`](../.bestpractices.json) supplies 34 evidence-backed proposed answers, not certification or a claim that the hosted entry has changed. Public evidence is distinguished from the unmerged major-feature test-policy candidate; do not attest the latter as published before merge. Once the file is available on the public default branch, the entry owner can review automation proposals using **Save (and continue) 🤖**, following the badge application's [repository proposal instructions](https://github.com/ossf/best-practices-badge/blob/main/docs/bestpractices-json.md). Review every proposed answer before saving. Neither repository publication nor CI saves answers on the badge website.
+[`.bestpractices.json`](../.bestpractices.json) supplies 34 evidence-backed proposed answers, not certification or a claim that the hosted entry has changed. The proposals and major-feature test policy are available on `main` after [PR #17](https://github.com/codegiveness/postgresql-sharp-mcp/pull/17) merged; historical CI evidence remains specific to its named revision. The entry owner can review automation proposals using **Save (and continue) 🤖**, following the badge application's [repository proposal instructions](https://github.com/ossf/best-practices-badge/blob/main/docs/bestpractices-json.md). Review every proposed answer before saving. Neither repository publication nor CI saves answers on the badge website.
 
 | Evidence available | Criteria supported |
 |---|---|
