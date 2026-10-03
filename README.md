@@ -21,7 +21,7 @@ The server, npm installation helper, packaging, verification and release automat
 
 ## Quick start
 
-**Version boundary:** automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets the **0.3.1 patch follow-on**, which makes setup environment-first; it is not another discovery/minor-version boundary. These changes are currently unreleased; the published 0.2.0 executable still uses configured database aliases and a restricted default. For this workflow now, use a [source build from this revision](CONTRIBUTING.md#build-from-source) or a locally built and verified 0.3.1 package. Neither changing configuration nor these instructions establishes package publication or upgrades an old executable.
+**Version boundary:** automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets **0.3.1**, the environment-first patch follow-on, not another discovery/minor-version boundary. Older 0.2.0 executables still use configured database aliases and a restricted default. Check the version of the [release archive](https://github.com/codegiveness/postgresql-sharp-mcp/releases/latest) or registry package before installing; a [source build](CONTRIBUTING.md#build-from-source) or verified local package is an alternative when publication is unavailable. Changing configuration does not upgrade an old executable.
 
 **When a compatible release is available, the release archive is the simplest first install.** It includes the .NET runtime: no .NET SDK, npm, Node.js or Docker installation is needed for that route. You still need an existing PostgreSQL database and an MCP client. This app does not create a database or automatically edit your client's configuration.
 
@@ -393,7 +393,7 @@ Normal operation reserves stdout for MCP JSON-RPC; diagnostics go to stderr. Kee
 
 ### Other installation methods
 
-Finish the same environment and client-configuration steps above with whichever executable you install. **Choose one install method; do not install all of them.** Registry examples below require an available compatible version; until 0.3.1 is published, use this revision's source/local-package route, not an older registry executable.
+Finish the same environment and client-configuration steps above with whichever executable you install. **Choose one install method; do not install all of them.** Registry examples below require an available compatible version. If the registry lacks 0.3.1 or newer, use a compatible release archive or this revision's source/local-package route, not an older registry executable.
 
 **NuGet/.NET tool:** requires the **.NET 10 SDK** to install, the **.NET 10 runtime** to run, and the package to be available on NuGet.org:
 
