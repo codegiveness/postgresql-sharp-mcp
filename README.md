@@ -142,6 +142,8 @@ Keep this terminal open. Enter the secret **at the prompt**, never in a command,
 
 **Fully quit any existing OMP process first.** In the same terminal from step 2, run the command for your OS. It checks connectivity and starts a **new** OMP process only if validation succeeds:
 
+**Installed somewhere else?** Use the executable path from your existing PostgreSQL MCP entry's `command` instead of the example path below.
+
 **Linux/macOS:**
 
 ```sh
