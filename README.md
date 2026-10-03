@@ -12,7 +12,7 @@ SQL calls are read-only by default, but the server's default access mode permits
 
 ## Quick start
 
-**Already installed and registered?** Skip to [step 2](#2-prepare-the-connection-environment). If your old MCP entry uses a targets file, follow the short [switching instructions](#upgrading-an-existing-installation) first; you do not need to delete the file.
+**Already installed and registered?** Skip to [step 2](#2-prepare-the-connection-environment). Switching from a targets file? Open **Advanced setup, troubleshooting and legacy profiles** below first. Keep your existing file.
 
 ### 1. Install or run
 
@@ -166,6 +166,8 @@ In OMP, ask: **“Use the PostgreSQL MCP server to list the databases I can acce
 The client must inherit this terminal's environment. A desktop/Start-menu launch, an already-running client, or `/mcp reload` cannot pick up a newly entered secret. For a later session or changed password, fully quit OMP, repeat step 2, and launch it again from that prepared terminal. You do **not** repeat registration or edit a file for new databases. Other MCP clients need their own configuration schema and a launcher that starts a new process with the inherited environment; GUI clients that cannot do this need the [advanced file alternative](#optional-protected-targets-file).
 
 When finished, fully quit OMP/server and clear the terminal's secret with `unset POSTGRES_CONNECTION_STRING` (Bash/Zsh) or `Remove-Item Env:POSTGRES_CONNECTION_STRING -ErrorAction SilentlyContinue` (PowerShell). This does not erase copies in children that are still running.
+
+**Optional help:** Click a section title below to open it.
 
 <details>
 <summary>Advanced setup, troubleshooting and legacy profiles</summary>
