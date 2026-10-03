@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Simplify the main README to one release-archive installation and three setup steps: install/register, enter one connection string, then validate and launch the client. Explain that targets files are optional connection profiles; keep advanced configuration and technical reference collapsed outside the primary path.
+- Fix the shared Bash/Zsh hidden prompt by using `printf` and `IFS= read -r -s` instead of Bash-only `read -p`. Clear stale connection settings and export only successful input; verify valid, empty, EOF and partial input, special characters, inherited restricted mode and actual CLI/MCP database discovery against disposable PostgreSQL.
+- Use `Read-Host -AsSecureString` and `NetworkCredential` for a Windows PowerShell 5.1-compatible prompt without requiring PowerShell 7.1's `-MaskInput`. Exercise the documented block through Linux PowerShell in a terminal; native Windows execution remains unverified.
+
 ## 0.3.1
 
 - Publish [GitHub Release v0.3.1](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.1) from merged main commit `4f0cf2c40f41b80a7e1ff34102ad8b4641dc71a6`: five self-contained archives, npm/NuGet package files, the application SBOM and checksums. Release run [37085312914](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) passed packaging, installed-distribution verification, attestation and GitHub publication; npm and NuGet registry publication failed. This is not a successful all-target registry release.
