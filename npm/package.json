@@ -1,7 +1,7 @@
 {
   "name": "@codegiveness/postgresql-sharp-mcp",
-  "version": "0.2.0",
-  "description": "Bounded, explicit multi-database PostgreSQL MCP server over stdio. Requires the .NET 10 runtime; set DOTNET_ROOT for nonstandard installations. No runtime downloads.",
+  "version": "0.3.1",
+  "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Requires the .NET 10 runtime; set DOTNET_ROOT for nonstandard installations. No runtime downloads.",
   "license": "MIT",
   "author": "codegiveness",
   "homepage": "https://github.com/codegiveness/postgresql-sharp-mcp#readme",

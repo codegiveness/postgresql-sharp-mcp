@@ -21,40 +21,48 @@ public sealed class DatabaseTools
     }
 
     [McpServerTool(Name = "list_databases", ReadOnly = true, Destructive = false, OpenWorld = false)]
-    [Description("Page configured target aliases and server limits without connecting or exposing credentials. Pass a target as database to other tools.")]
-    public Task<CallToolResult> ListDatabases(CancellationToken ct, int? limit = null, int offset = 0) =>
-        ToolReply.Run("", () =>
+    [Description("Discover accessible databases from the live PostgreSQL catalog, with paging and is_current. Optional target selects a configured connection profile; newly accessible databases need no configuration edit.")]
+    public Task<CallToolResult> ListDatabases(CancellationToken ct, int? limit = null, int offset = 0, string? target = null) =>
+        ToolReply.Run("", async () =>
         {
             ct.ThrowIfCancellationRequested();
             ValidatePage(limit, offset);
-            string[] targets = _registry.TargetNames.Skip(offset).Take(limit ?? Math.Min(100, _options.MaxRows)).ToArray();
-            bool truncated = offset + targets.Length < _registry.TargetNames.Length;
-            return Task.FromResult<object>(new
+            string profile = target ?? _registry.DefaultTarget;
+            string database = _registry.GetBootstrapDatabase(profile);
+            QueryPage databases = await _executor.QueryAsync(database, """
+                SELECT datname::text AS name, datname = current_database() AS is_current
+                FROM pg_catalog.pg_database
+                WHERE NOT datistemplate AND datallowconn
+                  AND pg_catalog.has_database_privilege(oid, 'CONNECT')
+                  AND (@databases::text[] IS NULL OR datname::text = ANY(@databases::text[]))
+                ORDER BY datname COLLATE "C"
+                """, new Dictionary<string, object?> { ["databases"] = _registry.AllowedDatabaseNames },
+                limit, offset, ct: ct, target: profile).ConfigureAwait(false);
+            return new
             {
-                targets, offset, next_offset = truncated ? (int?)(offset + targets.Length) : null,
-                truncated, truncation_reason = truncated ? "row_limit" : null,
+                target = profile, databases,
                 access_mode = _options.Unrestricted ? "unrestricted" : "restricted",
                 limits = new { max_rows = _options.MaxRows, max_result_bytes = _options.MaxResultBytes,
                     max_cell_chars = _options.MaxCellChars, query_timeout_seconds = _options.QueryTimeout }
-            });
+            };
         });
 
     [McpServerTool(Name = "list_schemas", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Page schemas with USAGE privilege on an explicit target; system schemas excluded by default.")]
     public Task<CallToolResult> ListSchemas(
         CancellationToken ct,
-        [Description("Configured database target alias; required.")] string database,
+        [Description("Physical database name, or a configured profile alias when target is omitted.")] string database,
         [Description("Optional literal, case-sensitive schema name prefix.")] string? prefix = null,
         int? limit = null,
         int offset = 0,
-        bool include_system = false) => ToolReply.Run(database, async () =>
+        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             return await _executor.QueryAsync(database, SchemasSql, new Dictionary<string, object?>
             {
                 ["prefix"] = prefix,
                 ["include_system"] = include_system
-            }, limit, offset, ct: ct).ConfigureAwait(false);
+            }, limit, offset, ct: ct, target: target).ConfigureAwait(false);
         });
 
     [McpServerTool(Name = "list_objects", ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -67,7 +75,7 @@ public sealed class DatabaseTools
         [Description("Literal, case-sensitive substring of the object name; not a SQL LIKE pattern.")] string? search = null,
         int? limit = null,
         int offset = 0,
-        bool include_system = false) => ToolReply.Run(database, async () =>
+        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             string? objectType = NormalizeType(type);
@@ -77,7 +85,7 @@ public sealed class DatabaseTools
                 ["type"] = objectType,
                 ["search"] = search,
                 ["include_system"] = include_system
-            }, limit, offset, ct: ct).ConfigureAwait(false);
+            }, limit, offset, ct: ct, target: target).ConfigureAwait(false);
         });
 
     [McpServerTool(Name = "get_object_details", ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -92,7 +100,7 @@ public sealed class DatabaseTools
         int offset = 0,
         [Description("Exact pg_get_function_identity_arguments text from list_objects, including argument names. Empty string selects a zero-argument routine.")] string? identity_arguments = null,
         [Description("Optional object type, useful when a relation and routine share a name.")] string? type = null,
-        bool include_system = false) => ToolReply.Run(database, async () =>
+        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             if (string.IsNullOrEmpty(schema) || string.IsNullOrEmpty(name))
@@ -123,7 +131,7 @@ public sealed class DatabaseTools
                 string sql = SelectDetailsSql(resolvedType, selectedSection);
                 QueryPage page = await session.QueryAsync(sql, new Dictionary<string, object?> { ["object_id"] = objectId }, limit, offset, token).ConfigureAwait(false);
                 return new { database, schema, name, type = resolvedType, identity_arguments, section = selectedSection, page };
-            }, ct: ct).ConfigureAwait(false);
+            }, ct: ct, target: target).ConfigureAwait(false);
         });
 
     private void ValidatePage(int? limit, int offset)

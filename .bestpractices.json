@@ -8,7 +8,7 @@
   "tests_documented_added_status": "Met",
   "tests_documented_added_justification": "The instructions for contributions document the policy of adding automated tests for major new functionality and explain acceptable regression coverage: https://github.com/codegiveness/postgresql-sharp-mcp/blob/main/CONTRIBUTING.md#verify-behavior",
   "description_good_status": "Met",
-  "description_good_justification": "README describes the PostgreSQL stdio MCP server, nine tools, explicit database targeting and read-only defaults: https://github.com/codegiveness/postgresql-sharp-mcp/blob/main/README.md",
+  "description_good_justification": "README describes the PostgreSQL stdio MCP server, nine tools, live database discovery, per-call physical database selection and default unrestricted access mode with read-only SQL calls unless writes are explicitly requested: https://github.com/codegiveness/postgresql-sharp-mcp/blob/main/README.md",
   "interact_status": "Met",
   "interact_justification": "README documents installation and links CONTRIBUTING for bug reports, enhancement requests and pull requests: https://github.com/codegiveness/postgresql-sharp-mcp/blob/main/CONTRIBUTING.md",
   "contribution_requirements_status": "Met",

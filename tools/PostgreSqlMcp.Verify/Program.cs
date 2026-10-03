@@ -22,20 +22,29 @@ internal static class Program
             {
                 string artifacts = Path.Combine(root, "artifacts", "packages");
                 string? targetsFile = null;
-                for (int i = 1; i < args.Length; i += 2)
+                bool installationOnly = false;
+                for (int i = 1; i < args.Length;)
                 {
-                    Check.That(i + 1 < args.Length, "Missing verifier option value.");
-                    switch (args[i])
+                    string option = args[i++];
+                    if (option == "--installation-only")
                     {
-                        case "--artifacts": artifacts = Path.GetFullPath(args[i + 1]); break;
-                        case "--targets-file": targetsFile = Path.GetFullPath(args[i + 1]); break;
+                        installationOnly = true;
+                        continue;
+                    }
+                    Check.That(i < args.Length, "Missing verifier option value.");
+                    string value = args[i++];
+                    switch (option)
+                    {
+                        case "--artifacts": artifacts = Path.GetFullPath(value); break;
+                        case "--targets-file": targetsFile = Path.GetFullPath(value); break;
                         default: throw new VerificationException("Unknown verifier option.");
                     }
                 }
-                await Packages.RunAsync(root, artifacts, targetsFile);
+                Check.That(!installationOnly || targetsFile is null, "--installation-only cannot be combined with --targets-file.");
+                await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json] | sarif --baseline directory --candidate directory | sarif-regressions");
+                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions");
             return 0;
         }
         catch (Exception ex)

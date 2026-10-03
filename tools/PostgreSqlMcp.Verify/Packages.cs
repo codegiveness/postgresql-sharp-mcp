@@ -12,7 +12,7 @@ namespace PostgreSqlMcp.Verify;
 
 internal static class Packages
 {
-    public static async Task RunAsync(string root, string artifacts, string? targetsFile)
+    public static async Task RunAsync(string root, string artifacts, string? targetsFile, bool installationOnly)
     {
         JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "npm", "package.json")))!;
         XDocument project = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
@@ -70,18 +70,21 @@ internal static class Packages
         };
         // Exercise the actual apphost too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), environment);
+        await using var fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
+        if (fixture is not null)
+            await fixture.StartAsync();
         await using (var unavailable = new UnavailableEndpoint())
         {
             var configured = new Dictionary<string, string>(environment)
             {
-                ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { package_smoke = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1" }),
+                ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1",
                 ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
             };
             foreach (var (name, command) in commands)
             {
                 await VerifyCliAsync(name, command, version, environment, configured);
-                await VerifyMcpAsync(command, configured, ["package_smoke"]);
-                if (!OperatingSystem.IsWindows()) await VerifyMcpAsync(command, configured, ["package_smoke"], terminate: true);
+                await VerifyMcpAsync(command, configured, ["primary"]);
+                if (!OperatingSystem.IsWindows()) await VerifyMcpAsync(command, configured, ["primary"], terminate: true);
                 if (targetsFile is not null)
                 {
                     string[] aliases = await SafeFixtureAliasesAsync(targetsFile);
@@ -98,11 +101,23 @@ internal static class Packages
                     await VerifyMcpAsync(command, fixtureEnvironment, aliases, query: true);
                     Console.WriteLine($"{name}: all explicit loopback fixture targets validated and SELECT current_database() passed");
                 }
+                else if (fixture is not null)
+                {
+                    var fixtureEnvironment = new Dictionary<string, string>(environment)
+                    {
+                        ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={fixture.Port};Database=tenant_a;Username=mcp_writer;Password=writer-disposable",
+                        ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
+                    };
+                    await VerifyMcpAsync(command, fixtureEnvironment, ["primary"], query: true, fixture: fixture);
+                    Console.WriteLine($"{name}: environment-only primary bootstrap, live discovery, physical selection, read-only default, write opt-in and cleanup passed");
+                }
                 Console.WriteLine($"{name}: installed CLI, validation, MCP initialize/tools/list/list_databases and shutdown passed");
             }
-            if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["package_smoke"]);
+            if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["primary"]);
         }
         Console.WriteLine("Package verification passed; offline local installs, real native commands, missing .NET prerequisite and shutdown verified.");
+        if (installationOnly)
+            Console.WriteLine("Installation-only mode: live database discovery/query/write scenarios were not run; use default package verification for that coverage.");
     }
 
     private static Command NpmInstall(string npm, string home, string tarball) => new(npm, "install", "--prefix", home,
@@ -166,34 +181,66 @@ internal static class Packages
 
     private static JsonNode[] Reports(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
 
-    private static async Task VerifyMcpAsync(Command command, Dictionary<string, string> environment, string[] aliases, bool terminate = false, bool query = false)
+    private static async Task VerifyMcpAsync(Command command, Dictionary<string, string> environment, string[] aliases, bool terminate = false, bool query = false, PostgresFixture? fixture = null)
     {
         await using var client = await McpClient.StartAsync(command, environment);
         JsonArray tools = (await client.RequestAsync("tools/list", new { }))["result"]!["tools"].Array();
         Check.That(tools.Any(tool => tool!["name"].Text() == "list_databases"), "Installed package lost list_databases tool.");
-        var discovered = new List<string>();
-        int offset = 0;
-        while (true)
+        if (!query)
+            await client.FailsAsync("list_databases", new { }, "connection_error");
+        else
         {
-            JsonNode listed = await client.OkAsync("list_databases", new { limit = 2, offset });
-            discovered.AddRange(listed["targets"].Array().Select(alias => alias.Text()));
-            Check.That(listed["access_mode"].Text() == "restricted", "Installed package did not retain restricted access.");
-            if (listed["next_offset"] is null) break;
-            int next = listed["next_offset"].Int();
-            Check.That(next > offset, "Installed package alias pagination did not advance.");
-            offset = next;
-        }
-        Check.That(discovered.Order(StringComparer.Ordinal).SequenceEqual(aliases.Order(StringComparer.Ordinal)), "Installed package returned incorrect target aliases.");
-        if (query)
             foreach (string alias in aliases)
             {
-                JsonNode page = await client.OkAsync("execute_sql", new { database = alias, sql = "SELECT current_database() AS database, 42 AS answer", limit = 1 });
-                Check.That(page["database"].Text() == alias && page["columns"].Array().Select(column => column!["name"].Text()).SequenceEqual(new[] { "database", "answer" }), "Installed package query returned incorrect target or columns.");
-                Check.That(page["rows"].Array().Count == 1 && page["rows"]![0]![0] is JsonValue database && database.TryGetValue<string>(out string? value)
-                    && !string.IsNullOrWhiteSpace(value) && page["rows"]![0]![1].Int() == 42, "Installed package query returned incorrect values.");
+                JsonNode selected = await client.OkAsync("execute_sql", new { database = alias, sql = "SELECT current_database() AS database, 42 AS answer", limit = 1 });
+                string physical = selected["rows"]![0]![0].Text();
+                Check.That(selected["rows"]![0]![1].Int() == 42, "Installed package query returned incorrect values.");
+                var discovered = new List<string>();
+                int offset = 0;
+                bool currentFound = false;
+                while (true)
+                {
+                    JsonNode page = (await client.OkAsync("list_databases", new { target = alias, limit = 2, offset }))["databases"]!;
+                    foreach (var row in Check.Rows(page))
+                    {
+                        discovered.Add(row["name"].Text());
+                        if (row["is_current"].Flag())
+                        {
+                            Check.That(row["name"].Text() == physical && !currentFound, "Installed discovery reported an incorrect current database.");
+                            currentFound = true;
+                        }
+                    }
+                    if (page["next_offset"] is null) break;
+                    int next = page["next_offset"].Int();
+                    Check.That(next > offset, "Installed package catalog pagination did not advance.");
+                    offset = next;
+                }
+                Check.That(currentFound && discovered.SequenceEqual(discovered.Distinct().Order(StringComparer.Ordinal)),
+                    "Installed package catalog omitted the bootstrap database or repeated/reordered rows.");
             }
+            if (fixture is not null)
+            {
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
+                    new[] { new[] { "tenant_b", "B_ONLY" } }, "Installed single-seed package did not select a discovered physical database.");
+                string database = "package_after_start_" + Guid.NewGuid().ToString("N");
+                await fixture.CreateDatabaseAsync(database);
+                Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Any(row => row["name"].Text() == database),
+                    "Installed package cached database discovery across catalog changes.");
+                Check.Equal((await client.OkAsync("execute_sql", new { database, sql = "SELECT current_database(),value FROM marker" }))["rows"],
+                    new[] { new[] { database, "DYNAMIC_ONLY" } }, "Installed package could not select a database created after startup.");
+                await client.FailsAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')" }, "postgresql_error", "25006");
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
+                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package committed a default read-only mutation.");
+                await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')", read_only = false });
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker ORDER BY value" }))["rows"],
+                    new[] { new[] { "B_ONLY" }, new[] { "PACKAGE_WRITE" } }, "Installed environment-only package write opt-in did not commit.");
+                await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "DELETE FROM marker WHERE value='PACKAGE_WRITE'", read_only = false });
+                Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
+                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package write cleanup did not commit.");
+            }
+        }
         await client.StopAsync(terminate);
-        Check.Confidential(client.StandardError, "disposable-package-secret");
+        Check.Confidential(client.StandardError, "disposable-package-secret", "reader-disposable", "writer-disposable");
     }
 
     private static async Task<string[]> SafeFixtureAliasesAsync(string path)
@@ -263,21 +310,49 @@ internal static class Packages
     private sealed class UnavailableEndpoint : IAsyncDisposable
     {
         private readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        private readonly CancellationTokenSource stopping = new();
+        private readonly Task rejecting;
         public int Port { get; }
         public UnavailableEndpoint()
         {
             try
             {
-                // Bound, deliberately non-listening loopback socket prevents a race with another service.
+                // Own the port and reject handshakes without OS-specific non-listening-socket behavior.
                 socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                socket.Listen(8);
                 Port = ((IPEndPoint)socket.LocalEndPoint!).Port;
+                rejecting = RejectAsync();
             }
             catch
             {
                 socket.Dispose();
+                stopping.Dispose();
                 throw;
             }
         }
-        public ValueTask DisposeAsync() { socket.Dispose(); return ValueTask.CompletedTask; }
+        private async Task RejectAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    using Socket connection = await socket.AcceptAsync(stopping.Token);
+                }
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await stopping.CancelAsync();
+            try { await rejecting; }
+            finally
+            {
+                socket.Dispose();
+                stopping.Dispose();
+            }
+        }
     }
 }

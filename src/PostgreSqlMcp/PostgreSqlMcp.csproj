@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <Version>0.2.0</Version>
+    <Version>0.3.1</Version>
     <PackAsTool>true</PackAsTool>
     <PackageId>codegiveness.postgresql-sharp-mcp</PackageId>
     <ToolCommandName>postgresql-sharp-mcp</ToolCommandName>
     <Authors>codegiveness</Authors>
     <Copyright>Copyright (c) 2026 codegiveness</Copyright>
-    <Description>Bounded, explicit multi-database PostgreSQL MCP server using Npgsql.</Description>
+    <Description>Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call database selection using Npgsql.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/codegiveness/postgresql-sharp-mcp</PackageProjectUrl>

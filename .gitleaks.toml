@@ -53,7 +53,7 @@ description = "README connection configuration placeholders"
 condition = "AND"
 paths = ['''^README\.md$''']
 regexTarget = "match"
-regexes = ['''^Password=<(?:database-password|other-password)>$''']
+regexes = ['''^Password=<(?:database-password|other-password|YOUR_PASSWORD)>$''']
 
 # The verifier creates its own loopback-only disposable PostgreSQL containers.
 # These values must remain tied to these exact paths, not entire test files.
@@ -67,11 +67,11 @@ regexes = ['''^Password=(?:reader-disposable|writer-disposable|sensitive-configu
 
 [[allowlists]]
 targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
-description = "Disposable package startup authentication marker"
+description = "Disposable package startup and owned PostgreSQL fixture authentication markers"
 condition = "AND"
 paths = ['''^tools/PostgreSqlMcp\.Verify/Packages\.cs$''']
 regexTarget = "match"
-regexes = ['''^Password=disposable-package-secret$''']
+regexes = ['''^Password=(?:disposable-package-secret|writer-disposable)$''']
 
 # Default rules still run. Only these exact disposable values may be suppressed
 # if the generic provider-independent rule also recognizes them.
