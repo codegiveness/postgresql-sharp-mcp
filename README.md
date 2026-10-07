@@ -18,8 +18,6 @@ SQL calls are read-only by default, but the server's default access mode permits
 
 ### 1. Install or run
 
-> **0.3.2 availability:** [GitHub Release assets](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.2) are published and verified. npm and NuGet registry publication remain blocked by account authorization; the registry commands below become usable after publication. For now, open **Standalone archives** below or use a [verified local .NET tool package](CONTRIBUTING.md#install-a-verified-release-artifact). Package files attached to a release are not registry publication.
-
 Choose **npx** for on-demand execution or a **.NET tool** for a persistent command. Both require the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); npx also requires Node.js 22+ and npm. Installing a .NET tool requires the .NET 10 SDK.
 
 **npx — run without a global install:**
