@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
-- Simplify the main README to one release-archive installation and three setup steps: install/register, enter one connection string, then validate and launch the client. Explain that targets files are optional connection profiles; keep advanced configuration and technical reference collapsed outside the primary path.
+- Put version-pinned npx and global .NET tool installation, MCP registration, validation and upgrade commands first in the README. Include npm 12's package-specific C# installer approval, runtime/PATH prerequisites, registry badges and self-contained archives as a no-runtime-install alternative. Preserve the C#/.NET-only implementation and existing database-access boundaries.
+- Document that local npm login and Actions publishing credentials are separate; manual npm recovery publishes the verified tarball without claiming CI provenance.
+- Keep the three setup steps: install/register, enter one connection string, then validate and launch the client. Explain that targets files are optional connection profiles; keep advanced configuration and technical reference collapsed outside the primary path.
 - Fix the shared Bash/Zsh hidden prompt by using `printf` and `IFS= read -r -s` instead of Bash-only `read -p`. Clear stale connection settings and export only successful input; verify valid, empty, EOF and partial input, special characters, inherited restricted mode and actual CLI/MCP database discovery against disposable PostgreSQL.
 - Use `Read-Host -AsSecureString` and `NetworkCredential` for a Windows PowerShell 5.1-compatible prompt without requiring PowerShell 7.1's `-MaskInput`. Exercise the documented block through Linux PowerShell in a terminal; native Windows execution remains unverified.
 

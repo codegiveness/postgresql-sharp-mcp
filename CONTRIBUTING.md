@@ -186,7 +186,7 @@ Keep versions, affected help/docs and release notes consistent. Update [THIRD-PA
 
 ## Automation and releases
 
-Compatible documentation, setup improvements and fixes use a patch increment, such as **0.3.0 → 0.3.1**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.1** is the environment-first patch follow-on. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
+Compatible documentation, setup improvements and fixes use a patch increment, such as **0.3.1 → 0.3.2**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.2** puts npx and .NET tool commands first without changing runtime or database-access behavior. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
@@ -217,18 +217,20 @@ If entering replacement credentials yourself, these commands prompt without putt
 ```bash
 gh secret set NPM_TOKEN --repo codegiveness/postgresql-sharp-mcp --env release
 gh secret set NUGET_USERNAME --repo codegiveness/postgresql-sharp-mcp --env release
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.1
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.2
 ```
 
 To publish only NuGet, select `target=nuget`. This skips npm publication and GitHub Release creation; the default `target=all` preserves publication to all three destinations:
 
 ```bash
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.1 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.2 -f target=nuget
 ```
 
 NuGet-only publication still requires successful preflight, package verification and attestation. A failed or canceled prerequisite cannot reach publishing. Reusing another repository's NuGet username does not reuse its trust policy: the policy must match this repository, workflow and environment, with permission to create this package.
 
 Only run publication after account permissions/policy and the existing version tag are ready. For a failed run of the main-dispatched workflow, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse that run's immutable artifacts. Expired or deleted artifacts fail closed; start a new main dispatch rather than rebuilding publisher tooling from tag source.
+
+An interactive local `npm login` does not update the workflow's `NPM_TOKEN`. For an authorized manual recovery, publish the exact verified tarball using that login: `npm publish ./artifacts/packages/codegiveness-postgresql-sharp-mcp-<version>.tgz --ignore-scripts --access public --registry https://registry.npmjs.org/`. Do not request npm provenance from a workstation: that requires a supported CI identity. Record the provenance gap, check the registry's version/integrity, and exercise npx with a fresh cache. Local npm authentication does not grant NuGet publication access.
 
 The [0.3.1 release run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) published the attested GitHub Release assets, but npm's publish endpoint returned HTTP 404 (“not found or no permission”), and NuGet's OIDC exchange returned HTTP 401 (“no matching trust policy”). These repeat the first 0.2.0 registry attempt's authorization failures; npm's response does not identify the exact permission or account mismatch. GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization and configure the matching target NuGet policy. After repairing account configuration, rerun only the failed jobs from this main-dispatched run to reuse its immutable verified artifacts.
 

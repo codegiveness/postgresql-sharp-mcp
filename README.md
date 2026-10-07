@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/codegiveness/postgresql-sharp-mcp/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/v/release/codegiveness/postgresql-sharp-mcp)](https://github.com/codegiveness/postgresql-sharp-mcp/releases)
+[![npm](https://img.shields.io/npm/v/@codegiveness/postgresql-sharp-mcp)](https://www.npmjs.com/package/@codegiveness/postgresql-sharp-mcp)
+[![NuGet](https://img.shields.io/nuget/v/codegiveness.postgresql-sharp-mcp)](https://www.nuget.org/packages/codegiveness.postgresql-sharp-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 This app lets an MCP-compatible AI assistant connect to PostgreSQL, list the databases you can access, inspect tables, and run SQL. It also offers query plans, index analysis and database health checks. Your MCP client starts the app when needed; it does not create a PostgreSQL database for you.
@@ -16,7 +18,31 @@ SQL calls are read-only by default, but the server's default access mode permits
 
 ### 1. Install or run
 
-Download **one archive** and `SHA256SUMS` from [release 0.3.1](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.1). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
+Choose **npx** for on-demand execution or a **.NET tool** for a persistent command. Both require the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); npx also requires Node.js 22+ and npm. Installing a .NET tool requires the .NET 10 SDK.
+
+**npx — run without a global install:**
+
+```sh
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.2 --version
+```
+
+The package-specific `--allow-scripts` approves this package's C# installer on npm 12. Do not use `--ignore-scripts`: the installer selects the bundled native apphost for your OS. No runtime or binary is downloaded by the installer, and no JavaScript launcher runs the server. For a nonstandard .NET installation, set `DOTNET_ROOT` to its runtime directory.
+
+**.NET tool — install once, then run by name:**
+
+```sh
+dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.3.2
+postgresql-sharp-mcp --version
+```
+
+If the command is not found, add the .NET tools directory to your PATH (`$HOME/.dotnet/tools` on Linux/macOS; `%USERPROFILE%\.dotnet\tools` on Windows), or use its absolute executable path. Do not reinstall to fix PATH.
+
+The command should report **0.3.2**. Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a release archive is an alternative if your registry is unavailable.
+
+<details>
+<summary>Standalone archives — no .NET, Node.js or npm installation needed</summary>
+
+Download **one archive** and `SHA256SUMS` from [release 0.3.2](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.2). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
 
 | Your computer | Archive |
 |---|---|
@@ -79,24 +105,29 @@ Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Destina
 
 </details>
 
-The executable should report **0.3.1**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
+The executable should report **0.3.2**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
+
+</details>
 
 **Register with OMP once.** Edit or create `~/.omp/agent/mcp.json` on Linux/macOS, or `%USERPROFILE%\.omp\agent\mcp.json` on Windows (for a named OMP profile, use that profile's MCP configuration). Installing this app does not register it automatically.
 
-For a new file, use this JSON. If the file already has other servers, add only the `"postgresql"` entry inside its existing `mcpServers` object; preserve every other entry and separate adjacent entries with a comma.
+For **npx**, use this JSON for a new file. If the file already has other servers, add only the `"postgresql"` entry inside its existing `mcpServers` object; preserve every other entry and separate adjacent entries with a comma.
 
 ```json
 {
   "mcpServers": {
     "postgresql": {
       "type": "stdio",
-      "command": "/home/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp"
+      "command": "npx",
+      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.3.2"]
     }
   }
 }
 ```
 
-Replace `command` with the **absolute executable path**, not the folder or archive:
+For a **.NET tool**, replace `command` with `"postgresql-sharp-mcp"` and remove `args`; the client must inherit the tools directory on PATH. Alternatively, use the absolute tool path (`/home/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on Linux, `/Users/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on macOS, or `"C:\\Users\\YOUR_USER\\.dotnet\\tools\\postgresql-sharp-mcp.exe"` in Windows JSON).
+
+For a **standalone archive**, remove `args` and use the **absolute executable path**, not the folder or archive:
 
 - Linux: `/home/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp`
 - macOS: `/Users/YOUR_USER/postgresql-mcp/app/PostgreSqlMcp`
@@ -142,24 +173,32 @@ Keep this terminal open. Enter the secret **at the prompt**, never in a command,
 
 **Fully quit any existing OMP process first.** In the same terminal from step 2, run the command for your OS. It checks connectivity and starts a **new** OMP process only if validation succeeds:
 
-**Installed somewhere else?** Use the executable path from your existing PostgreSQL MCP entry's `command` instead of the example path below.
+Use the command for your installation method. If you use a standalone archive, replace the command with its absolute executable path followed by `--validate`.
 
-**Linux/macOS:**
+**npx, Linux/macOS:**
 
 ```sh
-"$HOME/postgresql-mcp/app/PostgreSqlMcp" --validate && omp
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.2 --validate && omp
 ```
 
-**Windows PowerShell:**
+**.NET tool, Linux/macOS:**
+
+```sh
+postgresql-sharp-mcp --validate && omp
+```
+
+**Windows PowerShell (.NET tool):**
 
 ```powershell
-& "$HOME\postgresql-mcp\app\PostgreSqlMcp.exe" --validate
+postgresql-sharp-mcp --validate
 if ($LASTEXITCODE -eq 0) {
     omp
 } else {
     throw 'Connection validation failed; repeat step 2 or check your database details.'
 }
 ```
+
+For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.2 --validate`; keep the `$LASTEXITCODE` check and launch block.
 
 Validation is read-only and exits; its successful stderr output includes your database name, so keep it private. Empty input is rejected before OMP starts. If it fails, fix your connection details and repeat step 2; [troubleshooting](#if-setup-does-not-work) covers common failures.
 
@@ -186,7 +225,9 @@ For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFu
 
 ### Upgrading an existing installation
 
-Automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets **0.3.1**, the environment-first patch follow-on. Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable; replace the binary with the compatible archive or use a [source build](CONTRIBUTING.md#build-from-source).
+Automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets **0.3.2**, the installation-first patch follow-on. Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
+
+For an existing global .NET tool, run `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.3.2`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.3.2`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
 
@@ -262,6 +303,8 @@ Use your actual paths and keep validation stderr private. Reload the saved MCP c
 |---|---|
 | Executable not found / spawn error | Use an absolute executable path including `.exe` on Windows, not an archive/folder; keep extracted files together. |
 | Wrong architecture / cannot execute binary | Match the archive to your OS and CPU. |
+| npm reports blocked install scripts / native command cannot execute | Use the full npx command above with package-specific `--allow-scripts`; if a previous install skipped scripts, use a fresh npm cache for the corrected command. |
+| .NET runtime not found | Install .NET 10; npm needs `dotnet` on PATH during installation. Set `DOTNET_ROOT` for custom runtime locations. Archives include the runtime. |
 | Invalid configuration / missing credentials | Repeat the hidden prompt, clear stale credential sources from the shell/client entry, and start a new client from that shell. Raw PostgreSQL URLs are not accepted. For files, check the path, JSON escaping and accidental `.txt` extension. |
 | Connection refused, timeout or authentication error | Run `--validate`; check host, port, database, login/password, network/VPN and PostgreSQL access rules. Installing this app does not grant access. |
 | Certificate validation error | Use the provider's correct hostname and CA certificate. Do not disable remote TLS. |
@@ -273,11 +316,9 @@ Normal stdout is reserved for MCP JSON-RPC; diagnostics use stderr. Keep credent
 
 ### Other installation methods
 
-Choose one installation method and follow the same environment/client setup. **0.3.1 registry publication is blocked:** npm returned HTTP 404 and NuGet rejected the OIDC trust-policy match with HTTP 401. Downloadable npm/NuGet release package files are not registry publication. Use the self-contained archive, a [verified local NuGet package](CONTRIBUTING.md#install-a-verified-release-artifact), or a [source build](CONTRIBUTING.md#build-from-source); do not install an older registry executable for this guide.
+Choose one installation method from step 1 and follow the same environment/client setup. If registry installation is unavailable, use the self-contained archive, a [verified local NuGet package](CONTRIBUTING.md#install-a-verified-release-artifact), or a [source build](CONTRIBUTING.md#build-from-source). Downloadable npm/NuGet release package files alone do not establish registry publication.
 
-For a local .NET tool, installation requires the .NET 10 SDK and running requires the .NET 10 runtime. Put its absolute installed executable path in MCP JSON, not a `.nupkg`; custom runtime locations may need `DOTNET_ROOT`. See CONTRIBUTING for artifact verification and installation commands.
-
-The npm installer requires Node.js 22 or newer and .NET 10 on PATH during installation. It is C# and uses bundled native apphosts, not downloaded runtime/binaries; the installed server runs directly as .NET without a JavaScript launcher or Node child process. Registry commands are not the default setup while publication is unavailable.
+For a global npm command, run `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.2`, then `postgresql-sharp-mcp --version`. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
