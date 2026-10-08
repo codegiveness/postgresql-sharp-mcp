@@ -1,7 +1,7 @@
 {
   "name": "@codegiveness/postgresql-sharp-mcp",
-  "version": "0.3.2",
-  "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Requires the .NET 10 runtime; set DOTNET_ROOT for nonstandard installations. No runtime downloads.",
+  "version": "0.3.3",
+  "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Bundles the .NET runtime; no .NET installation or runtime downloads required.",
   "license": "MIT",
   "author": "codegiveness",
   "homepage": "https://github.com/codegiveness/postgresql-sharp-mcp#readme",
@@ -17,7 +17,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "postinstall": "dotnet installer/PostgreSqlMcp.NpmInstall.dll"
+    "postinstall": "node installer/run-script-os/index.js",
+    "postinstall:win32": "\"runtimes\\win-x64\\PostgreSqlMcp.NpmInstall.exe\"",
+    "postinstall:linux": "\"runtimes/linux-$(uname -m)/PostgreSqlMcp.NpmInstall\"",
+    "postinstall:darwin": "\"runtimes/osx-$(uname -m)/PostgreSqlMcp.NpmInstall\""
   },
   "publishConfig": {
     "access": "public",
@@ -25,8 +28,7 @@
   },
   "files": [
     "bin/postgresql-sharp-mcp.exe",
-    "payload/",
-    "apphosts/",
+    "runtimes/",
     "installer/",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",

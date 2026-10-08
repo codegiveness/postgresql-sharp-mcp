@@ -40,7 +40,7 @@ internal sealed class McpClient : IAsyncDisposable
             {
                 protocolVersion = "2025-06-18", capabilities = new { },
                 clientInfo = new { name = "postgresql-sharp-mcp-verifier", version = "1" }
-            });
+            }, command.InitializationTimeoutSeconds);
             Check.That(initialized["result"]?["serverInfo"] is not null, "MCP initialize did not return server information.");
             await client.SendAsync(new { jsonrpc = "2.0", method = "notifications/initialized" });
             return client;
@@ -90,11 +90,11 @@ internal sealed class McpClient : IAsyncDisposable
         finally { writes.Release(); }
     }
 
-    public async Task<JsonNode> RequestAsync(string method, object parameters)
+    public async Task<JsonNode> RequestAsync(string method, object parameters, int timeoutSeconds = 20)
     {
         int id = Interlocked.Increment(ref nextId);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(reading.Token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        deadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var completion = new TaskCompletionSource<JsonNode>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[id] = completion;
         try

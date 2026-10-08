@@ -76,19 +76,21 @@ dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output ar
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages
 ```
 
-The package smoke installs into isolated locations with fresh caches and exercises the actual CLI and MCP entrypoints. By default it creates and removes its own PostgreSQL Docker fixture, requiring Docker and the same network/extension prerequisites as `integration`; installed npm and NuGet entrypoints must use an inherited connection string without a targets file, discover/select a newly created database without recurring configuration edits and commit/clean up an explicitly requested write. An optional `--targets-file PATH` instead enables database calls against separately authorized disposable profiles. Package generation verifies that npm and application versions match and includes dependency licenses and notices.
+The package smoke installs into isolated locations with fresh caches and exercises the actual CLI and MCP entrypoints. Local npm, global npm and fresh-cache npx run with `dotnet` absent from PATH and deliberately invalid `DOTNET_ROOT` settings; the NuGet tool retains its .NET prerequisite. By default the smoke creates and removes its own PostgreSQL Docker fixture, requiring Docker and the same network/extension prerequisites as `integration`; installed entrypoints must use an inherited connection string without a targets file, discover/select a newly created database and commit/clean up an explicitly requested write. An optional `--targets-file PATH` instead enables database calls against separately authorized disposable profiles. Package generation verifies matching versions and includes dependency licenses/notices.
 
-Windows/macOS CI uses `packages --artifacts artifacts/packages --installation-only` because those runners do not provide the Docker fixture. This explicit mode still installs both artifacts offline, exercises their actual native CLI and MCP entrypoints, checks missing-.NET diagnostics, requires structured unavailable-database errors and verifies shutdown. It does not claim live discovery/query/write coverage; the Linux package job retains the full disposable-database scenarios above. Do not combine this mode with `--targets-file`, and do not use it to bypass a failed database verification run.
+Windows/macOS CI uses `packages --artifacts artifacts/packages --installation-only` because those runners do not provide the Docker fixture. This explicit mode still installs both artifacts offline, exercises npm local/global/npx without installed .NET and the NuGet native CLI/MCP entrypoints, requires structured unavailable-database errors and verifies shutdown. It does not claim live discovery/query/write coverage; the Linux package job retains the full disposable-database scenarios above. Do not combine this mode with `--targets-file`, and do not use it to bypass a failed database verification run.
+
+The local tarball npx scenario allows 60 seconds for initial archive resolution; subsequent MCP calls retain their 20-second deadline. It verifies stdin-EOF shutdown through the real npx wrapper and SIGTERM against that npx installation's native server: npm does not forward a signal sent only to its root process. The smoke runs npm at `warn` log level to separate npm's command-echo notices from server diagnostics while retaining warnings/errors; production commands and logging are unchanged.
 
 To inspect the npm package manually, replace `<version>` with the version in `npm/package.json`:
 
 ```bash
 npm install --prefix ./artifacts/npm-client --ignore-scripts --no-audit --no-fund "./artifacts/packages/codegiveness-postgresql-sharp-mcp-<version>.tgz"
-dotnet ./artifacts/npm-client/node_modules/@codegiveness/postgresql-sharp-mcp/installer/PostgreSqlMcp.NpmInstall.dll
+npm --prefix ./artifacts/npm-client/node_modules/@codegiveness/postgresql-sharp-mcp run postinstall
 ./artifacts/npm-client/node_modules/.bin/postgresql-sharp-mcp --version
 ```
 
-Do not install the unbuilt `npm/` source directory; the .NET builder stages its payload and five native apphosts. The manual commands deliberately disable dependency scripts and invoke the trusted C# initializer explicitly. For automatic npx/global setup on npm 12, use `--allow-scripts=@codegiveness/postgresql-sharp-mcp`; project installs use a matching consumer `allowScripts` entry. Never use broad all-script bypasses. On Windows use `node_modules/.bin/postgresql-sharp-mcp.cmd`. The internal binary is `bin/postgresql-sharp-mcp.exe` on every OS. Nonstandard .NET installations require `DOTNET_ROOT` for native apphost discovery. No runtime or binary is fetched during installation.
+Do not install the unbuilt `npm/` source directory; the .NET builder stages five self-contained server/installer payloads and the checksum-pinned, unmodified upstream `run-script-os` 1.1.6 installation runner. The manual commands deliberately disable dependency scripts and explicitly run this package's trusted initializer; they do not need an installed .NET runtime. Automatic registry npx/global setup on npm 12 uses `--allow-scripts=@codegiveness/postgresql-sharp-mcp`. Local tarballs instead need approval for their exact `file:<absolute-tarball-path>` spec; for example, `npx -y --allow-scripts=file:<absolute-tarball-path> --package=<absolute-tarball-path> -- postgresql-sharp-mcp --version`. Project installs may use a matching consumer `allowScripts` entry. Never use broad all-script bypasses. On Windows use `node_modules/.bin/postgresql-sharp-mcp.cmd`. The internal binary is `bin/postgresql-sharp-mcp.exe` on every OS. Unix installation uses `uname`. No runtime or binary is fetched during installation; the builder fetches and verifies the pinned upstream runner before packaging.
 
 To inspect the .NET tool in a dedicated directory, replace `<version>` with the matching project version:
 
@@ -186,7 +188,7 @@ Keep versions, affected help/docs and release notes consistent. Update [THIRD-PA
 
 ## Automation and releases
 
-Compatible documentation, setup improvements and fixes use a patch increment, such as **0.3.1 → 0.3.2**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.2** puts npx and .NET tool commands first without changing runtime or database-access behavior. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
+Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
@@ -217,16 +219,22 @@ If entering replacement credentials yourself, these commands prompt without putt
 ```bash
 gh secret set NPM_TOKEN --repo codegiveness/postgresql-sharp-mcp --env release
 gh secret set NUGET_USERNAME --repo codegiveness/postgresql-sharp-mcp --env release
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.2
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3
 ```
 
 To publish only NuGet, select `target=nuget`. This skips npm publication and GitHub Release creation; the default `target=all` preserves publication to all three destinations:
 
 ```bash
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.2 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=nuget
 ```
 
 NuGet-only publication still requires successful preflight, package verification and attestation. A failed or canceled prerequisite cannot reach publishing. Reusing another repository's NuGet username does not reuse its trust policy: the policy must match this repository, workflow and environment, with permission to create this package.
+
+For an owner-authorized manual registry recovery, `target=github` builds/verifies all artifacts, attests them and publishes only the GitHub release. It skips both registry jobs; publish the exact attested npm/NuGet files through separately authorized credentials instead of retrying a known publisher mismatch:
+
+```bash
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=github
+```
 
 Only run publication after account permissions/policy and the existing version tag are ready. For a failed run of the main-dispatched workflow, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse that run's immutable artifacts. Expired or deleted artifacts fail closed; start a new main dispatch rather than rebuilding publisher tooling from tag source.
 

@@ -27,6 +27,7 @@ internal static class Packages
         await VerifyArchivesAsync(root, tarball, nupkg);
         VerifyLocalSource(config, artifacts);
         string npm = Processes.FindExecutable("npm");
+        string npx = Processes.FindExecutable("npx");
         string node = Processes.FindExecutable("node");
         string dotnet = Processes.FindExecutable("dotnet");
         ProcessResult nodeVersion = await Processes.RunAsync(new(node, "--version"));
@@ -40,55 +41,75 @@ internal static class Packages
         environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1";
         environment["NUGET_PACKAGES"] = Path.Combine(stage, "nuget-cache");
-        environment["npm_config_cache"] = Path.Combine(stage, "npm-cache");
         string npmHome = Path.Combine(stage, "npm");
         string toolHome = Path.Combine(stage, "tools");
+        string globalHome = Path.Combine(stage, "npm-global");
+        string npxHome = Path.Combine(stage, "npx");
+        var (isolatedNpm, isolatedNpx, noDotnet) = CreateNpmEnvironment(npm, npx, node, stage, environment);
+        Dictionary<string, string> localEnvironment = ConsumerEnvironment(noDotnet, stage, "local");
+        Dictionary<string, string> globalEnvironment = ConsumerEnvironment(noDotnet, stage, "global");
+        Dictionary<string, string> npxEnvironment = ConsumerEnvironment(noDotnet, stage, "npx");
         Directory.CreateDirectory(npmHome);
+        Directory.CreateDirectory(globalHome);
+        Directory.CreateDirectory(npxHome);
         await File.WriteAllTextAsync(Path.Combine(npmHome, "package.json"), JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["private"] = true,
             ["allowScripts"] = new Dictionary<string, bool> { ["file:" + tarball] = true }
         }));
-        await VerifyMissingDotnetAsync(npm, node, tarball, stage, environment);
-        // --ignore-scripts is intentionally absent: the maintained .NET postinstall selects the native apphost.
-        await Processes.RunAsync(NpmInstall(npm, npmHome, tarball), environment, timeout: 120);
+        // Installation scripts must run: selecting the self-contained apphost is part of the consumer contract.
+        await Processes.RunAsync(NpmInstall(isolatedNpm, npmHome, tarball), localEnvironment, timeout: 600);
+        await Processes.RunAsync(isolatedNpm.With("install", "--global", "--prefix", globalHome,
+            "--allow-scripts=file:" + tarball, "--offline", "--no-audit", "--no-fund", "--ignore-scripts=false", tarball),
+            globalEnvironment, timeout: 600, directory: globalHome);
         await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
             "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, timeout: 120);
-        string native = Path.Combine(npmHome, "node_modules", npmName.Replace('/', Path.DirectorySeparatorChar), "bin", "postgresql-sharp-mcp.exe");
-        string npmBin = Path.Combine(npmHome, "node_modules", ".bin", OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.cmd" : "postgresql-sharp-mcp");
-        Check.That(File.Exists(native) && File.Exists(npmBin), "npm postinstall did not create the native application and command bin.");
-        if (!OperatingSystem.IsWindows())
+        string native = InstalledNpmCommand(npmHome, npmName, global: false, out string npmBin);
+        string globalNative = InstalledNpmCommand(globalHome, npmName, global: true, out string globalBin);
+        Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=file:" + tarball, "--offline",
+            "--package=" + tarball, "--", "postgresql-sharp-mcp")
+            // npm re-reads a local tarball even with a warm cache; allow archive resolution before initialization.
+            with { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 60 };
+        var commands = new (string Name, Command Command, Dictionary<string, string> Environment, string? Native)[]
         {
-            FileSystemInfo? destination = File.ResolveLinkTarget(npmBin, returnFinalTarget: true);
-            Check.That(destination is not null && Path.GetFullPath(destination.FullName) == Path.GetFullPath(native), "npm bin is not linked to the native apphost.");
-            Check.That((File.GetUnixFileMode(native) & UnixFileMode.UserExecute) != 0, "npm native apphost is not executable.");
-        }
-        var commands = new Dictionary<string, Command>
-        {
-            ["npm"] = new(npmBin),
-            ["NuGet"] = new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.exe" : "postgresql-sharp-mcp"))
+            ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
+            ("npm global (no .NET)", new(globalBin) { WorkingDirectory = globalHome }, globalEnvironment, globalNative),
+            ("npx offline tarball (no .NET)", npxCommand, npxEnvironment, null),
+            ("NuGet", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.exe" : "postgresql-sharp-mcp")), environment, null)
         };
-        // Exercise the actual apphost too, rather than accepting only cmd-shim success on Windows.
-        await Processes.RunAsync(new(native, "--help"), environment);
+        // Exercise actual apphosts too, rather than accepting only cmd-shim success on Windows.
+        await Processes.RunAsync(new(native, "--help"), localEnvironment);
+        await Processes.RunAsync(new(globalNative, "--help"), globalEnvironment);
         await using var fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
         if (fixture is not null)
             await fixture.StartAsync();
         await using (var unavailable = new UnavailableEndpoint())
         {
-            var configured = new Dictionary<string, string>(environment)
+            foreach (var (name, command, commandEnvironment, nativeCommand) in commands)
             {
-                ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1",
-                ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
-            };
-            foreach (var (name, command) in commands)
-            {
-                await VerifyCliAsync(name, command, version, environment, configured);
+                var configured = new Dictionary<string, string>(commandEnvironment)
+                {
+                    ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1",
+                    ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
+                };
+                await VerifyCliAsync(name, command, version, commandEnvironment, configured);
+                string? installedNative = nativeCommand;
+                if (command == npxCommand)
+                {
+                    string packagePath = Path.Combine("node_modules", npmName.Replace('/', Path.DirectorySeparatorChar), "bin", "postgresql-sharp-mcp.exe");
+                    string npxInstall = Directory.EnumerateDirectories(Path.Combine(npxEnvironment["npm_config_cache"], "_npx"))
+                        .Single(directory => File.Exists(Path.Combine(directory, packagePath)));
+                    installedNative = InstalledNpmCommand(npxInstall, npmName, global: false, out _);
+                }
                 await VerifyMcpAsync(command, configured, ["primary"]);
-                if (!OperatingSystem.IsWindows()) await VerifyMcpAsync(command, configured, ["primary"], terminate: true);
+                // SIGTERM the installed server, not npm's wrapper, which does not forward a root-only signal.
+                // The real npx command above must still shut down cleanly on stdin EOF.
+                if (!OperatingSystem.IsWindows())
+                    await VerifyMcpAsync(installedNative is null ? command : new(installedNative), configured, ["primary"], terminate: true);
                 if (targetsFile is not null)
                 {
                     string[] aliases = await SafeFixtureAliasesAsync(targetsFile);
-                    var fixtureEnvironment = new Dictionary<string, string>(environment)
+                    var fixtureEnvironment = new Dictionary<string, string>(commandEnvironment)
                     {
                         ["POSTGRES_TARGETS_FILE"] = targetsFile,
                         ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
@@ -103,7 +124,7 @@ internal static class Packages
                 }
                 else if (fixture is not null)
                 {
-                    var fixtureEnvironment = new Dictionary<string, string>(environment)
+                    var fixtureEnvironment = new Dictionary<string, string>(commandEnvironment)
                     {
                         ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={fixture.Port};Database=tenant_a;Username=mcp_writer;Password=writer-disposable",
                         ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
@@ -112,36 +133,56 @@ internal static class Packages
                     Console.WriteLine($"{name}: environment-only primary bootstrap, live discovery, physical selection, read-only default, write opt-in and cleanup passed");
                 }
                 Console.WriteLine($"{name}: installed CLI, validation, MCP initialize/tools/list/list_databases and shutdown passed");
+                if (OperatingSystem.IsWindows() && installedNative is not null)
+                    await VerifyMcpAsync(new(installedNative), configured, ["primary"]);
             }
-            if (OperatingSystem.IsWindows()) await VerifyMcpAsync(new(native), configured, ["primary"]);
         }
-        Console.WriteLine("Package verification passed; offline local installs, real native commands, missing .NET prerequisite and shutdown verified.");
+        Console.WriteLine("Package verification passed; offline local and global npm installs, fresh-cache npx tarball CLI/MCP without .NET, NuGet, native commands and shutdown verified.");
         if (installationOnly)
             Console.WriteLine("Installation-only mode: live database discovery/query/write scenarios were not run; use default package verification for that coverage.");
     }
 
-    private static Command NpmInstall(string npm, string home, string tarball) => new(npm, "install", "--prefix", home,
+    private static Command NpmInstall(Command npm, string home, string tarball) => npm.With("install", "--prefix", home,
         "--offline", "--no-audit", "--no-fund", "--package-lock=false", "--ignore-scripts=false", tarball);
 
-    private static async Task VerifyMissingDotnetAsync(string npm, string node, string tarball, string stage, Dictionary<string, string> environment)
+    private static (Command Npm, Command Npx, Dictionary<string, string> Environment) CreateNpmEnvironment(
+        string npm, string npx, string node, string stage, Dictionary<string, string> environment)
     {
-        string path = Path.Combine(stage, "missing-dotnet-path");
-        string home = Path.Combine(stage, "missing-dotnet-install");
+        string path = Path.Combine(stage, "no-dotnet-path");
         Directory.CreateDirectory(path);
-        Directory.CreateDirectory(home);
-        await File.WriteAllTextAsync(Path.Combine(home, "package.json"), JsonSerializer.Serialize(new Dictionary<string, object>
-        {
-            ["private"] = true,
-            ["allowScripts"] = new Dictionary<string, bool> { ["file:" + tarball] = true }
-        }));
         string isolatedNode = Path.Combine(path, OperatingSystem.IsWindows() ? "node.exe" : "node");
-        if (OperatingSystem.IsWindows()) File.Copy(node, isolatedNode);
-        else File.CreateSymbolicLink(isolatedNode, node);
-        // Invoke the npm-distributed CLI, not owned JS. npm's postinstall still runs with a PATH that has no dotnet.
-        string realNpm = File.ResolveLinkTarget(npm, returnFinalTarget: true)?.FullName ?? npm;
-        string npmCli = realNpm.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ? realNpm
-            : Path.Combine(Path.GetDirectoryName(npm)!, "node_modules", "npm", "bin", "npm-cli.js");
-        Check.That(File.Exists(npmCli), "Cannot locate npm's installed CLI for isolated prerequisite verification.");
+        Command isolatedNpm;
+        Command isolatedNpx;
+        if (OperatingSystem.IsWindows())
+        {
+            File.Copy(node, isolatedNode);
+            string distribution = Path.Combine(Path.GetDirectoryName(npm)!, "node_modules", "npm");
+            Check.That(File.Exists(Path.Combine(distribution, "bin", "npm-cli.js"))
+                && File.Exists(Path.Combine(distribution, "bin", "npx-cli.js")), "Cannot locate npm's installed distribution for isolated consumer verification.");
+            string isolatedDistribution = Path.Combine(path, "node_modules", "npm");
+            foreach (string directory in Directory.EnumerateDirectories(distribution, "*", SearchOption.AllDirectories))
+                Directory.CreateDirectory(Path.Combine(isolatedDistribution, Path.GetRelativePath(distribution, directory)));
+            Directory.CreateDirectory(isolatedDistribution);
+            foreach (string file in Directory.EnumerateFiles(distribution, "*", SearchOption.AllDirectories))
+                File.Copy(file, Path.Combine(isolatedDistribution, Path.GetRelativePath(distribution, file)));
+            // Preserve upstream wrappers: the bundled OS runner launches npm again from PATH.
+            File.Copy(Path.Combine(distribution, "bin", "npm.cmd"), Path.Combine(path, "npm.cmd"));
+            File.Copy(Path.Combine(distribution, "bin", "npx.cmd"), Path.Combine(path, "npx.cmd"));
+            isolatedNpm = new(isolatedNode, Path.Combine(isolatedDistribution, "bin", "npm-cli.js"));
+            isolatedNpx = new(isolatedNode, Path.Combine(isolatedDistribution, "bin", "npx-cli.js"));
+        }
+        else
+        {
+            File.CreateSymbolicLink(isolatedNode, node);
+            string isolatedNpmPath = Path.Combine(path, "npm");
+            string isolatedNpxPath = Path.Combine(path, "npx");
+            File.CreateSymbolicLink(isolatedNpmPath, npm);
+            File.CreateSymbolicLink(isolatedNpxPath, npx);
+            File.CreateSymbolicLink(Path.Combine(path, "uname"), Processes.FindExecutable("uname"));
+            File.CreateSymbolicLink(Path.Combine(path, "sh"), "/bin/sh");
+            isolatedNpm = new(isolatedNpmPath);
+            isolatedNpx = new(isolatedNpxPath);
+        }
         var missing = new Dictionary<string, string>(environment)
         {
             ["PATH"] = path,
@@ -149,24 +190,46 @@ internal static class Packages
             ["DOTNET_ROOT_X64"] = Path.Combine(stage, "missing-dotnet-root"),
             ["DOTNET_ROOT_ARM64"] = Path.Combine(stage, "missing-dotnet-root"),
             ["DOTNET_MULTILEVEL_LOOKUP"] = "0",
-            ["npm_config_cache"] = Path.Combine(stage, "missing-dotnet-cache"),
             ["npm_config_script_shell"] = OperatingSystem.IsWindows()
                 ? Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe")
                 : "/bin/sh"
         };
-        Command install = NpmInstall(npm, home, tarball);
-        ProcessResult result = await Processes.RunAsync(new(isolatedNode, [npmCli, .. install.Arguments]), missing, expected: null, timeout: 120);
-        Check.That(result.ExitCode != 0 && result.Error.Contains("dotnet", StringComparison.OrdinalIgnoreCase), "npm postinstall did not diagnose the unavailable .NET installation prerequisite.");
-        Check.Confidential(result.Output + result.Error, "disposable-package-secret");
-        Console.WriteLine("PASS npm postinstall rejects missing dotnet in an isolated offline install");
+        return (isolatedNpm, isolatedNpx, missing);
+    }
+
+    private static Dictionary<string, string> ConsumerEnvironment(Dictionary<string, string> environment, string stage, string consumer) =>
+        new(environment)
+        {
+            ["npm_config_cache"] = Path.Combine(stage, consumer + "-cache"),
+            ["npm_config_prefix"] = Path.Combine(stage, consumer + "-prefix"),
+            // Test the server's diagnostics, not npm's notice-level echo of synthetic CLI arguments.
+            // Warnings and errors remain visible; the server's stderr is unaffected.
+            ["npm_config_loglevel"] = "warn"
+        };
+
+    private static string InstalledNpmCommand(string home, string npmName, bool global, out string bin)
+    {
+        string modules = Path.Combine(home, global && !OperatingSystem.IsWindows() ? "lib" : "", "node_modules");
+        string native = Path.Combine(modules, npmName.Replace('/', Path.DirectorySeparatorChar), "bin", "postgresql-sharp-mcp.exe");
+        string binHome = global ? (OperatingSystem.IsWindows() ? home : Path.Combine(home, "bin")) : Path.Combine(modules, ".bin");
+        bin = Path.Combine(binHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.cmd" : "postgresql-sharp-mcp");
+        Check.That(File.Exists(native) && File.Exists(bin), "npm postinstall did not create the native application and command bin.");
+        if (!OperatingSystem.IsWindows())
+        {
+            FileSystemInfo? destination = File.ResolveLinkTarget(bin, returnFinalTarget: true);
+            Check.That(destination is not null && Path.GetFullPath(destination.FullName) == Path.GetFullPath(native), "npm bin is not linked to the native apphost.");
+            Check.That((File.GetUnixFileMode(native) & UnixFileMode.UserExecute) != 0, "npm native apphost is not executable.");
+        }
+        return native;
     }
 
     private static async Task VerifyCliAsync(string name, Command command, string version, Dictionary<string, string> environment, Dictionary<string, string> configured)
     {
-        await Processes.RunAsync(command.With("--help"), environment);
-        ProcessResult actualVersion = await Processes.RunAsync(command.With("--version"), environment);
-        string reported = actualVersion.Output.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).Last();
-        Check.That((reported == version || reported == version + ".0") && actualVersion.Error.Length == 0, $"{name} package version mismatch.");
+        ProcessResult actualVersion = await Processes.RunAsync(command.With("--version"), environment, timeout: 600);
+        string reported = actualVersion.Output.Trim();
+        Check.That(reported == "postgresql-sharp-mcp " + version || reported == "postgresql-sharp-mcp " + version + ".0",
+            $"{name} package version mismatch or contaminated version output.");
+        await Processes.RunAsync(command.With("--help"), environment, timeout: 600);
         ProcessResult invalid = await Processes.RunAsync(command, environment, expected: 1);
         Check.That(invalid.Output.Length == 0 && invalid.Error.Length > 0, $"{name} invalid configuration did not fail on stderr only.");
         ProcessResult unsafeCli = await Processes.RunAsync(command.With("--sensitive-package-cli-marker"), configured, expected: 1);
@@ -179,7 +242,9 @@ internal static class Packages
         Check.Confidential(validation.Error, "disposable-package-secret");
     }
 
-    private static JsonNode[] Reports(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
+    // npm may also emit its own notices on stderr; structured server reports remain JSON lines.
+    private static JsonNode[] Reports(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Where(line => line.StartsWith('{')).Select(line => JsonNode.Parse(line)!).ToArray();
 
     private static async Task VerifyMcpAsync(Command command, Dictionary<string, string> environment, string[] aliases, bool terminate = false, bool query = false, PostgresFixture? fixture = null)
     {
