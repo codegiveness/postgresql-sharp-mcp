@@ -95,7 +95,9 @@ internal static class Check
 
 internal sealed record Command(string File, params string[] Arguments)
 {
-    public Command With(params string[] arguments) => new(File, [.. Arguments, .. arguments]);
+    public string? WorkingDirectory { get; init; }
+    public int InitializationTimeoutSeconds { get; init; } = 20;
+    public Command With(params string[] arguments) => this with { Arguments = [.. Arguments, .. arguments] };
 }
 
 internal sealed record ProcessResult(int ExitCode, string Output, string Error);
@@ -113,7 +115,7 @@ internal static class Processes
         {
             UseShellExecute = false, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
-            WorkingDirectory = directory ?? Environment.CurrentDirectory
+            WorkingDirectory = directory ?? command.WorkingDirectory ?? Environment.CurrentDirectory
         };
         if (OperatingSystem.IsWindows() && Path.GetExtension(command.File) is ".cmd" or ".bat")
         {

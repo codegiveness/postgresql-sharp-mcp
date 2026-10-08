@@ -11,7 +11,7 @@ on:
         required: true
         type: choice
         default: all
-        options: [all, nuget]
+        options: [all, github, nuget]
 permissions: {}
 concurrency:
   group: release-${{ inputs.tag }}
@@ -136,7 +136,7 @@ jobs:
             artifacts/SHA256SUMS
   github-release:
     needs: [preflight, package, attest]
-    if: inputs.target == 'all'
+    if: inputs.target == 'all' || inputs.target == 'github'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -204,7 +204,8 @@ jobs:
   nuget:
     needs: [preflight, package, attest, github-release]
     if: >-
-      ${{ !cancelled() && needs.preflight.result == 'success' &&
+      ${{ !cancelled() && (inputs.target == 'all' || inputs.target == 'nuget') &&
+          needs.preflight.result == 'success' &&
           needs.package.result == 'success' && needs.attest.result == 'success' &&
           (inputs.target == 'nuget' || needs.github-release.result == 'success') }}
     runs-on: ubuntu-latest

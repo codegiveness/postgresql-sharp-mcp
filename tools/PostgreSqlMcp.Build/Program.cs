@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 
@@ -12,6 +13,8 @@ internal static class PackageBuilder
     private static readonly string[] Documents = ["README.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md"];
     private static readonly string[] ServerProjects = ["PostgreSqlMcp", "PostgreSqlMcp.Core", "PostgreSqlMcp.Tools"];
     private const string InstallerName = "PostgreSqlMcp.NpmInstall";
+    private const string RunnerUrl = "https://registry.npmjs.org/run-script-os/-/run-script-os-1.1.6.tgz";
+    private const string RunnerSha512 = "aa5e8fd8bce10534c37f32adb3e428e07f785542a9c4a0c5cfa431c7069464dd26c2f8bb2f7969388ec1a8f0aaee58038775cb974769797c1f715222b65ad8af";
 
     internal static async Task<int> RunAsync(string[] args)
     {
@@ -53,26 +56,24 @@ internal static class PackageBuilder
             foreach (var notice in Directory.EnumerateFiles(Path.Combine(stage, "LICENSES"), "*.txt"))
                 CopyFile(notice, Path.Combine(package, "LICENSES", Path.GetFileName(notice)));
 
-            var published = Path.Combine(temporary, "portable");
-            await DotnetAsync(stage, "publish", server, "-c", "Release", "--self-contained", "false", "-p:UseAppHost=false", "-o", published);
-            CopyManagedPayload(published, Path.Combine(package, "payload"), "PostgreSqlMcp");
-            var installed = Path.Combine(temporary, "installer");
-            await DotnetAsync(stage, "publish", installer, "-c", "Release", "--self-contained", "false", "-p:UseAppHost=false", "-o", installed);
-            CopyManagedPayload(installed, Path.Combine(package, "installer"), InstallerName);
-
+            await StageRunnerAsync(package);
             foreach (var rid in RuntimeIdentifiers)
             {
-                var native = Path.Combine(temporary, "published", rid);
-                await DotnetAsync(stage, "publish", server, "-c", "Release", "--self-contained", "false", "-r", rid,
-                    "-p:UseAppHost=true", "-o", native);
-                var name = rid.StartsWith("win-", StringComparison.Ordinal) ? "PostgreSqlMcp.exe" : "PostgreSqlMcp";
-                var apphost = Path.Combine(native, name);
-                CopyFile(apphost, Path.Combine(package, "apphosts", rid, name));
+                // uname supplies these architecture names to the Unix npm scripts.
+                var folder = rid.Replace("x64", "x86_64", StringComparison.Ordinal)
+                    .Replace("linux-arm64", "linux-aarch64", StringComparison.Ordinal);
+                if (rid == "win-x64") folder = rid;
+                var native = Path.Combine(package, "runtimes", folder);
+                await DotnetAsync(stage, "publish", server, "-c", "Release", "--self-contained", "true",
+                    $"-p:RuntimeIdentifier={rid}", $"-p:RuntimeIdentifiers={rid}", "-p:UseAppHost=true", "-o", native);
+                // Both applications share the same packaged runtime, not a system installation.
+                await DotnetAsync(stage, "publish", installer, "-c", "Release", "--self-contained", "true",
+                    $"-p:RuntimeIdentifier={rid}", $"-p:RuntimeIdentifiers={rid}", "-p:UseAppHost=true", "-o", native);
             }
 
             // npm creates bin links before postinstall. The seed is a real PE
             // apphost so Windows cmd-shim chooses native invocation (no shebang).
-            CopyFile(Path.Combine(package, "apphosts", "win-x64", "PostgreSqlMcp.exe"),
+            CopyFile(Path.Combine(package, "runtimes", "win-x64", "PostgreSqlMcp.exe"),
                 Path.Combine(package, "bin", "postgresql-sharp-mcp.exe"));
             var tarball = Path.Combine(temporary, tarballName);
             CreateTarball(package, tarball);
@@ -157,16 +158,31 @@ internal static class PackageBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         File.Copy(source, destination, overwrite: true);
     }
-
-    private static void CopyManagedPayload(string source, string destination, string assembly)
+    private static async Task StageRunnerAsync(string package)
     {
-        foreach (var file in Directory.EnumerateFiles(source, "*.dll"))
-            CopyFile(file, Path.Combine(destination, Path.GetFileName(file)));
-        foreach (var name in new[] { $"{assembly}.deps.json", $"{assembly}.runtimeconfig.json" })
-            CopyFile(Path.Combine(source, name), Path.Combine(destination, name));
-        if (!File.Exists(Path.Combine(destination, $"{assembly}.dll")))
-            throw new InvalidDataException($"Published payload is missing {assembly}.dll.");
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        byte[] bytes = await client.GetByteArrayAsync(RunnerUrl);
+        if (!Convert.ToHexString(SHA512.HashData(bytes)).Equals(RunnerSha512, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The pinned run-script-os archive checksum does not match.");
+        using var stream = new MemoryStream(bytes);
+        using var gzip = new GZipStream(stream, CompressionMode.Decompress);
+        using var tar = new TarReader(gzip);
+        var required = new HashSet<string>(["index.js", "functions.js", "package.json", "LICENSE"], StringComparer.Ordinal);
+        while (await tar.GetNextEntryAsync() is { } entry)
+        {
+            if (entry.Name == "package/README.md") continue;
+            var name = entry.Name.StartsWith("package/", StringComparison.Ordinal) ? entry.Name["package/".Length..] : "";
+            if (!required.Remove(name) || entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || entry.DataStream is null)
+                throw new InvalidDataException("Unexpected entry in the pinned run-script-os archive.");
+            var destination = Path.Combine(package, "installer", "run-script-os", name);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            await using var output = File.Create(destination);
+            await entry.DataStream.CopyToAsync(output);
+        }
+        if (required.Count != 0)
+            throw new InvalidDataException("The pinned run-script-os archive is incomplete.");
     }
+
 
     private static async Task DotnetAsync(string stage, params string[] arguments)
     {
@@ -213,7 +229,7 @@ internal static class PackageBuilder
                 UserName = "",
                 GroupName = "",
                 ModificationTime = DateTimeOffset.UnixEpoch,
-                Mode = relative.StartsWith("apphosts/", StringComparison.Ordinal) || relative == "bin/postgresql-sharp-mcp.exe"
+                Mode = Path.GetFileName(relative) is "PostgreSqlMcp" or "PostgreSqlMcp.exe" or "PostgreSqlMcp.NpmInstall" or "PostgreSqlMcp.NpmInstall.exe" || relative == "bin/postgresql-sharp-mcp.exe"
                     ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute
                     : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
             };

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3
+
+- Remove npm's installed-.NET prerequisite for both npx and global commands: package the .NET 10.0.12 runtime with the server and C# installer for Windows x64, glibc Linux x64/arm64 and macOS x64/arm64.
+- Use a checksum-pinned, unmodified upstream OS runner only during npm installation; keep the installed server native and all maintained implementation/build/verification code in C#. Preserve npm's bin target while replacing the seed executable in place.
+- Extend installed-distribution regression coverage to offline local/global npm installs and fresh-cache npx tarball execution with no `dotnet` on PATH and invalid runtime roots, including real CLI/MCP entrypoints and shutdown. Keep the NuGet runtime requirement unchanged.
+- Update npm prerequisites, exact local-tarball script approval, dependency notices and patch-version metadata. Published 0.3.2 is immutable; this source fix is not a claim of 0.3.3 registry publication.
+- Add a GitHub-only release target that retains build, installed-package verification and attestation gates while skipping registry jobs for explicitly authorized manual publication of those same artifacts.
+
 ## 0.3.2
 
 - Publish [GitHub Release v0.3.2](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.2) from merged main commit `6fea234b11dd88cea5fa0a66f2b8301252c2e44a` via [run 37571048770](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37571048770). Preflight, real PostgreSQL integration, installed npm/NuGet distributions, five self-contained archives, SBOM, checksums, attestation and GitHub publication passed. All PR and main validation workflows passed, including Windows/macOS installation, dependency/secret/container scans, CodeQL and SQL fuzzing.
