@@ -51,6 +51,7 @@ internal static class Program
         {
             // Unexpected parser/provider/process exceptions can embed inputs, including credentials.
             Console.Error.WriteLine(ex is VerificationException ? ex.Message : $"Verification failed ({ex.GetType().Name}); sensitive exception details suppressed.");
+            Console.Error.WriteLine(new StackTrace(ex, fNeedFileInfo: false));
             return 1;
         }
     }
@@ -167,6 +168,7 @@ internal static class Processes
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
+            Console.Error.WriteLine($"{Path.GetFileName(command.File)} exceeded its {timeout}-second timeout.");
             throw new TimeoutException("Verification subprocess exceeded its timeout.");
         }
         finally
