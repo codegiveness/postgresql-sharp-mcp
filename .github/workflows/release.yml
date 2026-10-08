@@ -11,7 +11,7 @@ on:
         required: true
         type: choice
         default: all
-        options: [all, github, nuget]
+        options: [all, github, npm, nuget]
 permissions: {}
 concurrency:
   group: release-${{ inputs.tag }}
@@ -167,8 +167,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: dotnet release-tool/PostgreSqlMcp.Release.dll github --context publication-context/publication-context.json
   npm:
-    needs: [preflight, package, github-release]
-    if: inputs.target == 'all'
+    needs: [preflight, package, attest, github-release]
+    if: >-
+      ${{ !cancelled() && (inputs.target == 'all' || inputs.target == 'npm') &&
+          needs.preflight.result == 'success' &&
+          needs.package.result == 'success' && needs.attest.result == 'success' &&
+          (needs.github-release.result == 'success' ||
+           (inputs.target == 'npm' && needs.github-release.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -184,7 +189,9 @@ jobs:
           dotnet-version: '10.0.x'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: '24.15.0'
+      - name: Install reviewed npm CLI with staged-publishing support
+        run: npm install --global npm@12.2.0 --ignore-scripts --registry https://registry.npmjs.org/
       - name: Download trusted main publication tooling
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -197,9 +204,7 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
-      - name: Publish with npm provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Stage npm tarball with OIDC pending Windows 2FA approval
         run: dotnet release-tool/PostgreSqlMcp.Release.dll npm --context publication-context/publication-context.json
   nuget:
     needs: [preflight, package, attest, github-release]
@@ -207,7 +212,8 @@ jobs:
       ${{ !cancelled() && (inputs.target == 'all' || inputs.target == 'nuget') &&
           needs.preflight.result == 'success' &&
           needs.package.result == 'success' && needs.attest.result == 'success' &&
-          (inputs.target == 'nuget' || needs.github-release.result == 'success') }}
+          (needs.github-release.result == 'success' ||
+           (inputs.target == 'nuget' && needs.github-release.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release

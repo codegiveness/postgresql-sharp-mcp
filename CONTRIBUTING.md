@@ -191,7 +191,7 @@ Keep versions, affected help/docs and release notes consistent. Update [THIRD-PA
 Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
-- **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm requires `NPM_TOKEN`; NuGet uses GitHub OIDC with `NUGET_USERNAME` and a matching trusted publishing policy. Missing prerequisites fail only the corresponding registry job. Existing registry versions are skipped. Artifact creation or a successful GitHub release alone does not prove registry publication.
+- **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. The locally verified independent publisher changes require review and merge before hosted use: npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Existing public registry versions are skipped. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
 - **Dependency audit** checks direct and transitive NuGet packages against known advisories. This is not proof that all vulnerabilities are absent.
 - **CodeQL** scans C# and GitHub Actions with `security-extended`. C# uses real builds, including generated sources. Trusted main/scheduled runs publish code-scanning results; PRs scan both the base and candidate with read-only tokens, retain raw SARIF and run the trusted-base severity-delta gate. Extraction errors and missing reports fail closed. Review workflow changes as well as findings.
 - **Scorecard** publishes repository-practice findings on main and weekly. Its score is not a vulnerability-free claim or profile achievement.
@@ -204,47 +204,107 @@ Use verified full action commit SHAs with version comments, least-privilege job 
 
 Only authorized maintainers may push release tags, publish packages or change repository settings. Check every release/publication job and the actual registry endpoints before announcing availability. Cross-platform archives are build outputs, not proof of execution on every platform.
 
-### Publisher setup
+### Independent publisher setup
 
-Use the `release` GitHub environment for narrowly scoped publishing secrets. Restrict its deployment refs to the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. This keeps release invocation available to the solo maintainer without requiring another person's approval. Do not put tokens in source, command history, issues or pull requests.
+The setup below describes locally verified workflow changes, not a completed hosted rollout. Keep application/source version **0.3.3** and the existing **v0.3.3** tag unchanged; release-tool changes do not replace immutable shipped artifacts.
 
-1. In the npm account authorized to publish under `@codegiveness`, create a short-lived granular token with **Read and write (publish and stage)** access to that scope, including new package creation—not only the sibling's existing package or **stage only** access. For unattended publishing with account 2FA, enable **Bypass 2FA** on this token. Store it as `NPM_TOKEN` in the `release` environment. Organization-management permission alone does not grant package publication rights. Granular tokens currently must be created on the website, not with `npm token create`. See [npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens).
-2. In the authorized NuGet account, add a **Trusted Publishing** policy for owner `codegiveness`, repository `postgresql-sharp-mcp`, workflow filename `release.yml`, and environment `release`. Permit new packages and versions matching `codegiveness.postgresql-sharp-mcp`. Store the **policy creator's NuGet profile username** as `NUGET_USERNAME`, not an organization/policy owner's name, email or password. The workflow exchanges GitHub OIDC for a short-lived key; no persistent NuGet API key is required. See [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
-3. After verification, create the matching `v<version>` tag on a commit reachable from `main`. Run **Actions → Release → Run workflow** on **main** with that existing tag, or use the explicit `--ref main` command below. A tag push alone does not publish. Check each publication job and install the exact version from each registry before announcing availability.
+Use this repository's `release` GitHub environment. Its deployment policy permits the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. No environment reviewer is required for solo-maintainer dispatch. npm's human approval is a separate registry-side 2FA gate. Do not transfer credentials from another repository or depend on a sibling job. Never put credentials in source, command history, issues or pull requests.
 
-GitHub's secret API exposes names and public encryption keys, not plaintext values. With explicit owner authorization, a source Actions job can encrypt selected existing credentials using the target environment's public key; an authorized operator then installs that ciphertext through the target secret API. Never print plaintext, upload it as an artifact, copy an unrelated token, or retain the temporary transfer branch/artifact. Token scope still must authorize this package, and NuGet's trusted-publishing policy must separately authorize this repository/workflow/environment.
+#### npm package trust and Windows setup
 
-If entering replacement credentials yourself, these commands prompt without putting their values in command history:
+1. Sign in to npm as the package maintainer with publish access to **`@codegiveness/postgresql-sharp-mcp`** and enable account 2FA. A linked GitHub account in npm account settings establishes account identity/recovery; it does **not** authorize a GitHub Actions workflow to stage this package.
+2. Open this package's **Settings → Trusted publishing** on npmjs.com and add **GitHub Actions** with organization/user **`codegiveness`**, repository **`postgresql-sharp-mcp`**, workflow filename **`release.yml`** (not a path), and environment **`release`**. Configure **stage-only** allowed actions: allow **`npm stage publish`**, leave **`Allow npm publish` disabled**, and leave **`Allow npm dist-tag` disabled**. Inspect all other package trusted publishers and remove any direct-publish route that would defeat the required human approval.
+3. In **Settings → Publishing access**, choose **Require two-factor authentication and disallow tokens**, then save. Do not create or use a bypass-2FA automation token. The staging workflow must use GitHub OIDC only; no `NPM_TOKEN`, `NODE_AUTH_TOKEN` or token fallback belongs in its npm job. Remove obsolete repository/environment npm publishing secrets and revoke obsolete publishing tokens through their owning account.
+4. On the approving Windows workstation, install [Node.js **24.15.0**](https://nodejs.org/en/download), open a new PowerShell terminal so PATH is refreshed, and use **npm 12.2.0**, matching the release workflow's explicit versions. The general staging minimum is Node **22.14.0** and npm **11.15.0**, but npm 12.2.0 has the stricter Node engine requirement **`^22.22.2 || ^24.15.0 || >=26`**; the older staging minimum alone is not sufficient for this pinned CLI.
 
-```bash
-gh secret set NPM_TOKEN --repo codegiveness/postgresql-sharp-mcp --env release
+```powershell
+node --version
+npm.cmd install --global npm@12.2.0 --ignore-scripts --registry https://registry.npmjs.org/
+npm.cmd --version
+npm.cmd login --auth-type=web --registry https://registry.npmjs.org/
+npm.cmd whoami --registry https://registry.npmjs.org/
+```
+
+Complete the login browser challenge on Windows and confirm the intended package-maintainer account (`codegiveness` for the current release). `npm.cmd` avoids PowerShell's script execution-policy issue with `npm.ps1`. Local login authenticates the human review/approval commands; it neither configures nor tests package OIDC trust, and `whoami` is not a trusted-publisher permission check.
+
+A **newly created npm trusted publisher must complete its first successful publish within two days** or it expires. Create it when the reviewed workflow and Windows approver are ready. Staging alone is **not documented as satisfying that deadline**; complete approval and verify publication within the window, then check the configuration's status. If it expires, delete it and create a fresh matching stage-only configuration; do not enable direct publishing to avoid expiry. See [npm trust configuration and expiry](https://docs.npmjs.com/trusted-publishers) and [staged publishing](https://docs.npmjs.com/staged-publishing).
+
+#### NuGet policy owned by this release
+
+In the authorized NuGet account, create a **Trusted Publishing** policy matching GitHub owner **`codegiveness`**, repository **`postgresql-sharp-mcp`**, workflow filename **`release.yml`**, and environment **`release`**. Its package permission must cover exactly **`codegiveness.postgresql-sharp-mcp`**, with permission to publish its versions (and create that exact package if needed); do not use a broad sibling/package-prefix permission. The policy creator must have publishing authority over that package. Set **`NUGET_USERNAME`** to the **policy creator's NuGet profile username**, not the organization/policy-owner name, email or password:
+
+```powershell
 gh secret set NUGET_USERNAME --repo codegiveness/postgresql-sharp-mcp --env release
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3
 ```
 
-To publish only NuGet, select `target=nuget`. This skips npm publication and GitHub Release creation; the default `target=all` preserves publication to all three destinations:
+Enter the username at the prompt rather than copying a sibling secret. GitHub OIDC exchanges for a short-lived NuGet key; no persistent NuGet API key is required. Username reuse does not reuse the sibling's trust policy. See [NuGet trusted publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
 
-```bash
+#### Dispatch the exact existing release
+
+Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and existing `v0.3.3` tag are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
+
+```powershell
+# Default all: GitHub Release + npm staging + NuGet publication.
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=all
+# npm staging only; no GitHub Release or NuGet publication.
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=npm
+# NuGet publication only; no GitHub Release or npm staging.
 gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=nuget
-```
-
-NuGet-only publication still requires successful preflight, package verification and attestation. A failed or canceled prerequisite cannot reach publishing. Reusing another repository's NuGet username does not reuse its trust policy: the policy must match this repository, workflow and environment, with permission to create this package.
-
-For an owner-authorized manual registry recovery, `target=github` builds/verifies all artifacts, attests them and publishes only the GitHub release. It skips both registry jobs; publish the exact attested npm/NuGet files through separately authorized credentials instead of retrying a known publisher mismatch:
-
-```bash
+# GitHub Release only; no registry staging/publication.
 gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=github
 ```
 
-Only run publication after account permissions/policy and the existing version tag are ready. For a failed run of the main-dispatched workflow, use `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` to reuse that run's immutable artifacts. Expired or deleted artifacts fail closed; start a new main dispatch rather than rebuilding publisher tooling from tag source.
+`target` choices are `all`, `github`, `npm` and `nuget`, defaulting to `all`. Every target retains common preflight, package/installed-distribution verification and attestation. npm-only and NuGet-only jobs tolerate an intentionally skipped GitHub Release job **only for their dedicated target**; failed/canceled prerequisites cannot reach a publisher. In `all` mode both registry jobs require successful GitHub Release publication. The npm command stages the exact attested tarball using `npm stage publish`, never approves it or calls direct `npm publish`. Its successful summary means **staged, pending Windows 2FA approval**, not published.
 
-An interactive local `npm login` does not update the workflow's `NPM_TOKEN` and does not necessarily satisfy npm's separate publish-time 2FA/browser approval. For an authorized manual recovery, publish the exact verified tarball using that login: `npm publish ./artifacts/packages/codegiveness-postgresql-sharp-mcp-<version>.tgz --ignore-scripts --access public --registry https://registry.npmjs.org/`. Open and approve the command's browser challenge promptly; an expired challenge is not publication. Do not request npm provenance from a workstation: that requires a supported CI identity. Record the provenance gap, check the registry's version/integrity, and exercise npx with a fresh cache. Local npm authentication does not grant NuGet publication access.
+For a failed current main-dispatched workflow, `gh run rerun <run-id> --failed --repo codegiveness/postgresql-sharp-mcp` reuses its immutable artifacts. Expired/deleted artifacts fail closed; use a new main dispatch rather than compiling publisher tooling from tag source. Do not rerun an older token-based npm publisher as a substitute for the reviewed stage-only workflow.
 
-The [0.3.1 release run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) published the attested GitHub Release assets, but npm's publish endpoint returned HTTP 404 (“not found or no permission”), and NuGet's OIDC exchange returned HTTP 401 (“no matching trust policy”). These repeat the first 0.2.0 registry attempt's authorization failures; npm's response does not identify the exact permission or account mismatch. GitHub secrets were present, and neither failure establishes registry publication. Confirm npm account/scope and new-package authorization and configure the matching target NuGet policy. After repairing account configuration, rerun only the failed jobs from this main-dispatched run to reuse its immutable verified artifacts.
+#### Approve each npm publication on Windows
+
+After the npm staging job succeeds, review its stage ID and intended `latest` tag. Every public npm publication requires the maintainer's Windows 2FA approval. A successful dispatch, login, OIDC exchange or staging response is not approval.
+
+```powershell
+npm.cmd stage list '@codegiveness/postgresql-sharp-mcp' --registry https://registry.npmjs.org/
+$StageId = Read-Host 'Stage ID for @codegiveness/postgresql-sharp-mcp 0.3.3'
+npm.cmd stage view $StageId --registry https://registry.npmjs.org/
+npm.cmd stage download $StageId --registry https://registry.npmjs.org/
+```
+
+Confirm the stage is **`@codegiveness/postgresql-sharp-mcp@0.3.3`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the existing 0.3.3 GitHub release:
+
+```powershell
+gh release download v0.3.3 --repo codegiveness/postgresql-sharp-mcp --pattern codegiveness-postgresql-sharp-mcp-0.3.3.tgz --dir release-verification
+gh attestation verify ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
+Get-FileHash ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz -Algorithm SHA256
+$StagedTarball = Read-Host 'Path printed by npm stage download'
+Get-FileHash $StagedTarball -Algorithm SHA256
+```
+
+Both hashes must match; also enforce the intended repository, `release.yml` signer, main ref and exact source commit in the attestation review. For dedicated-target artifacts, use the same-run immutable artifact and attestation verification procedure [above](#install-a-verified-release-artifact), not an unverified rebuild.
+
+Only after that review, approve the exact stage:
+
+```powershell
+npm.cmd stage approve $StageId --registry https://registry.npmjs.org/
+npm.cmd view '@codegiveness/postgresql-sharp-mcp@0.3.3' version dist.integrity dist.tarball --registry https://registry.npmjs.org/
+npm.cmd view '@codegiveness/postgresql-sharp-mcp' dist-tags --registry https://registry.npmjs.org/
+npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.3.3 '@codegiveness/postgresql-sharp-mcp@0.3.3' --version
+```
+
+Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
+
+#### Recorded publication evidence
+
+The [v0.3.3 GitHub Release](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.3) was published by [run 37737794459](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37737794459); its npm and NuGet jobs were skipped. Both downloaded package hashes matched the release manifest, and GitHub attestations passed with the exact workflow, main ref, source commit and hosted-runner identity enforced. Local npm/npx and NuGet tool installations reported **0.3.3.0** and passed help execution. The exact npm tarball was staged through the maintainer's local session; public publication still requires final Windows 2FA approval and registry verification, and this recovery has no CI npm provenance.
+
+The independently dispatched [NuGet-only run 37742507501](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37742507501) passed preflight, real PostgreSQL integration, installed-package verification, packaging and attestation. Its NuGet OIDC exchange failed with HTTP 401, reporting no matching trust policy owned by the supplied user; the push step did not run. Correct the target policy/creator username before rerunning only the failed jobs. The maintainer reports both target policies configured, but npm OIDC staging remains unexercised and the NuGet exchange has not succeeded.
+
+Local release-tool verification passed a locked build with zero warnings/errors, actionlint 1.7.12 and the real npm tarball staging dry-run with isolated configuration. Missing GitHub OIDC was rejected even with an inherited synthetic token. The dry-run submitted no stage and did not validate a real OIDC exchange. These checks do not claim hosted execution of the new workflow or public registry availability.
+
+The [0.3.1 release run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37085312914) published the attested GitHub Release assets, but npm's publish endpoint returned HTTP 404 (“not found or no permission”), and NuGet's OIDC exchange returned HTTP 401 (“no matching trust policy”). These repeat the first 0.2.0 registry attempt's authorization failures; npm's response does not identify the exact permission or account mismatch. GitHub secrets were present, and neither failure establishes registry publication. These historical failures do not test the new stage-only setup; future releases require the package trust and target NuGet policy described above.
 
 The [0.3.2 release run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/37571048770) passed packaging, installed-distribution verification, attestation and GitHub publication, but initially failed npm (HTTP 404) and NuGet OIDC (HTTP 401). npm publication was recovered with local browser approval; its public tarball matches the attested original and fresh-cache npx execution passed. The npm Actions job subsequently passed by skipping the existing immutable version, without adding CI provenance to the local publication.
 
-NuGet publication was recovered through an explicitly owner-authorized isolated job in the sibling `mssql-mcp` repository using its existing OIDC policy: [run 37573791557](https://github.com/codegiveness/mssql-mcp/actions/runs/37573791557). It verified the original PostgreSQL attestation before requesting credentials, skipped normal MSSQL release jobs and pushed only the PostgreSQL 0.3.2 package. NuGet enforced the existing scope; no secret transfer or policy widening was needed. The registry signature and every package payload entry matched verification expectations; public-feed tool installation passed after indexing. The target repository's policy mismatch remains separate from that successful recovery. Do not rerun its NuGet job expecting a copied username to change the policy, or reuse a sibling publisher without explicit owner authorization.
+NuGet publication was recovered through an explicitly owner-authorized isolated job in the sibling `mssql-mcp` repository using its existing OIDC policy: [run 37573791557](https://github.com/codegiveness/mssql-mcp/actions/runs/37573791557). It verified the original PostgreSQL attestation before requesting credentials, skipped normal MSSQL release jobs and pushed only the PostgreSQL 0.3.2 package. NuGet enforced the existing scope; no secret transfer or policy widening was needed. The registry signature and every package payload entry matched verification expectations; public-feed tool installation passed after indexing. That one-time recovery did not repair this repository's policy mismatch and is not the independent release procedure. Future NuGet dispatches need this repository's own matching policy; copying a username or depending on a sibling job is not a substitute.
 
 ## GitHub profile recognition
 
