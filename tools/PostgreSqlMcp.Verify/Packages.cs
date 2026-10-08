@@ -69,7 +69,7 @@ internal static class Packages
         Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=file:" + tarball, "--offline",
             "--package=" + tarball, "--", "postgresql-sharp-mcp")
             // npm re-reads a local tarball even with a warm cache; allow archive resolution before initialization.
-            with { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 60 };
+            with { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 600 };
         var commands = new (string Name, Command Command, Dictionary<string, string> Environment, string? Native)[]
         {
             ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
@@ -92,7 +92,6 @@ internal static class Packages
                     ["POSTGRES_CONNECTION_STRING"] = $"Host=127.0.0.1;Port={unavailable.Port};Database=package_smoke;Username=package_smoke;Password=disposable-package-secret;Timeout=1",
                     ["POSTGRES_MAX_RESULT_BYTES"] = "4096"
                 };
-                Console.WriteLine($"{name}: starting CLI verification");
                 await VerifyCliAsync(name, command, version, commandEnvironment, configured);
                 string? installedNative = nativeCommand;
                 if (command == npxCommand)
@@ -102,7 +101,6 @@ internal static class Packages
                         .Single(directory => File.Exists(Path.Combine(directory, packagePath)));
                     installedNative = InstalledNpmCommand(npxInstall, npmName, global: false, out _);
                 }
-                Console.WriteLine($"{name}: starting MCP verification");
                 await VerifyMcpAsync(command, configured, ["primary"]);
                 // SIGTERM the installed server, not npm's wrapper, which does not forward a root-only signal.
                 // The real npx command above must still shut down cleanly on stdin EOF.
@@ -232,12 +230,12 @@ internal static class Packages
         Check.That(reported == "postgresql-sharp-mcp " + version || reported == "postgresql-sharp-mcp " + version + ".0",
             $"{name} package version mismatch or contaminated version output.");
         await Processes.RunAsync(command.With("--help"), environment, timeout: 600);
-        ProcessResult invalid = await Processes.RunAsync(command, environment, expected: 1);
+        ProcessResult invalid = await Processes.RunAsync(command, environment, expected: 1, timeout: 600);
         Check.That(invalid.Output.Length == 0 && invalid.Error.Length > 0, $"{name} invalid configuration did not fail on stderr only.");
-        ProcessResult unsafeCli = await Processes.RunAsync(command.With("--sensitive-package-cli-marker"), configured, expected: 1);
+        ProcessResult unsafeCli = await Processes.RunAsync(command.With("--sensitive-package-cli-marker"), configured, expected: 1, timeout: 600);
         Check.That(unsafeCli.Output.Length == 0, "Packaged CLI error contaminated stdout.");
         Check.Confidential(unsafeCli.Error, "sensitive-package-cli-marker", "disposable-package-secret");
-        ProcessResult validation = await Processes.RunAsync(command.With("--validate"), configured, expected: 1);
+        ProcessResult validation = await Processes.RunAsync(command.With("--validate"), configured, expected: 1, timeout: 600);
         Check.That(validation.Output.Length == 0, $"{name} unavailable endpoint validation contaminated stdout.");
         JsonNode[] reports = Reports(validation.Error);
         Check.That(reports.Any(report => report["error"]?["code"]?.Text() is "connection_error" or "timeout"), $"{name} did not diagnose the unavailable endpoint.");
