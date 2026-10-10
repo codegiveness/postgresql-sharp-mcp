@@ -6,6 +6,15 @@
 - Development builds, disposable fixtures and artifact installation do not authorize remote activity. Pushing commits/tags, opening issues/PRs, creating releases, publishing packages or changing repository settings require explicit user authorization. Workflow files do not grant that authority.
 - Never include credentials, real connection strings, private application identifiers, customer SQL or database results in code, logs, documentation, issue drafts or evidence. Use placeholder configuration and disposable synthetic data.
 
+## Git workflow
+
+Follow [docs/git-workflow.md](docs/git-workflow.md) for branches, worktrees, commits, pull requests, merging, releases and branch cleanup. Its [What agents may do](docs/git-workflow.md#what-agents-may-do) table is binding. In short:
+
+- Do each task in its own worktree on a new `<type>/<description>` branch from `origin/main`. Never switch the branch of, or edit files in, a working tree you did not create for the task.
+- On the VMware shared folder, pass `git -c safe.directory=<path>` per command; do not change global git config.
+- A task's request may authorize pushing its own branch, opening a draft PR or opening an issue. Merging, deleting any branch, creating/moving/deleting tags, dispatching releases and changing settings, labels, rulesets or branch protection each need a separate explicit maintainer OK.
+- Never push or force-push `main`, and never force-push a branch you do not own; use `--force-with-lease` on your own task branch only.
+
 ## Meaningful and traceable changes
 
 - Establish the user-visible problem and acceptance criteria before implementation. Connect changes to those criteria, not activity counts.

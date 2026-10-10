@@ -45,6 +45,8 @@ catch (ToolException ex) { Console.Error.WriteLine($"[startup] {ex.Message}"); r
 if (!Enum.TryParse<LogLevel>(options.LogLevel, true, out var logLevel) || !Enum.IsDefined(logLevel))
 { Console.Error.WriteLine("[startup] Invalid log level."); return 1; }
 ToolReply.Configure(options);
+// Warnings never block startup: they name configurations whose real exposure exceeds what tools advertise.
+foreach (string warning in SecurityWarnings.Tls(options)) Console.Error.WriteLine($"[warning] {warning}");
 static async Task<bool> CheckDatabaseLockAsync(DatabaseRegistry registry, SqlExecutor executor)
 {
     if (registry.AllowedDatabaseNames is null) return true;
@@ -78,6 +80,8 @@ if (options.Validate)
         Console.Error.WriteLine(result.StructuredContent?.GetRawText());
         ok &= result.IsError != true;
     }
+    foreach (string warning in await SecurityWarnings.RolesAsync(registry, executor))
+        Console.Error.WriteLine($"[warning] {warning}");
     ok &= await CheckDatabaseLockAsync(registry, executor);
     return ok ? 0 : 1;
 }
@@ -96,28 +100,8 @@ builder.Logging.AddFilter("ModelContextProtocol", LogLevel.None).AddFilter("Npgs
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<DatabaseRegistry>();
 builder.Services.AddSingleton<SqlExecutor>();
-
-static void AddTools<T>(IServiceCollection services, bool unrestricted) where T : class
-{
-    foreach (var method in typeof(T).GetMethods(BindingFlags.Instance | BindingFlags.Public))
-    {
-        var attribute = method.GetCustomAttribute<McpServerToolAttribute>();
-        if (attribute is null) continue;
-        bool execute = attribute.Name == "execute_sql";
-        services.AddSingleton(sp => McpServerTool.Create(method,
-            r => ActivatorUtilities.CreateInstance(r.Services!, typeof(T)),
-            new McpServerToolCreateOptions
-            {
-                Services = sp, ReadOnly = !execute || !unrestricted,
-                Destructive = execute && unrestricted, Idempotent = !execute, OpenWorld = false
-            }));
-    }
-}
-AddTools<DatabaseTools>(builder.Services, options.Unrestricted);
-AddTools<SqlTools>(builder.Services, options.Unrestricted);
-AddTools<PlanTools>(builder.Services, options.Unrestricted);
-AddTools<OpsTools>(builder.Services, options.Unrestricted);
-builder.Services.AddMcpServer().WithStdioServerTransport();
+builder.Services.AddPostgreSqlTools(options);
+builder.Services.AddMcpServer(o => o.ServerInstructions = ToolRegistration.Instructions(options)).WithStdioServerTransport();
 using var host = builder.Build();
 await host.RunAsync();
 return 0;
