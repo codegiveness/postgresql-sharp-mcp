@@ -5,6 +5,7 @@
 - Show a grouped README badge table covering build/tests, security scanning, supply chain, registries, platforms, stack versions, features and project activity. Feature and practice badges link to the documentation or configuration that supports them; stack versions are read live from `global.json` and `Directory.Packages.props`.
 - Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
 - Release npm job: accept npm 12's one-element JSON array from `npm view <name>@<version> version --json`. Previously an already-published version failed with "requires an element of type 'String'" instead of being reported as not republished.
+- CodeQL: new same-repository-only `pull-request-upload` job uploads the candidate SARIF so PR heads get a code-scanning check run, which Scorecard SAST counts. Scan jobs stay read-only and fork PRs get no upload. No PR code is built or executed with the write token.
 
 ## 0.4.0
 

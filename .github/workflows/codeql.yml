@@ -145,3 +145,34 @@ jobs:
         run: >-
           dotnet run --project tools/PostgreSqlMcp.Verify --configuration Release
           -- sarif --baseline artifacts/baseline --candidate artifacts/candidate
+  pull-request-upload:
+    # Publishes the already-produced candidate SARIF so the PR head gets a code-scanning
+    # check run. Same-repository PRs only; fork tokens cannot write security events.
+    # This job never builds or executes PR code; the scan jobs above stay read-only.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: pull-request-scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp, actions]
+    steps:
+      # Source files only, for SARIF location and fingerprint resolution; nothing is run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-candidate-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-candidate
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-candidate
+          category: /language:${{ matrix.language }}
