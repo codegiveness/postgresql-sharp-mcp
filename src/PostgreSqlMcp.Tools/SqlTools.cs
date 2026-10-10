@@ -8,9 +8,15 @@ namespace PostgreSqlMcp.Tools;
 [McpServerToolType]
 public sealed class SqlTools(SqlExecutor executor)
 {
-    [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = false)]
-    [Description("Run one SQL statement on a physical database or configured profile alias. Optional target selects a connection profile. Bounded column/row arrays; next_offset re-executes read-only SQL. Use stable ORDER BY. Writes need unrestricted mode (default) and read_only=false; never replay a truncated write.")]
-    public Task<CallToolResult> ExecuteSql(CancellationToken ct, string database, string sql,
-        int? limit = null, int offset = 0, bool read_only = true, string? target = null) =>
+    // Annotations and the access-mode part of the description are set by ToolRegistration from the enforced configuration.
+    [McpServerTool(Name = "execute_sql", OpenWorld = false)]
+    [Description("Run one SQL statement on a physical database or configured profile alias. Optional target selects a connection profile. Returns bounded column/row arrays; for read-only SQL, next_offset re-executes the statement for the next page, so use a stable ORDER BY.")]
+    public Task<CallToolResult> ExecuteSql(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description(ParameterText.Sql)] string sql,
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset + " Read-only statements only.")] int offset = 0,
+        [Description("true (default): READ ONLY transaction, always rolled back. false: commit a write; refused in restricted access mode.")] bool read_only = true,
+        [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () => await executor.QueryAsync(database, sql, limit: limit, offset: offset, readOnly: read_only, ct: ct, target: target, callerStatement: true).ConfigureAwait(false));
 }

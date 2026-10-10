@@ -50,6 +50,7 @@ internal static class Integration
         Console.WriteLine("PASS PostgreSQL error and trace-level request/result confidentiality");
         await VerifyWritesAsync(command, environment, fixture.Port);
         await VerifyConfigurationAsync(command, environment, targets, connection);
+        await VerifySecurityWarningsAsync(command, environment, fixture);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
         // Last: hardening revokes PUBLIC CONNECT on every fixture database.
@@ -62,8 +63,23 @@ internal static class Integration
         JsonArray tools = (await client.RequestAsync("tools/list", new { }))["result"]!["tools"].Array();
         string[] expected = ["list_databases", "list_schemas", "list_objects", "get_object_details", "execute_sql", "explain_query", "get_top_queries", "analyze_indexes", "analyze_db_health"];
         Check.That(tools.Select(tool => tool!["name"].Text()).ToHashSet().SetEquals(expected), "Incorrect shared nine-tool set.");
+        foreach (JsonNode? tool in tools)
+        {
+            // Restricted mode: no tool may advertise writes or destructive effects.
+            Check.That(tool!["annotations"]!["readOnlyHint"].Flag() && !tool["annotations"]!["destructiveHint"].Flag(),
+                $"Restricted mode advertised a writable tool: {tool["name"].Text()}.");
+            Check.That(tool["inputSchema"]!["properties"]!.AsObject().All(property => property.Value?["description"]?.Text().Length > 0),
+                $"Undocumented parameter on {tool["name"].Text()}.");
+        }
+        JsonNode executeSql = tools.Single(tool => tool!["name"].Text() == "execute_sql")!;
+        Check.That(executeSql["description"].Text().Contains("restricted access mode", StringComparison.Ordinal)
+            && !executeSql["description"].Text().Contains("allows writes", StringComparison.Ordinal),
+            "Restricted-mode execute_sql description did not state that writes are refused.");
+        Check.That(client.Initialization["instructions"].Text().Contains("Access mode: restricted", StringComparison.Ordinal)
+            && client.Initialization["instructions"].Text().Contains("No database lock", StringComparison.Ordinal),
+            "Server instructions did not describe restricted access without a database lock.");
         JsonNode listed = await client.OkAsync("list_databases", new { target = "a", limit = 2 });
-        Check.That(listed["access_mode"].Text() == "restricted", "Explicit restricted access was not retained.");
+        Check.That(listed["access_mode"].Text() == "restricted" && !listed["database_lock"].Flag(), "Explicit restricted access was not retained.");
         Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Single(row => row["is_current"].Flag())["name"].Text() == "tenant_a",
             "Default discovery did not select the ordinal-first profile when primary was absent.");
         var discovered = new List<string>();
@@ -181,10 +197,12 @@ internal static class Integration
     {
         foreach (string sql in new[] { "SELECT 1; SELECT 2", "/*outer /*nested*/ */ COMMIT", "ROLLBACK", "SET transaction_read_only=off", "DO $$BEGIN END$$", "SELECT 'bad" })
             await client.FailsAsync("execute_sql", new { database = "a", sql }, "invalid_sql");
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')" }, "postgresql_error", "25006");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "WITH x AS (DELETE FROM marker RETURNING *) SELECT * FROM x" }, "postgresql_error");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT set_config('transaction_read_only','off',true)" }, "postgresql_error");
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')", read_only = false }, "read_only");
+        JsonNode refused = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')", read_only = false }, "read_only");
+        Check.That(refused["error"]!["message"].Text().Contains("restricted access mode", StringComparison.Ordinal), "Restricted write refusal did not name the access mode.");
+        JsonNode readOnlyWrite = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')" }, "postgresql_error", "25006");
+        Check.That(readOnlyWrite["error"]!["message"].Text().Contains("refuses writes", StringComparison.Ordinal), "Restricted read-only rejection suggested a write retry.");
         // Statement-level class 42 errors return PostgreSQL's text and a position relative to the caller's SQL, not the paging wrapper.
         JsonNode syntax = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT FROM WHERE" }, "postgresql_error", "42601"))["error"]!;
         Check.That(syntax["position"].Int() == 13 && syntax["server_message"].Text().Contains("syntax error", StringComparison.Ordinal),
@@ -327,7 +345,18 @@ internal static class Integration
         };
         writerEnvironment.Remove("POSTGRES_ACCESS_MODE");
         await using var client = await McpClient.StartAsync(command, writerEnvironment);
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')" }, "postgresql_error", "25006");
+        JsonNode executeSql = await client.ToolAsync("execute_sql");
+        Check.That(!executeSql["annotations"]!["readOnlyHint"].Flag() && executeSql["annotations"]!["destructiveHint"].Flag()
+            && executeSql["description"].Text().Contains("read_only=false commits", StringComparison.Ordinal),
+            "Unrestricted execute_sql did not advertise its enforced write capability.");
+        JsonNode explain = await client.ToolAsync("explain_query");
+        Check.That(explain["annotations"]!["readOnlyHint"].Flag() && !explain["annotations"]!["destructiveHint"].Flag(),
+            "A read-only tool advertised writes in unrestricted mode.");
+        Check.That(client.Initialization["instructions"].Text().Contains("Access mode: unrestricted", StringComparison.Ordinal),
+            "Server instructions did not describe unrestricted access.");
+        JsonNode readOnlyWrite = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')" }, "postgresql_error", "25006");
+        Check.That(readOnlyWrite["error"]!["message"].Text().Contains("read_only=false", StringComparison.Ordinal),
+            "Unrestricted read-only rejection did not name the write opt-in.");
         JsonNode mutation = await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')", read_only = false });
         Check.That(mutation["rows_affected"].Int() == 1, "Write opt-in did not report affected rows.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker ORDER BY value" }))["rows"], new[] { new[] { "A_ONLY" }, new[] { "WRITE_OK" } }, "Write transaction did not commit.");
@@ -522,6 +551,7 @@ internal static class Integration
         };
         ProcessResult preflight = await Processes.RunAsync(command.With("--validate"), validationEnvironment);
         Check.That(preflight.Output.Length == 0, "Validation contaminated protocol stdout.");
+        Check.That(!preflight.Error.Contains("[warning]", StringComparison.Ordinal), "An unprivileged login over loopback produced a security warning.");
         JsonNode[] reports = preflight.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
         Check.That(reports.Select(report => report["database"].Text()).ToHashSet().SetEquals(new[] { "a", "b" })
             && reports.Select(report => report["rows"]![0]![0].Text()).ToHashSet().SetEquals(new[] { "tenant_a", "tenant_b" }), "Preflight did not validate both configured targets.");
@@ -568,5 +598,53 @@ internal static class Integration
             Check.Confidential(bad.Error, "reader-disposable");
         }
         Console.WriteLine("PASS preflight, unreadable targets, unknown options and invalid configuration");
+    }
+
+    // Warnings name configurations whose real exposure exceeds what tools advertise; they never block startup.
+    private static async Task VerifySecurityWarningsAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture)
+    {
+        // Reuses the fixture's synthetic reader password, which the secret-scanner configuration already allows here.
+        await fixture.SqlAsync("postgres", "CREATE ROLE mcp_signal LOGIN PASSWORD 'reader-disposable' IN ROLE pg_signal_backend; GRANT CONNECT ON DATABASE tenant_a TO mcp_signal;");
+        try
+        {
+            var privileged = new Dictionary<string, string>(environment)
+            {
+                ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { a = $"Host=127.0.0.1;Port={fixture.Port};Username=mcp_signal;Password=reader-disposable;Database=tenant_a" })
+            };
+            ProcessResult result = await Processes.RunAsync(command.With("--validate"), privileged);
+            Check.That(result.Output.Length == 0, "Privilege warning contaminated protocol stdout.");
+            Check.That(result.Error.Contains("[warning] target a: login is a member of pg_signal_backend.", StringComparison.Ordinal),
+                "--validate did not warn about a login whose privileges exceed READ ONLY transactions.");
+            Check.Confidential(result.Error, "reader-disposable");
+        }
+        finally { await fixture.SqlAsync("postgres", "DROP OWNED BY mcp_signal; DROP ROLE mcp_signal;"); }
+        // Name resolution of .invalid fails without network traffic; the warning comes from configuration alone.
+        // The login name is the marker: no part of the connection string may appear in a warning.
+        const string remote = "Host=tls-warning.invalid;Username=sensitive-tls-marker;Database=d;Timeout=2";
+        foreach (var (mode, warns) in new[] { ("", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
+        {
+            var tls = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { remote = remote + mode }) };
+            ProcessResult result = await Processes.RunAsync(command.With("--validate"), tls, expected: 1);
+            Check.That(result.Error.Contains("[warning] profile remote: SSL Mode=", StringComparison.Ordinal) == warns,
+                $"Unverified-TLS warning was {(warns ? "missing" : "emitted")} for '{mode}'.");
+            Check.Confidential(result.Error, "sensitive-tls-marker");
+        }
+        // Profiles on the same host but different ports are different servers: both are named. A connection-string lock's
+        // aliases share one connection, so they share one line instead of repeating it per locked name.
+        var ports = new Dictionary<string, string>(environment)
+        {
+            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { one = remote, two = remote + ";Port=6543" })
+        };
+        ProcessResult grouped = await Processes.RunAsync(command.With("--validate"), ports, expected: 1);
+        Check.That(grouped.Error.Contains("[warning] profile one: SSL Mode=", StringComparison.Ordinal)
+            && grouped.Error.Contains("[warning] profile two: SSL Mode=", StringComparison.Ordinal),
+            "A remote profile on another port was not named in an unverified-TLS warning.");
+        var locked = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = remote, ["POSTGRES_DATABASES"] = "[\"d1\",\"d2\"]" };
+        locked.Remove("POSTGRES_TARGETS");
+        ProcessResult shared = await Processes.RunAsync(command.With("--validate"), locked, expected: 1);
+        Check.That(shared.Error.Contains("[warning] profiles d1, d2: SSL Mode=", StringComparison.Ordinal),
+            "Lock aliases of one connection string did not share one unverified-TLS warning.");
+        Check.Confidential(grouped.Error + shared.Error, "sensitive-tls-marker");
+        Console.WriteLine("PASS privileged-login and unverified-TLS warnings, non-blocking and credential-free");
     }
 }

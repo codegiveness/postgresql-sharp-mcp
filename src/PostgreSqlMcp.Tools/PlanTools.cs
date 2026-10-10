@@ -16,8 +16,13 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
 {
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
-    public Task<CallToolResult> ExplainQuery(CancellationToken ct, string database, string sql,
-        string format = "summary", bool analyze = false, string[]? indexes = null, string? target = null) =>
+    public Task<CallToolResult> ExplainQuery(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description(ParameterText.Sql)] string sql,
+        [Description("summary (default): ranked major plan nodes. json: the complete planner JSON within the byte limit.")] string format = "summary",
+        [Description("true executes the statement with EXPLAIN ANALYZE, BUFFERS inside a READ ONLY transaction; not combinable with indexes.")] bool analyze = false,
+        [Description("Up to 16 hypothetical CREATE INDEX statements compared together through the installed hypopg extension.")] string[]? indexes = null,
+        [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string statement = SqlGuard.Validate(sql);

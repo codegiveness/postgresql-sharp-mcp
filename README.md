@@ -228,7 +228,7 @@ At the hidden prompt, quoting has **one layer: Npgsql**, not JSON or shell synta
 
 If your provider supplies only a PostgreSQL URL, map its host, port, database, username and password to the example's fields, decode URL-escaped values, and preserve required TLS/authentication options. The URL itself cannot be entered unchanged.
 
-For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`. Follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html); do not disable TLS to work around a remote certificate error. For PostgreSQL on **this same computer** without TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`.
+For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`. Follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html); do not disable TLS to work around a remote certificate error. A remote profile without `VerifyCA`/`VerifyFull` (including the Npgsql default, `Prefer`) still works but prints a `[warning]` at startup and in `--validate`; `--validate` also warns when the login is a superuser or holds server-file, signal or checkpoint roles ([details](SECURITY.md#credentials-and-diagnostics)). For PostgreSQL on **this same computer** without TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`.
 
 ### Upgrading an existing installation
 
@@ -340,7 +340,7 @@ Except `list_databases`, every tool **requires `database`**. Every tool accepts 
 
 | Tool | Capability | Options |
 |---|---|---|
-| `list_databases` | Live accessible physical databases, selected profile, access mode and limits | `target`, `limit`, `offset` |
+| `list_databases` | Live accessible physical databases, selected profile, access mode, whether a database lock applies, and limits | `target`, `limit`, `offset` |
 | `list_schemas` | Schemas with USAGE privilege | literal `prefix`, `include_system`, page |
 | `list_objects` | Tables, views, materialized views, sequences, functions, procedures and extensions | `schema`, `type`, literal `search`, `include_system`, page |
 | `get_object_details` | One object's metadata section | `schema`, `name`, `section`: columns/constraints/indexes/triggers/definition/parameters; `type`, `identity_arguments`, page |
@@ -351,6 +351,8 @@ Except `list_databases`, every tool **requires `database`**. Every tool accepts 
 | `analyze_db_health` | Summary or focused PostgreSQL health evidence | `section`: summary/vacuum/index/constraints/sequences/replication/blocking; `schema` where applicable, page |
 
 Routine overloads require the exact `identity_arguments` from `list_objects`, including parameter names; an empty string selects zero arguments. Use `type` to disambiguate relation/routine name collisions. Discovery filters by role privileges; missing or hidden objects return an error. Table definitions are structural fragments, not a round-trip DDL export.
+
+What clients and agents are told follows the enforced configuration. In unrestricted mode `execute_sql` is annotated `readOnlyHint: false`, `destructiveHint: true` and its description explains the `read_only=false` write opt-in; in restricted mode it is annotated read-only and its description says writes are refused. All other tools are annotated read-only in both modes. The MCP `initialize` result carries server instructions naming the access mode, whether a database lock applies, and the result/time limits; under a lock, `list_databases` and `execute_sql` descriptions say only listed databases can be selected. Annotations are hints about this server's own enforcement, not a guarantee about side effects of privileged PostgreSQL functions; see [access boundaries](#access-and-resource-boundaries).
 
 Each call independently resolves its physical database and leases a connection with that database in its connection string. Concurrent calls do not share a current database or issue `USE`; a failed selection never falls back to another database.
 
@@ -385,11 +387,11 @@ For example, discover and select databases on the `primary` profile:
 
 `list_databases` queries live `pg_catalog.pg_database` on the selected profile's bootstrap database (under a database lock, the first locked database when the bootstrap database is not locked). It excludes templates, databases with connections disabled and databases for which the current role lacks CONNECT; a database lock further filters the page. Names are ordered with PostgreSQL `COLLATE "C"`, and `is_current` marks the database used for that listing. New databases and grant/revoke changes appear on subsequent calls without restarting; listing does not guarantee network/authentication or object access for a later connection.
 
-The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", "limits": { ... } }`. `databases` is the same bounded query-page shape described below, with `columns` named `name` and `is_current`, positional `rows` such as `[["postgres",true],["tenant_b",false]]`, and `offset`, `next_offset`, `truncated`, `truncation_reason` and `clipped_cells`. Follow `databases.next_offset` using the same `target` and `limit`; pages are live queries, not a shared snapshot. The obsolete `targets` alias-list payload is no longer returned. Catalog failures are reported rather than silently replaced with configured aliases.
+The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", "database_lock": true|false, "limits": { ... } }`. `databases` is the same bounded query-page shape described below, with `columns` named `name` and `is_current`, positional `rows` such as `[["postgres",true],["tenant_b",false]]`, and `offset`, `next_offset`, `truncated`, `truncation_reason` and `clipped_cells`. Follow `databases.next_offset` using the same `target` and `limit`; pages are live queries, not a shared snapshot. The obsolete `targets` alias-list payload is no longer returned. Catalog failures are reported rather than silently replaced with configured aliases.
 
 ### Database lock
 
-To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
+To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles or explicit `EXECUTE` on server-file functions such as `pg_read_binary_file`, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
 
 ### Plans and optional extensions
 
@@ -453,7 +455,7 @@ Metadata sections wrap the page in `page`; health/index/workload tools use `resu
 
 `POSTGRES_MAX_RESULT_BYTES` bounds each payload representation, not the complete JSON-RPC envelope. Structured JSON plus compatibility text increases wire size. Actual context/token usage depends on the client and model; no cross-server efficiency claim is made.
 
-A local 0.2.0 restricted-mode `tools/list` smoke run returned nine tools: **6,133 UTF-8 bytes** for the compact tool array and **6,178 bytes** for the newline-terminated JSON-RPC response. These are discovery bytes, not model-token counts, query timings or a comparison with an “average MCP.” Client/model tokenization and result selection determine context cost.
+A local restricted-mode `tools/list` run of this version returned nine tools in **10,516 UTF-8 bytes** for the compact tool array (0.4.0: 6,780 bytes); every parameter now carries a short description with its allowed values or default. The `initialize` instructions add about 500 bytes once per session. These are discovery bytes, not model-token counts, query timings or a comparison with an “average MCP.” Client/model tokenization and result selection determine context cost.
 
 Operation errors set MCP `isError=true` and include target, error code and PostgreSQL SQLSTATE when available, with a fixed SQLSTATE-specific summary. For SQL submitted to `execute_sql` or `explain_query`, `position` gives PostgreSQL's 1-based character position within that statement. Syntax and access-rule errors that PostgreSQL positions inside the submitted statement (SQLSTATE class `42`, plus `42501` privilege errors; not raised inside a routine or internal query) add PostgreSQL's `server_message` and `server_hint`, for example `syntax error at or near "WHERE"` or `column "x" does not exist`; integrity errors (class `23`) add the violated `constraint` name. Other PostgreSQL messages, hints and details are withheld because they may contain data values ([details](SECURITY.md#credentials-and-diagnostics)). Protocol/SDK argument-validation errors use the SDK envelope.
 
@@ -506,14 +508,14 @@ For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `prim
 | `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object |
 | `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported |
 | `POSTGRES_CONNECTION_STRING` | Base Npgsql string; bootstrap `Database` defaults to `postgres` if omitted; `--connection-string` supported |
-| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names, with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
+| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (no 32-name limit; with a connection string the names are `target` aliases of one login profile and do not count toward the profile limit), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
 | `POSTGRES_REQUIRE_DATABASE_LOCK` | `false`; `true` makes a missing `POSTGRES_DATABASES` a startup error; `--require-database-lock` supported |
 | `POSTGRES_ACCESS_MODE` | unrestricted when omitted; opt into restricted to refuse writes; `--access-mode` supported |
 | `POSTGRES_QUERY_TIMEOUT` | 30 seconds; 1–600; `--query-timeout` supported |
 | `POSTGRES_MAX_ROWS` | 1000; 1–5000 |
 | `POSTGRES_MAX_RESULT_BYTES` | 65536; 4096–1048576 |
 | `POSTGRES_MAX_CELL_CHARS` | 4096; 1–16384 |
-| `POSTGRES_POOL_SIZE` | 8; 1–32; profiles × size ≤256; runtime database-pool cache ≤`floor(256 / size)` |
+| `POSTGRES_POOL_SIZE` | 8; 1–32; connection profiles × size ≤256 (a connection string is one profile, whatever the lock size); runtime database-pool cache ≤`floor(256 / size)` |
 | `POSTGRES_MAX_CONCURRENT_CALLS` | 16; 1–64 |
 | `POSTGRES_LOG_LEVEL` | warning; trace/debug/information/warning/error/critical/none; `--log-level` supported |
 
