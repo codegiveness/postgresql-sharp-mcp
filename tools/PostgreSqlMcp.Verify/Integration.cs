@@ -50,6 +50,7 @@ internal static class Integration
         Console.WriteLine("PASS PostgreSQL error and trace-level request/result confidentiality");
         await VerifyWritesAsync(command, environment, fixture.Port);
         await VerifyConfigurationAsync(command, environment, targets, connection);
+        await VerifySecurityWarningsAsync(command, environment, fixture);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
         // Last: hardening revokes PUBLIC CONNECT on every fixture database.
@@ -521,6 +522,7 @@ internal static class Integration
         };
         ProcessResult preflight = await Processes.RunAsync(command.With("--validate"), validationEnvironment);
         Check.That(preflight.Output.Length == 0, "Validation contaminated protocol stdout.");
+        Check.That(!preflight.Error.Contains("[warning]", StringComparison.Ordinal), "An unprivileged login over loopback produced a security warning.");
         JsonNode[] reports = preflight.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
         Check.That(reports.Select(report => report["database"].Text()).ToHashSet().SetEquals(new[] { "a", "b" })
             && reports.Select(report => report["rows"]![0]![0].Text()).ToHashSet().SetEquals(new[] { "tenant_a", "tenant_b" }), "Preflight did not validate both configured targets.");
@@ -567,5 +569,53 @@ internal static class Integration
             Check.Confidential(bad.Error, "reader-disposable");
         }
         Console.WriteLine("PASS preflight, unreadable targets, unknown options and invalid configuration");
+    }
+
+    // Warnings name configurations whose real exposure exceeds what tools advertise; they never block startup.
+    private static async Task VerifySecurityWarningsAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture)
+    {
+        // Reuses the fixture's synthetic reader password, which the secret-scanner configuration already allows here.
+        await fixture.SqlAsync("postgres", "CREATE ROLE mcp_signal LOGIN PASSWORD 'reader-disposable' IN ROLE pg_signal_backend; GRANT CONNECT ON DATABASE tenant_a TO mcp_signal;");
+        try
+        {
+            var privileged = new Dictionary<string, string>(environment)
+            {
+                ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { a = $"Host=127.0.0.1;Port={fixture.Port};Username=mcp_signal;Password=reader-disposable;Database=tenant_a" })
+            };
+            ProcessResult result = await Processes.RunAsync(command.With("--validate"), privileged);
+            Check.That(result.Output.Length == 0, "Privilege warning contaminated protocol stdout.");
+            Check.That(result.Error.Contains("[warning] target a: login is a member of pg_signal_backend.", StringComparison.Ordinal),
+                "--validate did not warn about a login whose privileges exceed READ ONLY transactions.");
+            Check.Confidential(result.Error, "reader-disposable");
+        }
+        finally { await fixture.SqlAsync("postgres", "DROP OWNED BY mcp_signal; DROP ROLE mcp_signal;"); }
+        // Name resolution of .invalid fails without network traffic; the warning comes from configuration alone.
+        // The login name is the marker: no part of the connection string may appear in a warning.
+        const string remote = "Host=tls-warning.invalid;Username=sensitive-tls-marker;Database=d;Timeout=2";
+        foreach (var (mode, warns) in new[] { ("", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
+        {
+            var tls = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { remote = remote + mode }) };
+            ProcessResult result = await Processes.RunAsync(command.With("--validate"), tls, expected: 1);
+            Check.That(result.Error.Contains("[warning] profile remote: SSL Mode=", StringComparison.Ordinal) == warns,
+                $"Unverified-TLS warning was {(warns ? "missing" : "emitted")} for '{mode}'.");
+            Check.Confidential(result.Error, "sensitive-tls-marker");
+        }
+        // Profiles on the same host but different ports are different servers: both are named. A connection-string lock's
+        // aliases share one connection, so they share one line instead of repeating it per locked name.
+        var ports = new Dictionary<string, string>(environment)
+        {
+            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { one = remote, two = remote + ";Port=6543" })
+        };
+        ProcessResult grouped = await Processes.RunAsync(command.With("--validate"), ports, expected: 1);
+        Check.That(grouped.Error.Contains("[warning] profile one: SSL Mode=", StringComparison.Ordinal)
+            && grouped.Error.Contains("[warning] profile two: SSL Mode=", StringComparison.Ordinal),
+            "A remote profile on another port was not named in an unverified-TLS warning.");
+        var locked = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = remote, ["POSTGRES_DATABASES"] = "[\"d1\",\"d2\"]" };
+        locked.Remove("POSTGRES_TARGETS");
+        ProcessResult shared = await Processes.RunAsync(command.With("--validate"), locked, expected: 1);
+        Check.That(shared.Error.Contains("[warning] profiles d1, d2: SSL Mode=", StringComparison.Ordinal),
+            "Lock aliases of one connection string did not share one unverified-TLS warning.");
+        Check.Confidential(grouped.Error + shared.Error, "sensitive-tls-marker");
+        Console.WriteLine("PASS privileged-login and unverified-TLS warnings, non-blocking and credential-free");
     }
 }

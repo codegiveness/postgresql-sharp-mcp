@@ -12,6 +12,8 @@ Live `list_databases` uses the catalog of the profile's bootstrap database (or, 
 
 Use dedicated, least-privileged PostgreSQL roles, not superusers or database owners. Grant only the required database connection, schema usage, table access, and routine execution privileges. Configure row-level security and separate roles where required by the application's data model. Review role memberships, default privileges, `PUBLIC` grants, `SECURITY DEFINER` routines, extensions, foreign servers, and monitoring privileges.
 
+Read-only transactions and restricted mode stop SQL writes, not every side effect a privileged login can cause: a superuser or a member of `pg_execute_server_program`, `pg_write_server_files`, `pg_read_server_files`, `pg_signal_backend` or `pg_checkpoint` can read or write server files, run programs, terminate other sessions or force checkpoints from a `SELECT`, and roles with `REPLICATION` or `BYPASSRLS` widen what can be read. `--validate` prints a non-blocking `[warning]` line for each such capability of every configured login, so tool annotations that say read-only can be checked against what the role can actually do.
+
 **Unrestricted access is the default when access mode is omitted.** SQL requests still default to `read_only=true`; read-only operations use a server-owned read-only transaction and roll it back after reading the result. Writes require `read_only=false` on `execute_sql`, unrestricted mode and sufficient PostgreSQL privileges. Opt into `POSTGRES_ACCESS_MODE=restricted` or `--access-mode restricted` to refuse write requests; existing explicit restricted settings remain effective. Enabled writes use a transaction that commits after successful execution and result reading; failures dispose the transaction without committing. Other tools remain read-only. Connection loss or cancellation during commit can leave the caller uncertain whether a write committed; inspect database state before retrying. The server does not automatically replay writes.
 
 The SQL guard is a statement-boundary lexer, **not an authorization parser or SQL sandbox**. It accepts one statement, handles quoted SQL and comments, and rejects direct transaction/session control plus unsupported operations such as `COPY`, `DO`, `CALL`, and `VACUUM`. PostgreSQL transactions and role permissions enforce the actual access restrictions.
@@ -42,6 +44,7 @@ When a lock is configured, normal startup and `--validate` connect only through 
 | `CREATEROLE` on the login or a role it is a member of | It can create roles and grant memberships, so the verified grants need not hold one statement later. |
 | `CREATEDB` on the login or a role it is a member of | It can create databases outside the lock (and drop ones it then owns), changing the set of databases the check verified. |
 | The login (or a role it is a member of) owns a database outside the lock | Owners hold implicit CONNECT and can `ALTER`/`DROP DATABASE` from a connection to any other database, without connecting to it. |
+| `EXECUTE` on a server-file function (`pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, server-side `lo_import`/`lo_export`, adminpack `pg_file_write`/`pg_file_unlink`/`pg_file_rename`) held by the login or any role it can `SET ROLE` to, in a locked database the login can connect to | PostgreSQL revokes these from `PUBLIC`, but an explicit grant needs no predefined-role membership. `pg_read_binary_file` can then read any file in the data directory, including other databases' relation files, so the role reads protected data without connecting to it; the adminpack functions can delete or move them. A grant reachable only through `SET ROLE` (a `NOINHERIT` login or an `INHERIT FALSE` membership) counts too. Function grants are per database, so every reachable locked database is checked. |
 | `dblink` or `postgres_fdw` installed, or any foreign server defined, in a locked database the login can connect to | They open new connections from inside PostgreSQL, bypassing the server's connection-level lock. Installation is not checked as availability: both extensions are untrusted, so only a superuser can install them, which is already refused. |
 
 Deliberately not refused: `REPLICATION` (the server never opens replication-protocol connections and logical decoding SQL functions decode only the current database), `BYPASSRLS` (affects rows only inside locked databases), and monitoring roles such as `pg_read_all_stats` (they expose names and activity, see below, not data). Review them anyway.
@@ -66,6 +69,8 @@ GRANT CONNECT ON DATABASE <locked_db> TO <mcp_role>;
 
 ALTER ROLE <mcp_role> NOSUPERUSER NOCREATEDB NOCREATEROLE;
 -- Remove memberships in superuser roles and pg_*_server_files/pg_execute_server_program;
+-- In each locked database, revoke direct grants such as:
+-- REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) FROM <mcp_role>;
 -- transfer ownership of out-of-lock databases away from the MCP role.
 ```
 
@@ -131,7 +136,7 @@ These protections are not content redaction for successful results. Queries, pla
 
 ## Connection and resource settings
 
-TLS and certificate trust are operator-controlled Npgsql connection-string settings. The server does not force TLS or verify certificates on the operator's behalf. For remote production connections, configure certificate validation appropriate to the deployment, such as `SSL Mode=VerifyFull`, and provision the necessary trust material. Use network controls to restrict database reachability.
+TLS and certificate trust are operator-controlled Npgsql connection-string settings. The server does not force TLS or verify certificates on the operator's behalf. For remote production connections, configure certificate validation appropriate to the deployment, such as `SSL Mode=VerifyFull`, and provision the necessary trust material. Npgsql's default `SSL Mode=Prefer`, like `Require`, encrypts without verifying the server, so an on-path attacker can impersonate it and capture the login; startup and `--validate` print a non-blocking `[warning]` for each profile that reaches a non-loopback host without `VerifyCA` or `VerifyFull` (Unix sockets and loopback addresses are exempt). Use network controls to restrict database reachability.
 
 The server owns pool bounds, reset-on-close, transaction enlistment, multiplexing, application name, command timeouts, and logging safety settings. Configuration with `No Reset On Close=true` or multiplexing is rejected. Operation deadlines include queue and connection-pool wait; transactions also set statement and lock timeouts. Result row, byte, cell, and column limits bound responses. These are resource controls, not a guarantee against expensive queries, external side effects, or denial of service. Apply PostgreSQL and operating-system resource controls where needed.
 
