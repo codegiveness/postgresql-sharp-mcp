@@ -248,11 +248,13 @@ For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFu
 
 ### Upgrading an existing installation
 
-Automatic discovery and the unrestricted default require **0.3.0 or newer**; npm runtime bundling requires **0.3.3 or newer**. This guide targets **0.4.0**, which adds the [database lock](#database-lock): an existing `POSTGRES_DATABASES` configuration now refuses to start unless PostgreSQL grants match the list (see the [hardening guide](SECURITY.md#database-lock-hardening)). Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
+Automatic discovery and the unrestricted default require **0.3.1 or newer**: the contract was developed under source version 0.3.0, which was never tagged or released, so 0.3.1 is the first release that contains it. npm runtime bundling requires **0.3.3 or newer**. This guide targets **0.4.0**, which adds the [database lock](#database-lock): an existing `POSTGRES_DATABASES` configuration now refuses to start unless PostgreSQL grants match the list (see the [hardening guide](SECURITY.md#database-lock-hardening)). Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
 
 After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.4.0`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.4.0`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
+
+**Rolling back the 0.4.0 lock startup refusal:** if an existing `POSTGRES_DATABASES`/`--databases` configuration is refused after upgrading, you do not have to give up the upgrade permanently. Read the refusal findings on stderr, then either (a) pin the previous release (**0.3.3**: `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.3.3`, or `@0.3.3` in the npx `args`), which enforces the list inside the server without the PostgreSQL grant check, and **remove `--require-database-lock` from `args`** because 0.3.3 does not recognize it and exits with "Unknown option" (a `POSTGRES_REQUIRE_DATABASE_LOCK` environment variable is ignored by 0.3.3, so it is harmless there but no longer enforces anything), or (b) temporarily remove `POSTGRES_DATABASES`/`--databases` and any `POSTGRES_REQUIRE_DATABASE_LOCK`/`--require-database-lock` setting so the server starts on 0.4.0. Both are stopgaps: 0.3.3 accepts a lock only with a connection string (not with targets JSON/file), and removing the lock leaves the login's full PostgreSQL privileges reachable, so keep that login least-privileged and restore the lock soon. Fix the findings with the [hardening guide](SECURITY.md#database-lock-hardening), restore the lock, and re-run `--validate` before reconnecting the client.
 
 To migrate an existing MCP entry to the environment workflow, remove `POSTGRES_TARGETS`, `POSTGRES_TARGETS_FILE` and literal `POSTGRES_CONNECTION_STRING` from its PostgreSQL `env`, plus `--targets-file`/`--connection-string` arguments. Preserve other nonsensitive settings, especially restricted access mode. Step 2 clears conflicting variables only in the current shell. Combining a connection string with targets JSON/file fails closed. Protected files can remain on disk; do not delete or rename them merely to switch workflows.
 
@@ -345,6 +347,46 @@ After publication, get a global npm command with `npm install --global --allow-s
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
+**Docker (build from source).** No container image is published to a registry, so build one from a clone of this repository (the [Dockerfile](Dockerfile) is at its root):
+
+```sh
+docker build -t postgresql-sharp-mcp .
+```
+
+MCP client entry. It carries no credential: `-e POSTGRES_CONNECTION_STRING` without a value makes Docker copy the variable from the environment of the process that starts `docker`, so launch the client from the shell prepared in [step 2](#2-prepare-the-connection-environment). `-i` keeps stdin open for MCP stdio; `--rm` removes the stopped container.
+
+**With `"command": "docker"`, the MCP entry's `env` block reaches only the `docker` CLI, not the server inside the container.** The container receives only what you pass explicitly: forward every setting (`POSTGRES_ACCESS_MODE`, `POSTGRES_DATABASES`, `POSTGRES_REQUIRE_DATABASE_LOCK`, `POSTGRES_QUERY_TIMEOUT`, ...) with its own `-e NAME` **before the image name**, or pass it as a CLI option **after the image name** (for example `--access-mode restricted`). The image sets no defaults, so a setting that is not forwarded is silently absent: the server runs `unrestricted` with no database lock and no error. The example keeps restricted mode and a required database lock:
+
+```json
+{
+  "mcpServers": {
+    "postgresql": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "POSTGRES_CONNECTION_STRING",
+        "-e", "POSTGRES_ACCESS_MODE",
+        "-e", "POSTGRES_DATABASES",
+        "-e", "POSTGRES_REQUIRE_DATABASE_LOCK",
+        "postgresql-sharp-mcp"
+      ],
+      "env": {
+        "POSTGRES_ACCESS_MODE": "restricted",
+        "POSTGRES_DATABASES": "[\"<app_db>\"]",
+        "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
+      }
+    }
+  }
+}
+```
+
+Omit the `POSTGRES_DATABASES`/`POSTGRES_REQUIRE_DATABASE_LOCK` lines (both `-e` pairs and `env` entries) if you do not use a [database lock](#database-lock); the lock needs the PostgreSQL grants described in the [hardening guide](SECURITY.md#database-lock-hardening).
+
+- **`Host=127.0.0.1` or `localhost` inside the container is the container itself,** not your computer. For PostgreSQL on the Docker host use a host name the container can resolve, such as `host.docker.internal` (Docker Desktop; on Linux Engine add `"--add-host=host.docker.internal:host-gateway"` to `args` before the image name), or `"--network", "host"` on Linux. For a remote server use its real host name and keep `SSL Mode=VerifyFull`.
+- The container environment is plaintext to Docker inspection and privileged operators; it is not a secret store. Restart the container after credential changes.
+- For a [protected targets file](#optional-protected-targets-file) instead, clear `POSTGRES_CONNECTION_STRING` and add a read-only bind mount plus `-e POSTGRES_TARGETS_FILE=/run/postgres.targets.json` (full command in [CONTRIBUTING](CONTRIBUTING.md#self-contained-executable-and-container)). The container runs as a **non-root user**, so a `chmod 600` file owned by your account is unreadable inside it and startup fails with the generic "Invalid targets configuration" error. Grant that user read access through a suitable group/UID or a secret mount; do not make the file world-readable.
+
 </details>
 
 <details>
@@ -411,11 +453,23 @@ The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", 
 
 To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles or explicit `EXECUTE` on server-file functions such as `pg_read_binary_file`, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
 
+### Supported PostgreSQL versions
+
+**PostgreSQL 13 or newer** is supported. The integration verifier runs the MCP scenarios against official Docker images of majors 13 through 18 in CI. PostgreSQL 13 reached community end of life in November 2025, so the minimum can rise in a later release. Older servers are untested and unsupported; some catalog queries need 13 (`regcollation`) and there is no compatibility layer below it.
+
+| Area | Requirement and behavior |
+|---|---|
+| All tools | PostgreSQL 13+ |
+| `get_top_queries` | `pg_stat_statements` extension 1.8+ (the PostgreSQL 13 layout). The `toplevel` column is filled with extension 1.9+ (PostgreSQL 14+ default); with 1.8 the column is still returned, always null, and the notes say so. A cluster upgraded with `pg_upgrade` keeps its old extension version until `ALTER EXTENSION pg_stat_statements UPDATE` runs in each database; below 1.8 the tool returns `extension_outdated` with that instruction instead of a generic column error. |
+| `get_object_details` | Column collations use `regcollation` (13+). PostgreSQL 18 virtual generated columns are shown as such. |
+| `analyze_indexes` | `NULLS NOT DISTINCT` (PostgreSQL 15+) is compared when the server has it. |
+| `explain_query` with `indexes` | HypoPG package for the server's major version (no preload needed). |
+
 ### Plans and optional extensions
 
 No extensions are installed automatically. An authorized administrator must configure extensions in the databases where they are needed:
 
-- **`pg_stat_statements`:** install the server extension package, add it to `shared_preload_libraries` without removing existing entries, restart PostgreSQL, and run `CREATE EXTENSION pg_stat_statements` in each selected database. It is needed only for workload statistics.
+- **`pg_stat_statements`:** install the server extension package, preload it at server start (`shared_preload_libraries` in the server configuration, or the equivalent parameter-group/console setting of a managed service, without removing existing entries), restart PostgreSQL as that setting requires, and run `CREATE EXTENSION pg_stat_statements` in each selected database. After a major-version upgrade, also run `ALTER EXTENSION pg_stat_statements UPDATE` there. It is needed only for workload statistics.
 - **HypoPG:** install the extension package matching the PostgreSQL server major version, then run `CREATE EXTENSION hypopg` in the selected database. HypoPG itself does not require preload or a restart. It is needed only for hypothetical `indexes` in `explain_query`.
 
 Extension schemas are discovered and quoted rather than assumed to be `public`. Missing or unready extensions produce explicit errors. Check availability and installation before changing a database:
@@ -525,10 +579,10 @@ For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `prim
 
 | Environment | Default / bounds |
 |---|---|
-| `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object |
-| `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported |
-| `POSTGRES_CONNECTION_STRING` | Base Npgsql string; bootstrap `Database` defaults to `postgres` if omitted; `--connection-string` supported |
-| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (no 32-name limit; with a connection string the names are `target` aliases of one login profile and do not count toward the profile limit), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
+| `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object; each string needs an explicit `Host` and `Database`; aliases are nonblank, ≤128 characters, without control characters; wins over `POSTGRES_TARGETS_FILE` |
+| `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported and overrides it |
+| `POSTGRES_CONNECTION_STRING` | Base Npgsql string; `Database` defaults to `postgres` if omitted **in this connection-string mode only** (targets profiles must include `Database`); wins over `--connection-string` |
+| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (each 1..63 UTF-8 bytes, no NUL; no 32-name limit; with a connection string the names are `target` aliases of one login profile and do not count toward the profile limit), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
 | `POSTGRES_REQUIRE_DATABASE_LOCK` | `false`; `true` makes a missing `POSTGRES_DATABASES` a startup error; `--require-database-lock` supported |
 | `POSTGRES_ACCESS_MODE` | unrestricted when omitted; opt into restricted to refuse writes; `--access-mode` supported |
 | `POSTGRES_QUERY_TIMEOUT` | 30 seconds; 1–600; `--query-timeout` supported |
@@ -562,7 +616,7 @@ The complete badge set, grouped by area. [Development and licensing](#developmen
 
 ## Development and licensing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture uses PostgreSQL 17; this is a verification target, not a guarantee for every PostgreSQL version, platform or MCP client.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture defaults to PostgreSQL 17 and CI also runs 13–16 and 18; this is a verification target, not a guarantee for every platform, hosting provider or MCP client.
 
 The server, npm installer, packaging, verification and release automation are C#/.NET. Workflow badges and [Scorecard](https://scorecard.dev/viewer/?uri=github.com/codegiveness/postgresql-sharp-mcp) report checks and practices, not certifications. Feature, platform and practice badges link to the documentation or configuration behind them; they describe implemented capabilities, not guarantees. [Best Practices](https://www.bestpractices.dev/en/projects/15155) is the saved owner self-assessment and may be in progress. See [Security posture](docs/security-posture.md) for [supply-chain evidence](docs/security-posture.md#supply-chain-evidence), SBOMs and limits, and [SECURITY.md](SECURITY.md) for reporting.
 

@@ -55,6 +55,8 @@ internal static class Integration
         await VerifySecurityWarningsAsync(command, environment, fixture);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
+        await VerifyCancellationAsync(command, environment, fixture);
+        await VerifyStatementsExtensionVersionsAsync(command, environment, fixture, connection);
         // Last: hardening revokes PUBLIC CONNECT on every fixture database.
         await DatabaseLockChecks.RunAsync(command, fixture);
         Console.WriteLine("ALL MCP INTEGRATION SCENARIOS PASSED");
@@ -332,6 +334,9 @@ internal static class Integration
         var workloadRows = Check.Rows(workload["result"]!).ToArray();
         Check.That(workloadRows.Any(row => (row["query_text"]?.Text() ?? "").Contains("a_timed_workload_marker", StringComparison.Ordinal)), "Timed local workload probe absent from ranking.");
         Check.That(workloadRows.All(row => !(row["query_text"]?.Text() ?? "").Contains("b_timed_workload_marker", StringComparison.Ordinal)), "Workload evidence crossed database boundaries.");
+        // The fixture installs the server's default extension version: toplevel exists from PostgreSQL 14 (1.9) and is null before.
+        Check.That(workloadRows.All(row => row.ContainsKey("toplevel") && (row["toplevel"] is null) == (PostgresFixture.Major < 14)),
+            "toplevel availability did not follow the installed pg_stat_statements version.");
         foreach (string order in new[] { "mean_time", "calls", "rows", "reads" })
         {
             JsonNode ordered = await client.OkAsync("get_top_queries", new { database = "a", order_by = order, limit = 2 });
@@ -538,6 +543,35 @@ internal static class Integration
         Check.That(Check.Rows(health["result"]!).Single()["database_name"].Text() == "tenant_b", "Explicit profile health evidence crossed databases.");
     }
 
+    // An upgraded cluster keeps its old extension version until ALTER EXTENSION UPDATE: the tool must adapt or say what to do.
+    private static async Task VerifyStatementsExtensionVersionsAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture, string connection)
+    {
+        var singleProfile = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a" };
+        singleProfile.Remove("POSTGRES_TARGETS");
+        foreach (string database in new[] { "stats_ext_v18", "stats_ext_v17" }) await fixture.CreateDatabaseAsync(database);
+        // 1.8 is the oldest supported layout (PostgreSQL 13) and has no toplevel; 1.7 predates total_exec_time. Both install on 13-18.
+        await fixture.SqlAsync("stats_ext_v18", "CREATE EXTENSION pg_stat_statements VERSION '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v18_marker;");
+        await fixture.SqlAsync("stats_ext_v17", "CREATE EXTENSION pg_stat_statements VERSION '1.7'; SELECT pg_sleep(0.02) AS stats_ext_v17_marker;");
+        await using var client = await McpClient.StartAsync(command, singleProfile);
+        foreach (string order in new[] { "total_time", "mean_time", "calls", "rows", "reads" })
+        {
+            JsonNode ranked = await client.OkAsync("get_top_queries", new { database = "stats_ext_v18", order_by = order, limit = 5 });
+            var rows = Check.Rows(ranked["result"]!).ToArray();
+            Check.That(rows.Length > 0 && rows.All(row => row.ContainsKey("toplevel") && row["toplevel"] is null),
+                "Extension 1.8 must return a consistently null toplevel column.");
+            Check.That(ranked["notes"].Text().Contains("toplevel is null", StringComparison.Ordinal), "Missing toplevel was not explained.");
+        }
+        Check.That(Check.Rows((await client.OkAsync("get_top_queries", new { database = "stats_ext_v18", limit = 5 }))["result"]!)
+            .Any(row => (row["query_text"]?.Text() ?? "").Contains("stats_ext_v18_marker", StringComparison.Ordinal)), "Extension 1.8 ranking lost the workload probe.");
+        JsonNode outdated = await client.FailsAsync("get_top_queries", new { database = "stats_ext_v17" }, "extension_outdated");
+        string message = outdated["error"]!["message"].Text();
+        Check.That(message.Contains("ALTER EXTENSION pg_stat_statements UPDATE", StringComparison.Ordinal) && message.Contains("1.7", StringComparison.Ordinal)
+            && outdated["error"]!["sql_state"] is null, "Outdated-extension error was not specific and actionable.");
+        await fixture.SqlAsync("stats_ext_v17", "ALTER EXTENSION pg_stat_statements UPDATE TO '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v17_updated_marker;");
+        await client.OkAsync("get_top_queries", new { database = "stats_ext_v17", limit = 5 });
+        Console.WriteLine("PASS pg_stat_statements 1.8 without toplevel, outdated 1.7 guidance and recovery after ALTER EXTENSION UPDATE");
+    }
+
     private static async Task VerifyPoolCapacityAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture, string connection)
     {
         string[] databases = Enumerable.Range(0, 10).Select(index => "pool_churn_" + index).ToArray();
@@ -579,6 +613,50 @@ internal static class Integration
         }
         Check.That(await fixture.RuntimeBackendCountAsync() == 0, "Runtime disposal retained physical-database backends.");
         Console.WriteLine("PASS environment-only bounded idle churn, failed-name recovery, busy-pool capacity, original-deadline cancellation and deterministic disposal");
+    }
+
+    private static async Task VerifyCancellationAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture)
+    {
+        // The query timeout and sleep far exceed every bound below, so only cancellation can stop the backend,
+        // and a timeout error cannot be mistaken for the (deliberately absent) response to the cancelled request.
+        var cancellationEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_QUERY_TIMEOUT"] = "60" };
+        await using var client = await McpClient.StartAsync(command, cancellationEnvironment);
+        try
+        {
+            Check.That(await fixture.RuntimeBackendCountAsync(activeOnly: true) == 0, "Cancellation scenario started with an active runtime backend.");
+            InFlightRequest request = await client.StartRequestAsync("tools/call", new { name = "execute_sql", arguments = new { database = "a", sql = "SELECT pg_sleep(50)::text" } });
+            async Task<bool> WaitForActiveBackendsAsync(int expected, TimeSpan limit)
+            {
+                var waited = System.Diagnostics.Stopwatch.StartNew();
+                while (waited.Elapsed < limit)
+                {
+                    if (await fixture.RuntimeBackendCountAsync(activeOnly: true) == expected) return true;
+                    await Task.Delay(100);
+                }
+                return false;
+            }
+            Check.That(await WaitForActiveBackendsAsync(1, TimeSpan.FromSeconds(10)), "The long-running query never became active.");
+            await client.CancelAsync(request, "verifier cancellation");
+            Check.That(await WaitForActiveBackendsAsync(0, TimeSpan.FromSeconds(10)), "A cancelled MCP request left its PostgreSQL backend running.");
+            // MCP: receivers should not answer a cancelled request. The server's observed behavior is silence, not an error envelope.
+            Check.That(await Task.WhenAny(request.Response, Task.Delay(TimeSpan.FromSeconds(2))) != request.Response, "The server answered a cancelled MCP request.");
+            // Hold every pooled connection (POSTGRES_POOL_SIZE=2) at once: a single leaked connection or lease from the cancelled call would leave
+            // one slot unavailable, so the second sleep could never become active alongside the first.
+            Task<JsonNode>[] saturating = Enumerable.Range(0, 2).Select(_ => client.OkAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(2)::text" })).ToArray();
+            Check.That(await WaitForActiveBackendsAsync(2, TimeSpan.FromSeconds(10)), "After MCP cancellation the pool could not run POSTGRES_POOL_SIZE queries concurrently; a pooled connection or lease leaked.");
+            await Task.WhenAll(saturating);
+            JsonNode followUp = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" });
+            Check.Equal(followUp["rows"], new[] { new[] { "A_ONLY" } }, "A call after MCP cancellation returned unexpected data.");
+            Check.That(!request.Response.IsCompleted, "The cancelled MCP request was answered after later calls completed.");
+            client.Abandon(request);
+        }
+        catch
+        {
+            // A server still running the uncancelled query would not exit on stdin close; stopping it keeps the original failure visible.
+            await client.StopAsync(terminate: true).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            throw;
+        }
+        Console.WriteLine("PASS MCP cancellation stops the PostgreSQL backend within 10 s of a 60 s timeout, sends no response and leaves every pooled connection available");
     }
 
     private static async Task VerifyConfigurationAsync(Command command, Dictionary<string, string> environment, Dictionary<string, string> targets, string connection)
@@ -634,6 +712,12 @@ internal static class Integration
             ProcessResult bad = await Processes.RunAsync(command.With("--validate"), invalidEnvironment, expected: 1);
             Check.That(bad.Output.Length == 0, "Invalid resource configuration contaminated stdout.");
             Check.Confidential(bad.Error, "reader-disposable");
+        }
+        foreach (var (cli, expected) in new[] { (true, "--query-timeout must be 1..600."), (false, "POSTGRES_QUERY_TIMEOUT must be 1..600.") })
+        {
+            var rangeEnvironment = cli ? validationEnvironment : new Dictionary<string, string>(validationEnvironment) { ["POSTGRES_QUERY_TIMEOUT"] = "0" };
+            ProcessResult bad = await Processes.RunAsync(cli ? command.With("--query-timeout", "0", "--validate") : command.With("--validate"), rangeEnvironment, expected: 1);
+            Check.That(bad.Error.Contains(expected, StringComparison.Ordinal), $"Range error did not name the setting that was used: {expected}");
         }
         Console.WriteLine("PASS preflight, unreadable targets, unknown options and invalid configuration");
     }

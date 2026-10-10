@@ -31,6 +31,10 @@ internal static class DatabaseLockChecks
             """);
         foreach (string database in new[] { "lock_a", "lock_b", "lock_protected" })
             await fixture.SqlAsync(database, $"CREATE TABLE marker(value text NOT NULL); INSERT INTO marker VALUES ('{database.ToUpperInvariant()}'); GRANT SELECT ON marker TO mcp_locked;");
+        // PostgreSQL 13 has no per-database session counter, and its transaction counters also count autovacuum
+        // workers, so stop autovacuum on this disposable fixture before taking the baseline.
+        if (PostgresFixture.Major < 14)
+            await fixture.SqlAsync("postgres", "ALTER SYSTEM SET autovacuum = off;\nSELECT pg_reload_conf();");
         // Let the seeding session's statistics flush before taking the baseline.
         long protectedSessions = await ProtectedSessionsAsync(fixture);
         for (long previous = -1; previous != protectedSessions; protectedSessions = await ProtectedSessionsAsync(fixture))
@@ -253,10 +257,13 @@ internal static class DatabaseLockChecks
 
     private static string[] ListedNames(JsonNode listed) => Check.Rows(listed["databases"]!).Select(row => row["name"].Text()).ToArray();
 
+    // pg_stat_database.sessions exists from PostgreSQL 14. PostgreSQL 13 has no session counter, so committed plus rolled-back
+    // transactions stand in: any session the server used to check or query the database would have run at least one.
     private static async Task<long> ProtectedSessionsAsync(PostgresFixture fixture)
     {
+        string counter = PostgresFixture.Major >= 14 ? "sessions" : "xact_commit + xact_rollback";
         ProcessResult result = await fixture.SqlAsync("postgres",
-            "SELECT 'sessions=' || sessions FROM pg_catalog.pg_stat_database WHERE datname = 'lock_protected';");
+            $"SELECT 'sessions=' || ({counter}) FROM pg_catalog.pg_stat_database WHERE datname = 'lock_protected';");
         return long.Parse(result.Output.Split("sessions=")[1].Split('\n')[0].Trim(), System.Globalization.CultureInfo.InvariantCulture);
     }
 }
