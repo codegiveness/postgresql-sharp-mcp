@@ -228,7 +228,7 @@ At the hidden prompt, quoting has **one layer: Npgsql**, not JSON or shell synta
 
 If your provider supplies only a PostgreSQL URL, map its host, port, database, username and password to the example's fields, decode URL-escaped values, and preserve required TLS/authentication options. The URL itself cannot be entered unchanged.
 
-For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`. Follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html); do not disable TLS to work around a remote certificate error. For PostgreSQL on **this same computer** without TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`.
+For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFull` and add `Root Certificate=<absolute-path-to-provider-CA-file>`. Follow your provider's [TLS requirements](https://www.npgsql.org/doc/security.html); do not disable TLS to work around a remote certificate error. A remote profile without `VerifyCA`/`VerifyFull` (including the Npgsql default, `Prefer`) still works but prints a `[warning]` at startup and in `--validate`; `--validate` also warns when the login is a superuser or holds server-file, signal or checkpoint roles ([details](SECURITY.md#credentials-and-diagnostics)). For PostgreSQL on **this same computer** without TLS, use `Host=127.0.0.1` and replace `SSL Mode=VerifyFull` with `SSL Mode=Disable`.
 
 ### Upgrading an existing installation
 
