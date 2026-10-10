@@ -44,7 +44,7 @@ public sealed class ServerOptions
             string? text = key is null ? Env(env) : Value(key, env);
             if (text is null) return fallback;
             if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int n) || n < min || n > max)
-                throw new ToolException("configuration", $"POSTGRES_{env} must be {min}..{max}.");
+                throw new ToolException("configuration", $"{(key is not null && cli.ContainsKey(key) ? key : "POSTGRES_" + env)} must be {min}..{max}.");
             return n;
         }
         string? requireText = Env("REQUIRE_DATABASE_LOCK");

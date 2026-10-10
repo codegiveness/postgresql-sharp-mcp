@@ -538,6 +538,12 @@ internal static class Integration
             Check.That(bad.Output.Length == 0, "Invalid resource configuration contaminated stdout.");
             Check.Confidential(bad.Error, "reader-disposable");
         }
+        foreach (var (cli, expected) in new[] { (true, "--query-timeout must be 1..600."), (false, "POSTGRES_QUERY_TIMEOUT must be 1..600.") })
+        {
+            var rangeEnvironment = cli ? validationEnvironment : new Dictionary<string, string>(validationEnvironment) { ["POSTGRES_QUERY_TIMEOUT"] = "0" };
+            ProcessResult bad = await Processes.RunAsync(cli ? command.With("--query-timeout", "0", "--validate") : command.With("--validate"), rangeEnvironment, expected: 1);
+            Check.That(bad.Error.Contains(expected, StringComparison.Ordinal), $"Range error did not name the setting that was used: {expected}");
+        }
         Console.WriteLine("PASS preflight, unreadable targets, unknown options and invalid configuration");
     }
 }
