@@ -9,28 +9,42 @@ using PostgreSqlMcp.Tools;
 if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", StringComparer.Ordinal))
 {
     Console.WriteLine("""
-        postgresql-sharp-mcp — database-agnostic PostgreSQL MCP over stdio
-        Recommended: inherit POSTGRES_CONNECTION_STRING from a prepared shell or secret manager.
-        No targets JSON file is required for a single PostgreSQL server.
-        --targets-file PATH      JSON object: connection profile -> Npgsql seed connection
-        --connection-string STR  Optional CLI value; prefer environment input to avoid exposed secret arguments
-        --databases JSON         Optional database lock (JSON string array); applies to connection-string and targets modes
-        --require-database-lock  Refuse to start unless a database lock is configured
-        --access-mode MODE       unrestricted (default) or restricted
-        --query-timeout SECONDS  1..600 (default 30)
-        --log-level LEVEL        trace|debug|information|warning|error|critical|none
-        --validate               Check each configured seed connection (and the database lock) and exit; diagnostics on stderr
-        --version                Print executable version
-        Environment: POSTGRES_CONNECTION_STRING, POSTGRES_TARGETS or POSTGRES_TARGETS_FILE.
-        POSTGRES_DATABASES locks every profile to the listed physical databases; startup then verifies
-          PostgreSQL grants enforce the same lock. POSTGRES_REQUIRE_DATABASE_LOCK=true requires a lock.
-        Targets JSON wins over file.
-        Connection-string environment and targets JSON/file are mutually exclusive; unset stale profile settings.
-        Discover accessible databases with list_databases; select a physical name per call.
-        Optional tool target selects a profile; default is primary or the first ordinal alias.
-        No USE statement, shared current database, or per-database file editing is required.
-        Limits: POSTGRES_MAX_ROWS, POSTGRES_MAX_RESULT_BYTES, POSTGRES_MAX_CELL_CHARS,
-          POSTGRES_POOL_SIZE, POSTGRES_MAX_CONCURRENT_CALLS.
+        postgresql-sharp-mcp — database-agnostic PostgreSQL MCP over stdio; the MCP client launches it.
+        Prefer environment variables to CLI values: arguments can expose secrets. A CLI value overrides its
+        environment variable except where noted.
+
+        Connection source (set exactly one; a connection string cannot be combined with targets JSON/file):
+          POSTGRES_CONNECTION_STRING   Npgsql key=value string. Without a database lock it creates profile "primary"
+                                       (Database defaults to postgres); with --databases it creates one profile per
+                                       locked name, and Database is set to that name.
+          --connection-string STR      Same, but POSTGRES_CONNECTION_STRING wins when both are set.
+          POSTGRES_TARGETS             JSON object: profile -> Npgsql string. Each needs Host and Database; names are
+                                       1..128 characters without control characters. Wins over a targets file.
+          POSTGRES_TARGETS_FILE        Path to a targets JSON file with the same format.
+          --targets-file PATH          Same; overrides POSTGRES_TARGETS_FILE.
+
+        Options:
+          --databases JSON             POSTGRES_DATABASES. Database lock: JSON array of 1+ unique physical names
+                                       (1..63 UTF-8 bytes, no NUL), with a connection string or targets. Startup then
+                                       verifies PostgreSQL grants enforce the lock.
+          --require-database-lock      POSTGRES_REQUIRE_DATABASE_LOCK=true (default false) also works. Refuse to
+                                       start unless a database lock is configured.
+          --access-mode MODE           POSTGRES_ACCESS_MODE: unrestricted (default) or restricted.
+          --query-timeout SECONDS      POSTGRES_QUERY_TIMEOUT: 1..600 (default 30).
+          --log-level LEVEL            POSTGRES_LOG_LEVEL: trace|debug|information|warning|error|critical|none
+                                       (default warning).
+          --validate                   Check each seed connection (and the database lock) and exit; diagnostics on stderr.
+          --version                    Print executable version.
+          -h, --help                   Print this help.
+
+        Environment only (default; bounds):
+          POSTGRES_MAX_ROWS 1000; 1..5000          POSTGRES_MAX_RESULT_BYTES 65536; 4096..1048576
+          POSTGRES_MAX_CELL_CHARS 4096; 1..16384   POSTGRES_MAX_CONCURRENT_CALLS 16; 1..64
+          POSTGRES_POOL_SIZE 8; 1..32 (profiles x pool size must not exceed 256)
+
+        Discover accessible databases with list_databases; select a physical name per call with the tool's
+        database argument. Optional tool target selects a profile; the default is the profile named primary if it
+        exists, otherwise the first profile name in ordinal order.
         """);
     return 0;
 }
