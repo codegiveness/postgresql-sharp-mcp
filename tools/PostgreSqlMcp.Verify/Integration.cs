@@ -40,6 +40,7 @@ internal static class Integration
             await VerifyBoundariesAsync(client);
             await VerifyPaginationAsync(client);
             await VerifySqlAsync(client);
+            await VerifyParametersAsync(client);
             await FuzzChecks.RunAsync(client);
             await VerifyCatalogAsync(client);
             await VerifyOperationsAsync(client, fixture);
@@ -200,6 +201,36 @@ internal static class Integration
         Console.WriteLine("PASS SQL guards, read-only DML/CTE protection, quoted literals, syntax errors and timeout");
     }
 
+    private static async Task VerifyParametersAsync(McpClient client)
+    {
+        // Values are bound, never interpolated: a statement-shaped string comes back verbatim.
+        const string hostile = "x'); DROP TABLE marker; -- \\ \"$1\"";
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $1 AS v, '@named' AS literal", parameters = new object[] { hostile } }))["rows"],
+            new[] { new[] { hostile, "@named" } }, "A bound string or literal @-text was altered.");
+        // Untyped values take their type from context, like quoted literals; null and booleans bind as SQL values.
+        Check.Equal((await client.OkAsync("execute_sql", new
+        {
+            database = "a", sql = "SELECT count(*)::int AS c, $3::int IS NULL AS n, $4::bool AS b FROM orders WHERE id > $1 AND id <= $2",
+            parameters = new object?[] { 1, "3", null, true }
+        }))["rows"], new[] { new object[] { 2, true, true } }, "Context-typed parameters returned the wrong rows.");
+        JsonNode paged = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT g FROM generate_series(1, $1::int) g ORDER BY g", parameters = new object[] { 5 }, limit = 2, offset = 2 });
+        Check.That(Check.Rows(paged).Select(row => row["g"]!.GetValue<int>()).SequenceEqual(new[] { 3, 4 }) && paged["next_offset"]!.GetValue<int>() == 4,
+            "Parameterized pagination did not re-bind values for the next page.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $1::jsonb->>'k' AS k", parameters = new object[] { "{\"k\":\"v\"}" } }))["rows"],
+            new[] { new[] { "v" } }, "A JSON document passed as a string did not cast to jsonb.");
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = new object[] { new { k = 1 } } }, "invalid_parameters");
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = Enumerable.Repeat<object>(1, 257).ToArray() }, "invalid_parameters");
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1, $2", parameters = new object[] { 1 } }, "postgresql_error", "08P01");
+        // Surplus values and skipped placeholders leave a parameter untypeable, so PostgreSQL answers 42P18, not 08P01.
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = new object[] { 1, 2 } }, "postgresql_error", "42P18");
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $2", parameters = new object[] { 1, 2 } }, "postgresql_error", "42P18");
+        // Parameters do not bypass the read-only transaction.
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ($1)", parameters = new object[] { "BAD" } }, "postgresql_error", "25006");
+        JsonNode plan = await client.OkAsync("explain_query", new { database = "a", sql = "SELECT * FROM orders WHERE id = $1", parameters = new object[] { 1 } });
+        Check.That(plan["plan"]?["node_count"]?.GetValue<int>() >= 1, "explain_query did not plan a parameterized statement.");
+        Console.WriteLine("PASS bound parameters: verbatim strings, context typing, NULL/boolean, re-bound pages, jsonb, limits, count mismatch, read-only and EXPLAIN");
+    }
+
     private static async Task VerifyCatalogAsync(McpClient client)
     {
         var schemas = Check.Rows(await client.OkAsync("list_schemas", new { database = "a", prefix = "app" })).Select(row => row["schema_name"].Text());
@@ -309,6 +340,12 @@ internal static class Integration
         await client.FailsAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker RETURNING *", offset = 1, read_only = false }, "invalid_offset");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT * FROM secret", read_only = false }, "postgresql_error", "42501");
         await client.OkAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker WHERE value='WRITE_OK'", read_only = false });
+        // A bound value is written verbatim and committed like a literal.
+        const string quoted = "O'Brien \\ $1";
+        Check.That((await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ($1)", parameters = new object[] { quoted }, read_only = false }))["rows_affected"].Int() == 1,
+            "Parameterized write did not report affected rows.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker WHERE value = $1 RETURNING value", parameters = new object[] { quoted }, read_only = false }))["rows"],
+            new[] { new[] { quoted } }, "Parameterized write did not store the value verbatim.");
         await client.OkAsync("execute_sql", new { database = "a", sql = "CREATE TABLE mcp_write_test(id integer)", read_only = false });
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT to_regclass('public.mcp_write_test')::text" }))["rows"], new[] { new[] { "mcp_write_test" } }, "Destructive DDL did not commit.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test SELECT 100/(g-2) FROM generate_series(1,3) g", read_only = false }, "postgresql_error", "22012");
