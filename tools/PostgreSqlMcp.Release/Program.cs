@@ -184,8 +184,10 @@ internal static class Release
     private static async Task PublishGitHubAsync(string root, string tag, (string Version, string NpmName) metadata)
     {
         string repo = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? throw new InvalidOperationException("GITHUB_REPOSITORY is required.");
+        string[] files = [.. ArtifactFiles(root, metadata), Path.Combine(root, "artifacts/SHA256SUMS")];
+        string provenance = await ProvenanceBundleAsync(root, files);
         var local = new List<LocalAsset>();
-        foreach (string file in ArtifactFiles(root, metadata).Append(Path.Combine(root, "artifacts/SHA256SUMS")))
+        foreach (string file in files.Append(provenance))
             local.Add(new LocalAsset(Path.GetFileName(file), file, await Sha256Async(file)));
         var lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
         IReadOnlyList<RemoteAsset> existing = [];
@@ -239,6 +241,34 @@ internal static class Release
         }
         await RunAsync("dotnet", ["nuget", "push", package, "--source", "https://api.nuget.org/v3/index.json", "--api-key", apiKey], root);
         await SummaryAsync($"NuGet {version} pushed.\n");
+    }
+
+    // The attest job's Sigstore bundle is published so provenance can be verified from the release itself.
+    // It must be one SLSA provenance statement whose subjects are exactly the uploaded assets.
+    private static async Task<string> ProvenanceBundleAsync(string root, string[] files)
+    {
+        string directory = Path.Combine(root, "provenance");
+        string[] bundles = Directory.Exists(directory) ? Directory.GetFiles(directory) : [];
+        if (bundles.Length != 1) throw new InvalidOperationException("Expected exactly one attestation bundle in provenance/.");
+        using var bundle = JsonDocument.Parse(await File.ReadAllTextAsync(bundles[0]));
+        var envelope = bundle.RootElement.GetProperty("dsseEnvelope");
+        if (!(bundle.RootElement.GetProperty("mediaType").GetString() ?? "").StartsWith("application/vnd.dev.sigstore.bundle", StringComparison.Ordinal) ||
+            envelope.GetProperty("payloadType").GetString() != "application/vnd.in-toto+json")
+            throw new InvalidOperationException("Attestation bundle is not a Sigstore in-toto bundle.");
+        using var statement = JsonDocument.Parse(Convert.FromBase64String(envelope.GetProperty("payload").GetString() ?? ""));
+        if (statement.RootElement.GetProperty("predicateType").GetString() != "https://slsa.dev/provenance/v1")
+            throw new InvalidOperationException("Attestation bundle does not contain SLSA provenance.");
+        var attested = statement.RootElement.GetProperty("subject").EnumerateArray()
+            .Select(subject => subject.GetProperty("name").GetString() + "  " + subject.GetProperty("digest").GetProperty("sha256").GetString())
+            .Order(StringComparer.Ordinal);
+        var published = new List<string>(files.Length);
+        foreach (string file in files)
+            published.Add(Path.GetFileName(file) + "  " + await Sha256Async(file));
+        if (!attested.SequenceEqual(published.Order(StringComparer.Ordinal)))
+            throw new InvalidOperationException("Provenance subjects do not match the release assets.");
+        string asset = Path.Combine(root, "artifacts/provenance.sigstore.json");
+        File.Copy(bundles[0], asset, overwrite: true);
+        return asset;
     }
 
     private static async Task StageNpmAsync(string root, string name, string version, bool dryRun)

@@ -17,6 +17,7 @@ internal sealed class McpClient : IAsyncDisposable
     private int nextId;
     private bool stopped;
     public string StandardError { get; private set; } = "";
+    public JsonNode Initialization { get; private set; } = new JsonObject();
 
     private McpClient(Command command, IReadOnlyDictionary<string, string> environment)
     {
@@ -42,6 +43,7 @@ internal sealed class McpClient : IAsyncDisposable
                 clientInfo = new { name = "postgresql-sharp-mcp-verifier", version = "1" }
             }, command.InitializationTimeoutSeconds);
             Check.That(initialized["result"]?["serverInfo"] is not null, "MCP initialize did not return server information.");
+            client.Initialization = initialized["result"]!;
             await client.SendAsync(new { jsonrpc = "2.0", method = "notifications/initialized" });
             return client;
         }
@@ -136,6 +138,9 @@ internal sealed class McpClient : IAsyncDisposable
         if (target is not null) Check.That(JsonNode.DeepEquals(target, data["database"]), "Error response lost requested target identity.");
         return data;
     }
+
+    public async Task<JsonNode> ToolAsync(string name) =>
+        (await RequestAsync("tools/list", new { }))["result"]!["tools"].Array().Single(tool => tool!["name"].Text() == name)!;
 
     public async Task StopAsync(bool terminate = false)
     {

@@ -442,7 +442,7 @@ The settings below were applied on 2026-10-10 with the maintainer's approval. Th
 
 ### Branch protection on `main`
 
-Classic branch protection: pull request required (zero approvals, stale approvals dismissed), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, resolved conversations, rules enforced for administrators, no force pushes and no deletion. The `release` environment accepts deployments from `main` only.
+Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 
@@ -472,7 +472,7 @@ gh api -X POST repos/codegiveness/postgresql-sharp-mcp/rulesets --input - <<'EOF
 EOF
 ```
 
-This adds to the classic protection instead of replacing it. It blocks merge commits on `main`, enforcing the squash-only rule at the branch level.
+A separate ruleset keeps this rule independent of the pull-request ruleset. It blocks merge commits on `main`, enforcing the squash-only rule at the branch level.
 
 ### 3. Immutable release tags (ruleset)
 
@@ -490,6 +490,20 @@ EOF
 
 Creating a new `v*` tag stays allowed; moving or deleting an existing one is blocked, even for administrators. Release artifacts and attestations refer to the tagged commit, so a moved tag would make them misleading. In a genuine emergency the maintainer can disable the ruleset under **Settings → Rules → Rulesets**.
 
+### 4. Description, topics and Discussions
+
+```bash
+gh repo edit codegiveness/postgresql-sharp-mcp \
+  --description "PostgreSQL MCP server (C#/.NET) that lets AI assistants and coding agents discover databases, inspect schemas, run SQL (read-only by default), explain query plans and check index and database health. Install with npx, as a .NET tool or as a standalone binary." \
+  --enable-discussions \
+  --add-topic mcp,mcp-server,model-context-protocol,postgresql,postgres,csharp,dotnet,npgsql,dotnet-tool,llm,ai-tools,ai-agents,database,sql,database-tools,dba,query-optimization,hypopg,pg-stat-statements,postgresql-tool
+gh repo view codegiveness/postgresql-sharp-mcp --json description,homepageUrl,repositoryTopics,hasDiscussionsEnabled
+```
+
+- The description and topics are what GitHub search and topic pages match. Keep them true of the current release; GitHub allows at most 20 topics.
+- The homepage field stays empty: the README is the documentation, and the npm and NuGet pages are linked from its badges.
+- Discussions host questions (the issue chooser links to **Q&A**) and maintainer announcements. GitHub has no API for discussion categories or the social preview image; manage them under **Discussions → Categories** and **Settings → General → Social preview**. The uploaded social preview is [docs/assets/social-preview.png](assets/social-preview.png) (1280×640), which the README also shows as its banner; upload it again after changing it.
+
 ### Not recommended now
 
 - **Required approvals ≥ 1 or required code-owner review:** GitHub forbids approving your own pull request, so a solo maintainer could never merge. Revisit if a second maintainer joins. CODEOWNERS is in place for that day.
@@ -501,7 +515,7 @@ Creating a new `v*` tag stays allowed; moving or deleting an existing one is blo
 ```bash
 gh api repos/codegiveness/postgresql-sharp-mcp --jq '{allow_squash_merge, allow_merge_commit, allow_rebase_merge, delete_branch_on_merge, allow_update_branch, squash_merge_commit_title, squash_merge_commit_message}'
 gh api repos/codegiveness/postgresql-sharp-mcp/rulesets --jq '.[] | {id, name, target, enforcement}'
-gh api repos/codegiveness/postgresql-sharp-mcp/branches/main/protection --jq '{checks: [.required_status_checks.checks[].context], strict: .required_status_checks.strict, enforce_admins: .enforce_admins.enabled}'
+gh api repos/codegiveness/postgresql-sharp-mcp/rules/branches/main --jq '.[] | {type, ruleset_id}'
 ```
 
 To undo a ruleset: `gh api -X DELETE repos/codegiveness/postgresql-sharp-mcp/rulesets/<id>`.
