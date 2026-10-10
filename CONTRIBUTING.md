@@ -178,6 +178,8 @@ The database hostname must be reachable from the container; `localhost` refers t
 
 ## Issues, pull requests and reviews
 
+[Git and GitHub workflow](docs/git-workflow.md) explains step by step how a change moves through this repository: branch names, worktrees, commit messages, issue and pull-request lifecycle, squash merging, Dependabot, tags and releases, and branch cleanup. The issue forms and pull-request template ask for the information below.
+
 - **Bug reports:** search existing reports, then provide the package version, sanitized configuration, minimal reproduction, expected/actual behavior and redacted diagnostics. Use [SECURITY.md](SECURITY.md) for sensitive vulnerability reports instead of public issues.
 - **Design work:** explain the user need and trade-offs before a large or hard-to-reverse change. A concise issue or PR description is enough.
 - **Pull requests:** keep a coherent scope and link an existing issue when useful. Small corrections may go directly to a PR. Describe contract, compatibility and security impacts, commands/scenarios exercised, results and verification gaps. Do not approve your own PR or present a local run as proof of hosted automation or registry publication.

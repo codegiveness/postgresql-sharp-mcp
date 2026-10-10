@@ -67,11 +67,11 @@ regexes = ['''^Password=<password>$''']
 # These values must remain tied to these exact paths, not entire test files.
 [[allowlists]]
 targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
-description = "Disposable integration roles and invalid-configuration diagnostic marker"
+description = "Disposable integration roles, interpolated disposable role constant and diagnostic markers"
 condition = "AND"
 paths = ['''^tools/PostgreSqlMcp\.Verify/Integration\.cs$''']
 regexTarget = "match"
-regexes = ['''^Password=(?:reader-disposable|writer-disposable|sensitive-configuration-marker)$''']
+regexes = ['''^Password=(?:reader-disposable|writer-disposable|sensitive-configuration-marker|sensitive-tls-marker|\{password\})$''']
 
 [[allowlists]]
 targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
