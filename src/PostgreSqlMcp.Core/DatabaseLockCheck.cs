@@ -86,10 +86,11 @@ public static class DatabaseLockCheck
         IReadOnlyDictionary<string, object?>? parameters, CancellationToken ct) =>
         executor.WithSessionAsync(database, async (session, token) =>
         {
-            await using var command = new NpgsqlCommand(sql, session.Connection, session.Transaction);
+            var command = new NpgsqlBatchCommand(sql);
             if (parameters is not null)
                 foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            await using SessionReader result = await session.ExecuteReaderAsync([command], System.Data.CommandBehavior.Default, token).ConfigureAwait(false);
+            NpgsqlDataReader reader = result.Reader;
             var values = new List<string>();
             while (await reader.ReadAsync(token).ConfigureAwait(false)) values.Add(reader.GetString(0));
             return values;

@@ -490,6 +490,8 @@ An extended run added 3,200 successful queries, 50 errors, 50 JSON plans and one
 
 For one synthetic 32-row response over 2,000 warmed serialization calls, allocated bytes per response fell from 36,304 to 27,736 (23.6%) after replacing the temporary JSON document/clone round trip with `SerializeToElement`. This is an allocation measurement, not a throughput or model-token claim.
 
+Each tool call sends the transaction setup (`SET TRANSACTION READ ONLY`/`READ WRITE` and timeouts) in the same network batch as its first statement, so a single-statement call costs two round trips (setup + statement, then `ROLLBACK`/`COMMIT`) instead of three. Through a local proxy adding 25 ms to each server response, the median `execute_sql` latency fell from 106.8 ms to 80.8 ms (60 calls each); savings scale with the network round-trip time and are not a throughput claim.
+
 SDK/provider payload logging is disabled even at debug/trace levels; host diagnostics stay on stderr. Query results, metadata and workload text may still contain sensitive data readable by the role. This is not general-purpose data redaction. See [SECURITY.md](SECURITY.md).
 
 </details>
