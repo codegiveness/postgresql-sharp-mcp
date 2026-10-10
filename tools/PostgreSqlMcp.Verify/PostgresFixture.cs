@@ -95,6 +95,8 @@ internal sealed class PostgresFixture : IAsyncDisposable
                 GRANT SELECT ON scoped_rows TO mcp_reader,mcp_writer;
                 CREATE FUNCTION app.fail_with_sensitive_diagnostic() RETURNS integer LANGUAGE plpgsql AS $fn$
                 BEGIN RAISE EXCEPTION 'sensitive-error-marker' USING HINT='sensitive-hint-marker'; END$fn$;
+                CREATE FUNCTION app.fail_with_sensitive_access_error() RETURNS integer LANGUAGE plpgsql AS $fn$
+                BEGIN RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='sensitive-error-marker', HINT='sensitive-hint-marker'; END$fn$;
                 GRANT CREATE ON SCHEMA public TO mcp_writer;
                 """);
         await SqlAsync("tenant_a", """
