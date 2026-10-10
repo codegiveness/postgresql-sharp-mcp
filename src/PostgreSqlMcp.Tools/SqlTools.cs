@@ -18,5 +18,5 @@ public sealed class SqlTools(SqlExecutor executor)
         [Description(ParameterText.Offset + " Read-only statements only.")] int offset = 0,
         [Description("true (default): READ ONLY transaction, always rolled back. false: commit a write; refused in restricted access mode.")] bool read_only = true,
         [Description(ParameterText.Target)] string? target = null) =>
-        ToolReply.Run(database, async () => await executor.QueryAsync(database, sql, limit: limit, offset: offset, readOnly: read_only, ct: ct, target: target).ConfigureAwait(false));
+        ToolReply.Run(database, async () => await executor.QueryAsync(database, sql, limit: limit, offset: offset, readOnly: read_only, ct: ct, target: target, callerStatement: true).ConfigureAwait(false));
 }
