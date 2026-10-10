@@ -6,6 +6,7 @@
 - Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
 - Release npm job: accept npm 12's one-element JSON array from `npm view <name>@<version> version --json`. Previously an already-published version failed with "requires an element of type 'String'" instead of being reported as not republished.
 - CodeQL: new same-repository-only `pull-request-upload` job uploads the candidate SARIF so PR heads get a code-scanning check run, which Scorecard SAST counts. Scan jobs stay read-only and fork PRs get no upload. No PR code is built or executed with the write token.
+- Document the repository's git and GitHub workflow in [docs/git-workflow.md](docs/git-workflow.md), including tested worktree limits on the VMware shared folder and proposed (not applied) merge settings and rulesets. Add bug/feature issue forms with a private security route, a pull-request template, CODEOWNERS and label-based categories for generated GitHub Release notes. Dependabot now uses an explicit `build(deps)` commit prefix and groups GitHub Actions updates into one pull request.
 
 ## 0.4.0
 

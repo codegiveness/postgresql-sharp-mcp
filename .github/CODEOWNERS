@@ -1,0 +1,4 @@
+# The maintainer owns every path. Code-owner review is not required on main
+# because GitHub does not let an author approve their own pull request; see
+# docs/git-workflow.md#proposed-repository-settings.
+* @codegiveness
