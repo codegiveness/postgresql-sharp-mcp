@@ -10,14 +10,15 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     private readonly SemaphoreSlim _calls = new(options.MaxConcurrentCalls);
 
     public Task<QueryPage> QueryAsync(string database, string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null) =>
-        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token), readOnly, ct, target);
+        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null, bool callerStatement = false,
+        IReadOnlyList<string?>? positional = null) =>
+        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token, callerStatement, positional), readOnly, ct, target);
 
     public async Task<T> WithSessionAsync<T>(string database, Func<SqlSession, CancellationToken, Task<T>> action,
         bool readOnly = true, CancellationToken ct = default, string? target = null)
     {
         DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target);
-        if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "Writes require server access-mode unrestricted and read_only=false.");
+        if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "This server is in restricted access mode and refuses writes; use read_only=true.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.QueryTimeout));
         CancellationToken token = deadline.Token;
@@ -126,20 +127,38 @@ public sealed class SqlSession
     /// <summary>Marks this session's pooled connections for disposal instead of reuse.</summary>
     public void ClearPool() => NpgsqlConnection.ClearPool(connection);
 
+    /// <param name="callerStatement">The SQL came from the tool caller, so PostgreSQL error positions are reported relative to it.</param>
+    /// <param name="positional">Caller values for $1..$n (see <see cref="SqlParameters"/>); exclusive with named parameters.</param>
     public async Task<QueryPage> QueryAsync(string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, CancellationToken ct = default)
+        int? limit = null, int offset = 0, CancellationToken ct = default, bool callerStatement = false, IReadOnlyList<string?>? positional = null)
     {
         sql = SqlGuard.Validate(sql, out string kind);
+        string statement = sql;
+        int prefixLength = 0;
         int rowLimit = limit ?? Math.Min(100, options.MaxRows);
         if (rowLimit < 1 || rowLimit > options.MaxRows) throw new ToolException("invalid_limit", $"limit must be 1..{options.MaxRows}.");
         if (offset < 0 || offset > 1000000) throw new ToolException("invalid_offset", "offset must be 0..1000000. Prefer SQL keyset pagination for deep pages.");
         if (!readOnly && offset != 0) throw new ToolException("invalid_offset", "Write operations cannot be re-executed for pagination.");
         bool serverPage = readOnly && kind is "SELECT" or "WITH" or "VALUES" or "TABLE";
         if (serverPage)
-            sql = $"SELECT * FROM (\n{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
+        {
+            prefixLength = PagePrefix.Length;
+            sql = $"{PagePrefix}{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
+        }
+        try { return await ReadAsync(sql, parameters, positional, rowLimit, offset, serverPage, ct).ConfigureAwait(false); }
+        catch (PostgresException ex) when (callerStatement && ToolReply.MarkStatementPosition(ex, prefixLength, statement)) { throw; }
+    }
+
+    private const string PagePrefix = "SELECT * FROM (\n";
+
+    private async Task<QueryPage> ReadAsync(string sql, IReadOnlyDictionary<string, object?>? parameters, IReadOnlyList<string?>? positional,
+        int rowLimit, int offset, bool serverPage, CancellationToken ct)
+    {
         var command = new NpgsqlBatchCommand(sql);
         if (parameters is not null)
             foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        else if (positional is not null)
+            SqlParameters.Bind(command.Parameters, positional);
         await using SessionReader result = await ExecuteReaderAsync([command], CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
         NpgsqlDataReader reader = result.Reader;
         if (reader.FieldCount > 128) throw new ToolException("result_too_wide", "Select at most 128 columns.");

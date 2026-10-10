@@ -177,12 +177,14 @@ internal static class Release
         var files = ArtifactFiles(root, ReadMetadata(root)).Order(StringComparer.Ordinal).ToArray();
         var checksums = new List<string>(files.Length);
         foreach (string file in files)
-        {
-            await using var stream = File.OpenRead(file);
-            string hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
-            checksums.Add(hash + "  " + Path.GetFileName(file));
-        }
+            checksums.Add(await Sha256Async(file) + "  " + Path.GetFileName(file));
         await File.WriteAllLinesAsync(Path.Combine(root, "artifacts/SHA256SUMS"), checksums);
+    }
+
+    private static async Task<string> Sha256Async(string file)
+    {
+        await using var stream = File.OpenRead(file);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
     }
 
     private static string[] ArtifactFiles(string root, (string Version, string NpmName) metadata)
@@ -200,7 +202,8 @@ internal static class Release
     private static async Task PublishGitHubAsync(string root, string tag, (string Version, string NpmName) metadata)
     {
         string repo = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? throw new InvalidOperationException("GITHUB_REPOSITORY is required.");
-        string[] files = ArtifactFiles(root, metadata);
+        string[] files = [.. ArtifactFiles(root, metadata), Path.Combine(root, "artifacts/SHA256SUMS")];
+        string provenance = await ProvenanceBundleAsync(root, files);
         var lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
         if (lookup.ExitCode != 0)
         {
@@ -210,8 +213,36 @@ internal static class Release
             if (tag.Contains('-')) create.Add("--prerelease");
             await RunAsync("gh", create, root);
         }
-        await RunAsync("gh", ["release", "upload", tag, "--repo", repo, "--clobber", .. files, Path.Combine(root, "artifacts/SHA256SUMS")], root);
-        await SummaryAsync($"GitHub Release {tag}: archives, packages, checksums and application SBOM uploaded.\n");
+        await RunAsync("gh", ["release", "upload", tag, "--repo", repo, "--clobber", .. files, provenance], root);
+        await SummaryAsync($"GitHub Release {tag}: archives, packages, checksums, application SBOM and provenance bundle uploaded.\n");
+    }
+
+    // The attest job's Sigstore bundle is published so provenance can be verified from the release itself.
+    // It must be one SLSA provenance statement whose subjects are exactly the uploaded assets.
+    private static async Task<string> ProvenanceBundleAsync(string root, string[] files)
+    {
+        string directory = Path.Combine(root, "provenance");
+        string[] bundles = Directory.Exists(directory) ? Directory.GetFiles(directory) : [];
+        if (bundles.Length != 1) throw new InvalidOperationException("Expected exactly one attestation bundle in provenance/.");
+        using var bundle = JsonDocument.Parse(await File.ReadAllTextAsync(bundles[0]));
+        var envelope = bundle.RootElement.GetProperty("dsseEnvelope");
+        if (!(bundle.RootElement.GetProperty("mediaType").GetString() ?? "").StartsWith("application/vnd.dev.sigstore.bundle", StringComparison.Ordinal) ||
+            envelope.GetProperty("payloadType").GetString() != "application/vnd.in-toto+json")
+            throw new InvalidOperationException("Attestation bundle is not a Sigstore in-toto bundle.");
+        using var statement = JsonDocument.Parse(Convert.FromBase64String(envelope.GetProperty("payload").GetString() ?? ""));
+        if (statement.RootElement.GetProperty("predicateType").GetString() != "https://slsa.dev/provenance/v1")
+            throw new InvalidOperationException("Attestation bundle does not contain SLSA provenance.");
+        var attested = statement.RootElement.GetProperty("subject").EnumerateArray()
+            .Select(subject => subject.GetProperty("name").GetString() + "  " + subject.GetProperty("digest").GetProperty("sha256").GetString())
+            .Order(StringComparer.Ordinal);
+        var published = new List<string>(files.Length);
+        foreach (string file in files)
+            published.Add(Path.GetFileName(file) + "  " + await Sha256Async(file));
+        if (!attested.SequenceEqual(published.Order(StringComparer.Ordinal)))
+            throw new InvalidOperationException("Provenance subjects do not match the release assets.");
+        string asset = Path.Combine(root, "artifacts/provenance.sigstore.json");
+        File.Copy(bundles[0], asset, overwrite: true);
+        return asset;
     }
 
     private static async Task StageNpmAsync(string root, string name, string version, bool dryRun)

@@ -42,11 +42,31 @@ public static class DatabaseLockCheck
         """;
 
     // Untrusted extensions: a non-superuser cannot install them, so installed objects are what matters.
-    private const string ForeignSql = """
+    // Server-file functions: EXECUTE is revoked from PUBLIC, but an explicit grant lets a non-superuser read data-directory
+    // files (including other databases' relation files) or write server files without any pg_*_server_files membership.
+    // Function ACLs are per database, so this runs in every reachable locked database; absent signatures resolve to NULL.
+    // A grant counts when it is held by any role the login is a MEMBER of, including roles it can only SET ROLE to
+    // (NOINHERIT logins, PostgreSQL 16+ INHERIT FALSE memberships); the login is a member of itself.
+    private const string PerDatabaseSql = """
         SELECT 'extension ' || e.extname || ' is installed' FROM pg_catalog.pg_extension e
         WHERE e.extname IN ('dblink', 'postgres_fdw')
         UNION ALL
         SELECT 'foreign server ' || quote_ident(s.srvname) || ' exists' FROM pg_catalog.pg_foreign_server s
+        UNION ALL
+        SELECT 'login can execute server-file function ' || f.oid::pg_catalog.regprocedure::text
+        FROM (SELECT pg_catalog.to_regprocedure(signature) AS oid FROM pg_catalog.unnest(ARRAY[
+            'pg_catalog.pg_read_file(text)', 'pg_catalog.pg_read_file(text,boolean)',
+            'pg_catalog.pg_read_file(text,bigint,bigint)', 'pg_catalog.pg_read_file(text,bigint,bigint,boolean)',
+            'pg_catalog.pg_read_binary_file(text)', 'pg_catalog.pg_read_binary_file(text,boolean)',
+            'pg_catalog.pg_read_binary_file(text,bigint,bigint)', 'pg_catalog.pg_read_binary_file(text,bigint,bigint,boolean)',
+            'pg_catalog.pg_ls_dir(text)', 'pg_catalog.pg_ls_dir(text,boolean,boolean)',
+            'pg_catalog.lo_import(text)', 'pg_catalog.lo_import(text,oid)', 'pg_catalog.lo_export(oid,text)',
+            'pg_catalog.pg_file_write(text,text,boolean)', 'pg_catalog.pg_file_unlink(text)',
+            'pg_catalog.pg_file_rename(text,text,text)']) AS signature) f
+        WHERE f.oid IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles m
+            WHERE pg_catalog.pg_has_role(session_user, m.oid, 'MEMBER') AND pg_catalog.has_function_privilege(m.oid, f.oid, 'EXECUTE'))
+          -- Superusers execute everything and are already refused by the role check.
+          AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolsuper AND pg_catalog.pg_has_role(session_user, r.oid, 'MEMBER'))
         """;
 
     /// <summary>
@@ -70,7 +90,7 @@ public static class DatabaseLockCheck
                 foreach (string database in await ReadTextAsync(executor, discovery, target, ReachableSql, parameters, ct).ConfigureAwait(false))
                 {
                     if (!checkedDatabases.Add((login, database))) continue;
-                    foreach (string finding in await ReadTextAsync(executor, database, target, ForeignSql, null, ct).ConfigureAwait(false))
+                    foreach (string finding in await ReadTextAsync(executor, database, target, PerDatabaseSql, null, ct).ConfigureAwait(false))
                         findings.Add($"target {target}, database {database}: {finding}");
                 }
             }
