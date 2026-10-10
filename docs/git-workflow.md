@@ -41,6 +41,7 @@ Every other branch is short-lived and named `<type>/<short-description>`:
 | `ci/` | Workflows and automation | `ci/codeql-pr-check-run` |
 | `security/` | Hardening and security process | `security/solo-maintainer-hardening` |
 | `release/` | Version bumps, release notes and publication tooling | `release/0.3.2-installation` |
+| `perf/` | Performance work with no behavior change | — |
 | `build/` | Build, packaging or dependency changes that are not Dependabot's | — |
 
 Rules:
@@ -185,6 +186,7 @@ The format follows [Conventional Commits](https://www.conventionalcommits.org/):
 | `docs` | Documentation only |
 | `ci` | GitHub Actions and other automation |
 | `build` | Build, packaging, dependencies (`build(deps)` is Dependabot's) |
+| `perf` | Faster or leaner with no behavior change |
 | `refactor` | Code change with no behavior change |
 | `test` | Verifier or test-only change |
 | `chore` | Anything else that does not affect users, such as scanner configuration |
@@ -363,7 +365,7 @@ GitHub Release notes are generated from merged pull requests and grouped by labe
 | `agent-authored` | Written by an AI agent; review accordingly |
 | `good first issue`, `help wanted`, `question`, `duplicate`, `invalid`, `wontfix` | GitHub defaults, used as GitHub describes them |
 
-The labels `security`, `breaking-change`, `ci`, `release`, `needs-triage`, `blocked` and `agent-authored` do not exist until the maintainer creates them. Issue forms silently skip labels that do not exist. To create them:
+These labels were created on 2026-10-10. If one goes missing, recreate it; issue forms silently skip labels that do not exist:
 
 ```bash
 R=codegiveness/postgresql-sharp-mcp
@@ -434,13 +436,13 @@ Agents also:
 - Apply the `agent-authored` label (when it exists) and state in the pull request description that an agent wrote the change.
 - Report which commands ran and what they showed, separately from what was not verified. A local run is not evidence of hosted CI, and a merged pull request is not evidence of a release.
 
-## Proposed repository settings
+## Repository settings
 
-These are **proposals**. Nothing below has been applied; each change needs the maintainer's explicit approval. Commands use the [GitHub REST API](https://docs.github.com/en/rest) through `gh api` and need an account with admin rights on the repository.
+The settings below were applied on 2026-10-10 with the maintainer's approval. The commands are kept as an exact record and for re-applying them; any change to them needs the maintainer's explicit approval. They use the [GitHub REST API](https://docs.github.com/en/rest) through `gh api` and need an account with admin rights on the repository.
 
-### Already in place (2026-10-10)
+### Branch protection on `main`
 
-Classic branch protection on `main`: pull request required (zero approvals, stale approvals dismissed), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, resolved conversations, rules enforced for administrators, no force pushes and no deletion. The `release` environment accepts deployments from `main` only. Keep all of this.
+Classic branch protection: pull request required (zero approvals, stale approvals dismissed), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, resolved conversations, rules enforced for administrators, no force pushes and no deletion. The `release` environment accepts deployments from `main` only.
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 
@@ -494,13 +496,12 @@ Creating a new `v*` tag stays allowed; moving or deleting an existing one is blo
 - **Auto-merge:** conflicts with the rule that every merge, including Dependabot's, is a deliberate maintainer action.
 - **Immutable releases:** the release tool creates a published release and uploads its assets afterwards (and re-uploads on a re-run). With immutable releases on, uploads after publication are rejected. Enable it only after the tool creates a draft, uploads and then publishes.
 
-### Apply and check
-
-After approval, run the commands above, then confirm:
+### Check current settings
 
 ```bash
 gh api repos/codegiveness/postgresql-sharp-mcp --jq '{allow_squash_merge, allow_merge_commit, allow_rebase_merge, delete_branch_on_merge, allow_update_branch, squash_merge_commit_title, squash_merge_commit_message}'
 gh api repos/codegiveness/postgresql-sharp-mcp/rulesets --jq '.[] | {id, name, target, enforcement}'
+gh api repos/codegiveness/postgresql-sharp-mcp/branches/main/protection --jq '{checks: [.required_status_checks.checks[].context], strict: .required_status_checks.strict, enforce_admins: .enforce_admins.enabled}'
 ```
 
 To undo a ruleset: `gh api -X DELETE repos/codegiveness/postgresql-sharp-mcp/rulesets/<id>`.
