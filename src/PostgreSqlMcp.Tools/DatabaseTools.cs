@@ -22,7 +22,8 @@ public sealed class DatabaseTools
 
     [McpServerTool(Name = "list_databases", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Discover accessible databases from the live PostgreSQL catalog, with paging and is_current. Optional target selects a configured connection profile; newly accessible databases need no configuration edit.")]
-    public Task<CallToolResult> ListDatabases(CancellationToken ct, int? limit = null, int offset = 0, string? target = null) =>
+    public Task<CallToolResult> ListDatabases(CancellationToken ct, [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0, [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run("", async () =>
         {
             ct.ThrowIfCancellationRequested();
@@ -43,6 +44,7 @@ public sealed class DatabaseTools
             {
                 target = profile, databases,
                 access_mode = _options.Unrestricted ? "unrestricted" : "restricted",
+                database_lock = _registry.AllowedDatabaseNames is not null,
                 limits = new { max_rows = _options.MaxRows, max_result_bytes = _options.MaxResultBytes,
                     max_cell_chars = _options.MaxCellChars, query_timeout_seconds = _options.QueryTimeout }
             };
@@ -52,11 +54,12 @@ public sealed class DatabaseTools
     [Description("Page schemas with USAGE privilege on an explicit target; system schemas excluded by default.")]
     public Task<CallToolResult> ListSchemas(
         CancellationToken ct,
-        [Description("Physical database name, or a configured profile alias when target is omitted.")] string database,
+        [Description(ParameterText.Database)] string database,
         [Description("Optional literal, case-sensitive schema name prefix.")] string? prefix = null,
-        int? limit = null,
-        int offset = 0,
-        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
+        [Description(ParameterText.IncludeSystem)] bool include_system = false,
+        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             return await _executor.QueryAsync(database, SchemasSql, new Dictionary<string, object?>
@@ -70,13 +73,14 @@ public sealed class DatabaseTools
     [Description("Page visible objects by schema/type/literal name filter. System objects excluded by default; identity_arguments distinguish overloaded routines.")]
     public Task<CallToolResult> ListObjects(
         CancellationToken ct,
-        string database,
-        [Description("Exact schema name, or null for all visible schemas.")] string? schema = null,
-        [Description("table, view, materialized_view, sequence, function, procedure, or extension; null for all.")] string? type = null,
+        [Description(ParameterText.Database)] string database,
+        [Description(ParameterText.SchemaFilter)] string? schema = null,
+        [Description("table, view, materialized_view, sequence, function, procedure, or extension; omitted means all.")] string? type = null,
         [Description("Literal, case-sensitive substring of the object name; not a SQL LIKE pattern.")] string? search = null,
-        int? limit = null,
-        int offset = 0,
-        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
+        [Description(ParameterText.IncludeSystem)] bool include_system = false,
+        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             string? objectType = NormalizeType(type);
@@ -93,15 +97,16 @@ public sealed class DatabaseTools
     [Description("Inspect one object section: columns, constraints, indexes, triggers, definition, parameters. Resolve ambiguity with type/identity_arguments. Table definitions are structural fragments. Clipping is explicit.")]
     public Task<CallToolResult> GetObjectDetails(
         CancellationToken ct,
-        string database,
-        string schema,
-        string name,
-        string section = "columns",
-        int? limit = null,
-        int offset = 0,
+        [Description(ParameterText.Database)] string database,
+        [Description("Exact, case-sensitive schema name.")] string schema,
+        [Description("Exact, case-sensitive object name.")] string name,
+        [Description("columns (default), constraints, indexes, triggers (tables, views, materialized views); parameters (routines); definition (any type).")] string section = "columns",
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
         [Description("Exact pg_get_function_identity_arguments text from list_objects, including argument names. Empty string selects a zero-argument routine.")] string? identity_arguments = null,
-        [Description("Optional object type, useful when a relation and routine share a name.")] string? type = null,
-        bool include_system = false, string? target = null) => ToolReply.Run(database, async () =>
+        [Description("Optional object type (as in list_objects), useful when a relation and routine share a name.")] string? type = null,
+        [Description(ParameterText.IncludeSystem)] bool include_system = false,
+        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             if (string.IsNullOrEmpty(schema) || string.IsNullOrEmpty(name))

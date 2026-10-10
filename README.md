@@ -340,7 +340,7 @@ Except `list_databases`, every tool **requires `database`**. Every tool accepts 
 
 | Tool | Capability | Options |
 |---|---|---|
-| `list_databases` | Live accessible physical databases, selected profile, access mode and limits | `target`, `limit`, `offset` |
+| `list_databases` | Live accessible physical databases, selected profile, access mode, whether a database lock applies, and limits | `target`, `limit`, `offset` |
 | `list_schemas` | Schemas with USAGE privilege | literal `prefix`, `include_system`, page |
 | `list_objects` | Tables, views, materialized views, sequences, functions, procedures and extensions | `schema`, `type`, literal `search`, `include_system`, page |
 | `get_object_details` | One object's metadata section | `schema`, `name`, `section`: columns/constraints/indexes/triggers/definition/parameters; `type`, `identity_arguments`, page |
@@ -351,6 +351,8 @@ Except `list_databases`, every tool **requires `database`**. Every tool accepts 
 | `analyze_db_health` | Summary or focused PostgreSQL health evidence | `section`: summary/vacuum/index/constraints/sequences/replication/blocking; `schema` where applicable, page |
 
 Routine overloads require the exact `identity_arguments` from `list_objects`, including parameter names; an empty string selects zero arguments. Use `type` to disambiguate relation/routine name collisions. Discovery filters by role privileges; missing or hidden objects return an error. Table definitions are structural fragments, not a round-trip DDL export.
+
+What clients and agents are told follows the enforced configuration. In unrestricted mode `execute_sql` is annotated `readOnlyHint: false`, `destructiveHint: true` and its description explains the `read_only=false` write opt-in; in restricted mode it is annotated read-only and its description says writes are refused. All other tools are annotated read-only in both modes. The MCP `initialize` result carries server instructions naming the access mode, whether a database lock applies, and the result/time limits; under a lock, `list_databases` and `execute_sql` descriptions say only listed databases can be selected. Annotations are hints about this server's own enforcement, not a guarantee about side effects of privileged PostgreSQL functions; see [access boundaries](#access-and-resource-boundaries).
 
 Each call independently resolves its physical database and leases a connection with that database in its connection string. Concurrent calls do not share a current database or issue `USE`; a failed selection never falls back to another database.
 
@@ -385,7 +387,7 @@ For example, discover and select databases on the `primary` profile:
 
 `list_databases` queries live `pg_catalog.pg_database` on the selected profile's bootstrap database (under a database lock, the first locked database when the bootstrap database is not locked). It excludes templates, databases with connections disabled and databases for which the current role lacks CONNECT; a database lock further filters the page. Names are ordered with PostgreSQL `COLLATE "C"`, and `is_current` marks the database used for that listing. New databases and grant/revoke changes appear on subsequent calls without restarting; listing does not guarantee network/authentication or object access for a later connection.
 
-The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", "limits": { ... } }`. `databases` is the same bounded query-page shape described below, with `columns` named `name` and `is_current`, positional `rows` such as `[["postgres",true],["tenant_b",false]]`, and `offset`, `next_offset`, `truncated`, `truncation_reason` and `clipped_cells`. Follow `databases.next_offset` using the same `target` and `limit`; pages are live queries, not a shared snapshot. The obsolete `targets` alias-list payload is no longer returned. Catalog failures are reported rather than silently replaced with configured aliases.
+The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", "database_lock": true|false, "limits": { ... } }`. `databases` is the same bounded query-page shape described below, with `columns` named `name` and `is_current`, positional `rows` such as `[["postgres",true],["tenant_b",false]]`, and `offset`, `next_offset`, `truncated`, `truncation_reason` and `clipped_cells`. Follow `databases.next_offset` using the same `target` and `limit`; pages are live queries, not a shared snapshot. The obsolete `targets` alias-list payload is no longer returned. Catalog failures are reported rather than silently replaced with configured aliases.
 
 ### Database lock
 
@@ -453,7 +455,7 @@ Metadata sections wrap the page in `page`; health/index/workload tools use `resu
 
 `POSTGRES_MAX_RESULT_BYTES` bounds each payload representation, not the complete JSON-RPC envelope. Structured JSON plus compatibility text increases wire size. Actual context/token usage depends on the client and model; no cross-server efficiency claim is made.
 
-A local 0.2.0 restricted-mode `tools/list` smoke run returned nine tools: **6,133 UTF-8 bytes** for the compact tool array and **6,178 bytes** for the newline-terminated JSON-RPC response. These are discovery bytes, not model-token counts, query timings or a comparison with an “average MCP.” Client/model tokenization and result selection determine context cost.
+A local restricted-mode `tools/list` run of this version returned nine tools in **10,138 UTF-8 bytes** for the compact tool array (0.4.0: 6,780 bytes); every parameter now carries a short description with its allowed values or default. The `initialize` instructions add about 500 bytes once per session. These are discovery bytes, not model-token counts, query timings or a comparison with an “average MCP.” Client/model tokenization and result selection determine context cost.
 
 Operation errors set MCP `isError=true` and include target, error code and PostgreSQL SQLSTATE when available. PostgreSQL-provided messages, hints and details are withheld because they may contain sensitive values; fixed SQLSTATE-specific summaries provide guidance. Protocol/SDK argument-validation errors use the SDK envelope.
 

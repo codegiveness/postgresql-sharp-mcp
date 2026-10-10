@@ -96,28 +96,8 @@ builder.Logging.AddFilter("ModelContextProtocol", LogLevel.None).AddFilter("Npgs
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<DatabaseRegistry>();
 builder.Services.AddSingleton<SqlExecutor>();
-
-static void AddTools<T>(IServiceCollection services, bool unrestricted) where T : class
-{
-    foreach (var method in typeof(T).GetMethods(BindingFlags.Instance | BindingFlags.Public))
-    {
-        var attribute = method.GetCustomAttribute<McpServerToolAttribute>();
-        if (attribute is null) continue;
-        bool execute = attribute.Name == "execute_sql";
-        services.AddSingleton(sp => McpServerTool.Create(method,
-            r => ActivatorUtilities.CreateInstance(r.Services!, typeof(T)),
-            new McpServerToolCreateOptions
-            {
-                Services = sp, ReadOnly = !execute || !unrestricted,
-                Destructive = execute && unrestricted, Idempotent = !execute, OpenWorld = false
-            }));
-    }
-}
-AddTools<DatabaseTools>(builder.Services, options.Unrestricted);
-AddTools<SqlTools>(builder.Services, options.Unrestricted);
-AddTools<PlanTools>(builder.Services, options.Unrestricted);
-AddTools<OpsTools>(builder.Services, options.Unrestricted);
-builder.Services.AddMcpServer().WithStdioServerTransport();
+builder.Services.AddPostgreSqlTools(options);
+builder.Services.AddMcpServer(o => o.ServerInstructions = ToolRegistration.Instructions(options)).WithStdioServerTransport();
 using var host = builder.Build();
 await host.RunAsync();
 return 0;
