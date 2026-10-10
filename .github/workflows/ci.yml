@@ -39,6 +39,29 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/packages/*.tgz
           if-no-files-found: error
+  # The verify job above covers the default major (17); these cover the other supported majors with the same scenarios.
+  integration:
+    name: Integration (PostgreSQL ${{ matrix.major }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        major: ['13', '14', '15', '16', '18']
+    env:
+      RestoreLockedMode: 'true'
+      POSTGRES_FIXTURE_MAJOR: ${{ matrix.major }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore locked dependencies
+        run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
+      - name: Real PostgreSQL MCP integration
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
   native-install:
     name: Native installation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
