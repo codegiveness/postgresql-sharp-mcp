@@ -45,6 +45,8 @@ public static class DatabaseLockCheck
     // Server-file functions: EXECUTE is revoked from PUBLIC, but an explicit grant lets a non-superuser read data-directory
     // files (including other databases' relation files) or write server files without any pg_*_server_files membership.
     // Function ACLs are per database, so this runs in every reachable locked database; absent signatures resolve to NULL.
+    // A grant counts when it is held by any role the login is a MEMBER of, including roles it can only SET ROLE to
+    // (NOINHERIT logins, PostgreSQL 16+ INHERIT FALSE memberships); the login is a member of itself.
     private const string PerDatabaseSql = """
         SELECT 'extension ' || e.extname || ' is installed' FROM pg_catalog.pg_extension e
         WHERE e.extname IN ('dblink', 'postgres_fdw')
@@ -59,8 +61,10 @@ public static class DatabaseLockCheck
             'pg_catalog.pg_read_binary_file(text,bigint,bigint)', 'pg_catalog.pg_read_binary_file(text,bigint,bigint,boolean)',
             'pg_catalog.pg_ls_dir(text)', 'pg_catalog.pg_ls_dir(text,boolean,boolean)',
             'pg_catalog.lo_import(text)', 'pg_catalog.lo_import(text,oid)', 'pg_catalog.lo_export(oid,text)',
-            'pg_catalog.pg_file_write(text,text,boolean)']) AS signature) f
-        WHERE f.oid IS NOT NULL AND pg_catalog.has_function_privilege(session_user, f.oid, 'EXECUTE')
+            'pg_catalog.pg_file_write(text,text,boolean)', 'pg_catalog.pg_file_unlink(text)',
+            'pg_catalog.pg_file_rename(text,text,text)']) AS signature) f
+        WHERE f.oid IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles m
+            WHERE pg_catalog.pg_has_role(session_user, m.oid, 'MEMBER') AND pg_catalog.has_function_privilege(m.oid, f.oid, 'EXECUTE'))
           -- Superusers execute everything and are already refused by the role check.
           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolsuper AND pg_catalog.pg_has_role(session_user, r.oid, 'MEMBER'))
         """;
