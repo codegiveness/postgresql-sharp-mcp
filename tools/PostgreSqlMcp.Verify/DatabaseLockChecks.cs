@@ -55,6 +55,7 @@ internal static class DatabaseLockChecks
 
         await VerifyRequireSwitchAsync(command, connectionMode, targetsMode);
         await VerifyConnectionModeAsync(command, connectionMode);
+        await VerifyLargeLockAsync(command, connectionMode);
         await VerifyTargetsModeAsync(command, targetsMode);
         await VerifyValidateAsync(command, connectionMode, targetsMode);
         await VerifyRefusalsAsync(command, fixture, connectionMode, targetsMode);
@@ -92,6 +93,24 @@ internal static class DatabaseLockChecks
         }
         await client.StopAsync();
         Check.That(client.StandardError.Contains("Database lock verified", StringComparison.Ordinal), "Startup did not report the PostgreSQL lock verification.");
+        Check.Confidential(client.StandardError, Password);
+    }
+
+    // A lock is an allow-list, not a set of profiles: more than 32 names and a large pool must not hit profile limits.
+    private static async Task VerifyLargeLockAsync(Command command, Dictionary<string, string> connectionMode)
+    {
+        string[] names = [.. Locked, .. Enumerable.Range(1, 40).Select(i => $"lock_absent_{i:D2}")];
+        var environment = new Dictionary<string, string>(connectionMode)
+        {
+            ["POSTGRES_DATABASES"] = JsonSerializer.Serialize(names), ["POSTGRES_POOL_SIZE"] = "32"
+        };
+        await using var client = await McpClient.StartAsync(command, environment);
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
+            new[] { new[] { "lock_b", "LOCK_B" } }, "A 42-name lock did not select an allowed database.");
+        Check.That(ListedNames(await client.OkAsync("list_databases")).SequenceEqual(Locked),
+            "A 42-name lock listed databases that do not exist or are outside the lock.");
+        await ExpectLockRejectionAsync(client, new { database = "lock_protected" });
+        await client.StopAsync();
         Check.Confidential(client.StandardError, Password);
     }
 
@@ -171,6 +190,30 @@ internal static class DatabaseLockChecks
                 await ExpectRefusalAsync(command, mode, "database lock_b: extension dblink is installed");
         }
         finally { await fixture.SqlAsync("lock_b", "DROP EXTENSION dblink;"); }
+        // An explicit EXECUTE grant (no predefined-role membership) reads other databases' relation files.
+        await fixture.SqlAsync("lock_b", "GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO mcp_locked;");
+        try
+        {
+            foreach (var mode in new[] { connectionMode, targetsMode })
+            {
+                await ExpectRefusalAsync(command, mode, "database lock_b: login can execute server-file function pg_read_binary_file(text)");
+                await ExpectRefusalAsync(command.With("--validate"), mode, "login can execute server-file function pg_read_binary_file(text)");
+            }
+        }
+        finally { await fixture.SqlAsync("lock_b", "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) FROM mcp_locked;"); }
+        // The same grant held only by a role the NOINHERIT login can SET ROLE to is just as usable.
+        await fixture.SqlAsync("postgres", "CREATE ROLE mcp_file_reader NOLOGIN; GRANT mcp_file_reader TO mcp_locked; ALTER ROLE mcp_locked NOINHERIT;");
+        try
+        {
+            await fixture.SqlAsync("lock_b", "GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO mcp_file_reader;");
+            foreach (var mode in new[] { connectionMode, targetsMode })
+                await ExpectRefusalAsync(command.With("--validate"), mode, "database lock_b: login can execute server-file function pg_read_binary_file(text)");
+        }
+        finally
+        {
+            await fixture.SqlAsync("lock_b", "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) FROM mcp_file_reader;");
+            await fixture.SqlAsync("postgres", "ALTER ROLE mcp_locked INHERIT; DROP ROLE mcp_file_reader;");
+        }
         // Grants matching the lock again: startup succeeds after every refusal was restored.
         ProcessResult restored = await Processes.RunAsync(command.With("--validate"), targetsMode);
         Check.That(restored.Error.Contains("Database lock verified", StringComparison.Ordinal), "Startup did not recover after grants matched the lock.");

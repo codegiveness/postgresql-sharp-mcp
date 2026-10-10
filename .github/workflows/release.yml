@@ -126,6 +126,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
       - name: Attest archives, package files, SBOM and checksums
+        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
@@ -134,6 +135,12 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/sbom/bom.json
             artifacts/SHA256SUMS
+      - name: Keep the provenance bundle for the GitHub Release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-provenance
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
   github-release:
     needs: [preflight, package, attest]
     if: inputs.target == 'all' || inputs.target == 'github'
@@ -156,12 +163,13 @@ jobs:
           artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
           path: release-tool
           digest-mismatch: error
-      - name: Download metadata and release artifacts
+      - name: Download metadata, release artifacts and provenance bundle
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-provenance --dir provenance
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

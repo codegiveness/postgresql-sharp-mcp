@@ -389,7 +389,7 @@ The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", 
 
 ### Database lock
 
-To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
+To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles or explicit `EXECUTE` on server-file functions such as `pg_read_binary_file`, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
 
 ### Plans and optional extensions
 
@@ -506,14 +506,14 @@ For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `prim
 | `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object |
 | `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported |
 | `POSTGRES_CONNECTION_STRING` | Base Npgsql string; bootstrap `Database` defaults to `postgres` if omitted; `--connection-string` supported |
-| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names, with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
+| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (no 32-name limit; with a connection string the names are `target` aliases of one login profile and do not count toward the profile limit), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
 | `POSTGRES_REQUIRE_DATABASE_LOCK` | `false`; `true` makes a missing `POSTGRES_DATABASES` a startup error; `--require-database-lock` supported |
 | `POSTGRES_ACCESS_MODE` | unrestricted when omitted; opt into restricted to refuse writes; `--access-mode` supported |
 | `POSTGRES_QUERY_TIMEOUT` | 30 seconds; 1–600; `--query-timeout` supported |
 | `POSTGRES_MAX_ROWS` | 1000; 1–5000 |
 | `POSTGRES_MAX_RESULT_BYTES` | 65536; 4096–1048576 |
 | `POSTGRES_MAX_CELL_CHARS` | 4096; 1–16384 |
-| `POSTGRES_POOL_SIZE` | 8; 1–32; profiles × size ≤256; runtime database-pool cache ≤`floor(256 / size)` |
+| `POSTGRES_POOL_SIZE` | 8; 1–32; connection profiles × size ≤256 (a connection string is one profile, whatever the lock size); runtime database-pool cache ≤`floor(256 / size)` |
 | `POSTGRES_MAX_CONCURRENT_CALLS` | 16; 1–64 |
 | `POSTGRES_LOG_LEVEL` | warning; trace/debug/information/warning/error/critical/none; `--log-level` supported |
 
