@@ -15,7 +15,12 @@ public static class ToolReply
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
     };
     private static int _maxBytes = 65536;
-    public static void Configure(ServerOptions options) => _maxBytes = options.MaxResultBytes;
+    private static bool _unrestricted = true;
+    public static void Configure(ServerOptions options)
+    {
+        _maxBytes = options.MaxResultBytes;
+        _unrestricted = options.Unrestricted;
+    }
 
     public static async Task<CallToolResult> Run(string database, Func<Task<object>> action)
     {
@@ -41,7 +46,10 @@ public static class ToolReply
     {
         "57014" => "PostgreSQL canceled the operation (statement timeout or cancellation).",
         "42501" => "The configured PostgreSQL role does not have permission for this operation.",
-        "25006" => "PostgreSQL rejected this operation in a read-only transaction.",
+        // Tell the agent whether retrying as a write can work on this server at all.
+        "25006" => _unrestricted
+            ? "PostgreSQL rejected a write in a READ ONLY transaction. If a write is intended, retry execute_sql with read_only=false; the target database must also accept writes (not a standby)."
+            : "PostgreSQL rejected a write in a READ ONLY transaction. This server is in restricted access mode and refuses writes.",
         "25001" => "PostgreSQL rejected a transaction setting change after the transaction became active.",
         "28P01" or "28000" => "PostgreSQL authentication failed. Check the configured credentials and authentication policy.",
         "3D000" => "The configured PostgreSQL database does not exist.",
