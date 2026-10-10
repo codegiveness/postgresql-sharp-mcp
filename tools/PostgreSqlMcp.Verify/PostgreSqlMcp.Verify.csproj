@@ -6,4 +6,8 @@
   <ItemGroup>
     <PackageReference Include="FsCheck" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\ProcessRunner.cs" Link="Shared\ProcessRunner.cs" />
+    <Compile Include="..\Shared\RepositoryRoot.cs" Link="Shared\RepositoryRoot.cs" />
+  </ItemGroup>
 </Project>
