@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Show a grouped README badge table covering build/tests, security scanning, supply chain, registries, platforms, stack versions, features and project activity. Feature and practice badges link to the documentation or configuration that supports them; stack versions are read live from `global.json` and `Directory.Packages.props`.
+- Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
+
 ## 0.4.0
 
 - Add a database lock: `POSTGRES_DATABASES`/`--databases` now works with targets JSON/file as well as a connection string (previously rejected). Every tool `database`, alias, `target`, `list_databases`, `--validate` and data-source creation is checked against the lock; a profile whose bootstrap database is outside the lock is used only for locked databases, and discovery/validation connect through the first locked database instead. Connection-string and targets formats are unchanged.
