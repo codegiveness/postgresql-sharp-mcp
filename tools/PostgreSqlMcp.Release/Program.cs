@@ -69,7 +69,7 @@ internal static class Release
                     await PublishGitHubAsync(root, tag, metadata);
                     break;
                 case "npm":
-                    await PublishNpmAsync(root, metadata.NpmName, metadata.Version);
+                    await StageNpmAsync(root, metadata.NpmName, metadata.Version, args.Length == 4);
                     break;
                 default:
                     throw new InvalidOperationException("Unknown release command.");
@@ -123,8 +123,8 @@ internal static class Release
 
     private static (string Version, string NpmName) ReadPublicationContext(string[] args)
     {
-        if (args.Length != 3 || args[1] != "--context")
-            throw new InvalidOperationException("Publishing requires --context <publication-context.json>.");
+        if (!(args.Length == 3 || (args.Length == 4 && args[0] == "npm" && args[3] == "--dry-run")) || args[1] != "--context")
+            throw new InvalidOperationException("Publishing requires --context <publication-context.json>; npm also accepts --dry-run.");
         using var document = JsonDocument.Parse(File.ReadAllText(args[2]));
         string version = document.RootElement.GetProperty("version").GetString() ?? "";
         string name = document.RootElement.GetProperty("npmName").GetString() ?? "";
@@ -214,36 +214,55 @@ internal static class Release
         await SummaryAsync($"GitHub Release {tag}: archives, packages, checksums and application SBOM uploaded.\n");
     }
 
-    private static async Task PublishNpmAsync(string root, string name, string version)
+    private static async Task StageNpmAsync(string root, string name, string version, bool dryRun)
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NODE_AUTH_TOKEN"))) throw new InvalidOperationException("NPM_TOKEN is missing.");
-        var lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json", "--registry", "https://registry.npmjs.org/"], root);
-        if (lookup.ExitCode == 0)
-        {
-            using var found = JsonDocument.Parse(lookup.Output);
-            if (found.RootElement.GetString() != version) throw new InvalidOperationException("Unexpected npm registry version response.");
-            await SummaryAsync($"npm {version} already exists; immutable version was not republished.\n");
-            return;
-        }
-        bool absent = false;
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true" ||
+            string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ACTIONS_ID_TOKEN_REQUEST_URL")) ||
+            string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ACTIONS_ID_TOKEN_REQUEST_TOKEN")))
+            throw new InvalidOperationException("npm staging requires GitHub Actions OIDC with id-token: write; local credentials are not supported.");
+
+        // npm falls back to configured credentials when OIDC fails. Isolate all config sources
+        // and remove inherited credentials so a failed exchange cannot stage with a static token.
+        string isolated = Directory.CreateTempSubdirectory("postgresql-npm-oidc-").FullName;
         try
         {
-            using var error = JsonDocument.Parse(lookup.Output);
-            absent = error.RootElement.GetProperty("error").GetProperty("code").GetString() == "E404";
+            var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (string key in Environment.GetEnvironmentVariables().Keys)
+                if (key.StartsWith("NPM_CONFIG_", StringComparison.OrdinalIgnoreCase))
+                    environment[key] = null;
+            environment["NODE_AUTH_TOKEN"] = null;
+            environment["NPM_TOKEN"] = null;
+            environment["NPM_ID_TOKEN"] = null;
+            string[] configuration = ["--prefix", isolated, "--userconfig", Path.Combine(isolated, "user.npmrc"),
+                "--globalconfig", Path.Combine(isolated, "global.npmrc")];
+            var lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json",
+                "--registry", "https://registry.npmjs.org/", .. configuration], isolated, environment);
+            if (lookup.ExitCode == 0)
+            {
+                using var found = JsonDocument.Parse(lookup.Output);
+                if (found.RootElement.GetString() != version) throw new InvalidOperationException("Unexpected npm registry version response.");
+                await SummaryAsync($"npm {version} already exists; immutable version was not republished or staged.\n");
+                return;
+            }
+            bool absent = false;
+            try
+            {
+                using var error = JsonDocument.Parse(lookup.Output);
+                absent = error.RootElement.GetProperty("error").GetProperty("code").GetString() == "E404";
+            }
+            catch (JsonException) { }
+            if (!absent) throw new InvalidOperationException("npm lookup failed; check registry availability.");
+            string package = Path.GetFullPath(Path.Combine(root, "artifacts/packages", name.Replace("@", "").Replace("/", "-") + "-" + version + ".tgz"));
+            var arguments = new List<string> { "stage", "publish", package, "--ignore-scripts", "--access", "public",
+                "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-') ? "next" : "latest" };
+            arguments.AddRange(configuration);
+            if (dryRun) arguments.Add("--dry-run");
+            await RunAsync("npm", arguments, isolated, environment);
+            await SummaryAsync(dryRun
+                ? $"npm {version} staging dry-run completed; no stage was submitted and nothing was published.\n"
+                : $"npm {version} staged with provenance requested, pending human Windows 2FA approval; not publicly published.\n");
         }
-        catch (JsonException) { }
-        if (!absent) throw new InvalidOperationException("npm lookup failed; check registry availability and publishing-token scope.");
-        string package = Path.Combine(root, "artifacts/packages", name.Replace("@", "").Replace("/", "-") + "-" + version + ".tgz");
-        string configuration = Path.Combine(Path.GetTempPath(), "postgresql-publish-" + Guid.NewGuid().ToString("N") + ".npmrc");
-        try
-        {
-            await File.WriteAllTextAsync(configuration, "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n");
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(configuration, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            await RunAsync("npm", ["publish", package, "--ignore-scripts", "--access", "public", "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-') ? "next" : "latest"], root,
-                new Dictionary<string, string> { ["NPM_CONFIG_USERCONFIG"] = configuration });
-            await SummaryAsync($"Published npm {version} with provenance requested; verify the actual registry version and provenance.\n");
-        }
-        finally { File.Delete(configuration); }
+        finally { Directory.Delete(isolated, recursive: true); }
     }
 
     private static async Task OutputAsync(string name, string value)
@@ -259,7 +278,7 @@ internal static class Release
         Console.Write(text);
     }
 
-    private static async Task RunAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string>? environment = null)
+    private static async Task RunAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var result = await CaptureAsync(executable, args, root, environment);
         Console.Write(result.Output);
@@ -267,11 +286,14 @@ internal static class Release
         if (result.ExitCode != 0) throw new InvalidOperationException(executable + " failed; see redacted runner diagnostics.");
     }
 
-    private static async Task<(int ExitCode, string Output, string Error)> CaptureAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string>? environment = null)
+    private static async Task<(int ExitCode, string Output, string Error)> CaptureAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var start = new ProcessStartInfo(executable) { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (string argument in args) start.ArgumentList.Add(argument);
-        if (environment is not null) foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
+        if (environment is not null)
+            foreach (var pair in environment)
+                if (pair.Value is null) start.Environment.Remove(pair.Key);
+                else start.Environment[pair.Key] = pair.Value;
         using var process = new Process { StartInfo = start };
         if (!process.Start()) throw new InvalidOperationException("Unable to start release tool.");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(15));
