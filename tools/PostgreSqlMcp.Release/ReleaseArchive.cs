@@ -26,7 +26,8 @@ internal static class ReleaseArchive
         {
             ZipArchiveEntry entry = zip.CreateEntry(EntryName(directory, path), CompressionLevel.Optimal);
             entry.LastWriteTime = ZipTimestamp;
-            entry.ExternalAttributes = (int)EntryMode(path) << 16;
+            // Unix mode in the high 16 bits: S_IFREG (0x8000) plus the permission bits, like the .NET default entry.
+            entry.ExternalAttributes = (0x8000 | (int)EntryMode(path)) << 16;
             using var source = File.OpenRead(path);
             using Stream target = entry.Open();
             source.CopyTo(target);

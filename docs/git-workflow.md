@@ -494,7 +494,7 @@ Creating a new `v*` tag stays allowed; moving or deleting an existing one is blo
 
 - **Required approvals ≥ 1 or required code-owner review:** GitHub forbids approving your own pull request, so a solo maintainer could never merge. Revisit if a second maintainer joins. CODEOWNERS is in place for that day.
 - **Auto-merge:** conflicts with the rule that every merge, including Dependabot's, is a deliberate maintainer action.
-- **Immutable releases:** the release tool creates a published release and uploads its assets afterwards (and re-uploads on a re-run). With immutable releases on, uploads after publication are rejected. Enable it only after the tool creates a draft, uploads and then publishes.
+- **Immutable releases:** the release tool creates a published release and uploads its assets afterwards; a re-run uploads only assets that are still missing and fails if an existing asset differs. With immutable releases on, uploads after publication are rejected. Enable it only after the tool creates a draft, uploads and then publishes.
 
 ### Check current settings
 
