@@ -31,6 +31,10 @@ internal static class DatabaseLockChecks
             """);
         foreach (string database in new[] { "lock_a", "lock_b", "lock_protected" })
             await fixture.SqlAsync(database, $"CREATE TABLE marker(value text NOT NULL); INSERT INTO marker VALUES ('{database.ToUpperInvariant()}'); GRANT SELECT ON marker TO mcp_locked;");
+        // PostgreSQL 13 has no per-database session counter, and its transaction counters also count autovacuum
+        // workers, so stop autovacuum on this disposable fixture before taking the baseline.
+        if (PostgresFixture.Major < 14)
+            await fixture.SqlAsync("postgres", "ALTER SYSTEM SET autovacuum = off;\nSELECT pg_reload_conf();");
         // Let the seeding session's statistics flush before taking the baseline.
         long protectedSessions = await ProtectedSessionsAsync(fixture);
         for (long previous = -1; previous != protectedSessions; protectedSessions = await ProtectedSessionsAsync(fixture))
