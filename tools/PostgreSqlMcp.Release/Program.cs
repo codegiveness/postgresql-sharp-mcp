@@ -240,7 +240,11 @@ internal static class Release
             if (lookup.ExitCode == 0)
             {
                 using var found = JsonDocument.Parse(lookup.Output);
-                if (found.RootElement.GetString() != version) throw new InvalidOperationException("Unexpected npm registry version response.");
+                // npm <= 11 prints a JSON string; npm 12 prints a one-element array for an exact version.
+                JsonElement reported = found.RootElement;
+                if (reported.ValueKind == JsonValueKind.Array && reported.GetArrayLength() == 1) reported = reported[0];
+                if (reported.ValueKind != JsonValueKind.String || reported.GetString() != version)
+                    throw new InvalidOperationException("Unexpected npm registry version response.");
                 await SummaryAsync($"npm {version} already exists; immutable version was not republished or staged.\n");
                 return;
             }
