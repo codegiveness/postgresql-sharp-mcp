@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Collections;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -27,7 +27,7 @@ internal static class Release
                 return 0;
             }
             bool publication = command is "github" or "npm";
-            string root = publication ? Environment.CurrentDirectory : FindRoot();
+            string root = publication ? Environment.CurrentDirectory : RepositoryRoot.Find() ?? throw new InvalidOperationException("Run release automation from the repository.");
             if (command == "validate-tag")
             {
                 await ValidateTagAsync(root, tag);
@@ -96,13 +96,6 @@ internal static class Release
             throw new InvalidOperationException("Release tag must point to a commit on origin/main.");
         await OutputAsync("commit", commit);
         Console.WriteLine($"Verified release tag {tag} is on origin/main at {commit}.");
-    }
-
-    private static string FindRoot()
-    {
-        for (var directory = new DirectoryInfo(Environment.CurrentDirectory); directory is not null; directory = directory.Parent)
-            if (File.Exists(Path.Combine(directory.FullName, "postgresql-sharp-mcp.slnx"))) return directory.FullName;
-        throw new InvalidOperationException("Run release automation from the repository.");
     }
 
     private static (string Version, string NpmName) ReadMetadata(string root)
@@ -282,51 +275,23 @@ internal static class Release
         Console.Write(text);
     }
 
+    // Child output is echoed (CI needs build/publish diagnostics) but with the values of credential-looking
+    // environment variables replaced, so a tool that echoes its token cannot leak it into logs.
     private static async Task RunAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null)
     {
-        var result = await CaptureAsync(executable, args, root, environment);
-        Console.Write(result.Output);
-        Console.Error.Write(result.Error);
-        if (result.ExitCode != 0) throw new InvalidOperationException(executable + " failed; see redacted runner diagnostics.");
+        var result = await ProcessRunner.RunAsync(Spec(executable, args, root, environment, OutputPolicy.Redact(CredentialValues())));
+        if (result.ExitCode != 0) throw new InvalidOperationException($"{executable} failed (exit {result.ExitCode}); its output above has known credential values redacted.");
     }
 
-    private static async Task<(int ExitCode, string Output, string Error)> CaptureAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null)
-    {
-        var start = new ProcessStartInfo(executable) { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (string argument in args) start.ArgumentList.Add(argument);
-        if (environment is not null)
-            foreach (var pair in environment)
-                if (pair.Value is null) start.Environment.Remove(pair.Key);
-                else start.Environment[pair.Key] = pair.Value;
-        using var process = new Process { StartInfo = start };
-        if (!process.Start()) throw new InvalidOperationException("Unable to start release tool.");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(15));
-        Task<string> output = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        Task<string> error = process.StandardError.ReadToEndAsync(deadline.Token);
-        Task drains = Task.WhenAll(output, error);
-        try
-        {
-            await process.WaitForExitAsync(deadline.Token);
-            await drains;
-            return (process.ExitCode, output.Result, error.Result);
-        }
-        finally
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    try { process.Kill(entireProcessTree: true); }
-                    catch (InvalidOperationException) when (process.HasExited) { }
-                    await process.WaitForExitAsync();
-                }
-            }
-            finally
-            {
-                await deadline.CancelAsync();
-                // Timed-out captures still own their drains until both have finished.
-                await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            }
-        }
-    }
+    // Callers parse the output, which is never echoed.
+    private static Task<ProcessResult> CaptureAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null) =>
+        ProcessRunner.RunAsync(Spec(executable, args, root, environment, OutputPolicy.Capture));
+
+    private static ProcessSpec Spec(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment, OutputPolicy output) =>
+        new(executable, args) { WorkingDirectory = root, Environment = environment, Timeout = TimeSpan.FromMinutes(15), Output = output };
+
+    private static IEnumerable<string?> CredentialValues() => Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
+        .Where(variable => new[] { "TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL" }.Any(marker => ((string)variable.Key).Contains(marker, StringComparison.OrdinalIgnoreCase)))
+        .Select(variable => (string?)variable.Value)
+        .Where(value => value?.Length >= 8);
 }

@@ -19,7 +19,7 @@ internal static class FuzzCampaign
             if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
                 throw new PlatformNotSupportedException("The pinned native fuzzing bridge requires Linux x64 (Ubuntu 24.04 in CI).");
 
-            string root = FindRoot();
+            string root = RepositoryRoot.Find() ?? throw new ArgumentException("Run the fuzz campaign from the repository or a child directory.");
             string project = Path.Combine(root, "tools", "PostgreSqlMcp.Fuzz");
             string work = Path.Combine(root, "artifacts", "fuzz");
             string corpus = Path.Combine(work, "corpus");
@@ -62,13 +62,6 @@ internal static class FuzzCampaign
         }
     }
 
-    private static string FindRoot()
-    {
-        for (DirectoryInfo? directory = new(Environment.CurrentDirectory); directory is not null; directory = directory.Parent)
-            if (File.Exists(Path.Combine(directory.FullName, "postgresql-sharp-mcp.slnx"))) return directory.FullName;
-        throw new ArgumentException("Run the fuzz campaign from the repository or a child directory.");
-    }
-
     private static async Task DownloadBridgeAsync(string destination)
     {
         string temporary = destination + ".download";
@@ -99,25 +92,14 @@ internal static class FuzzCampaign
 
     private static async Task RunProcessAsync(string root, string executable, int timeoutSeconds, params string[] arguments)
     {
-        var start = new ProcessStartInfo(executable) { WorkingDirectory = root, UseShellExecute = false };
-        foreach (string argument in arguments) start.ArgumentList.Add(argument);
-        using var process = new Process { StartInfo = start };
-        if (!process.Start()) throw new IOException("Unable to start fuzzing subprocess.");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-        try
+        // libFuzzer and dotnet progress stays live on the console.
+        var result = await ProcessRunner.RunAsync(new ProcessSpec(executable, arguments)
         {
-            await process.WaitForExitAsync(deadline.Token);
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException($"Fuzzing subprocess exited with status {process.ExitCode}.");
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-                await process.WaitForExitAsync();
-            }
-        }
+            WorkingDirectory = root,
+            Timeout = TimeSpan.FromSeconds(timeoutSeconds),
+            Output = OutputPolicy.Inherit
+        });
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"Fuzzing subprocess exited with status {result.ExitCode}.");
     }
 }
