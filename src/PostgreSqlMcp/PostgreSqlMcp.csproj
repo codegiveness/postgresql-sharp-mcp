@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <Version>0.3.3</Version>
+    <Version>0.4.0</Version>
     <PackAsTool>true</PackAsTool>
     <PackageId>codegiveness.postgresql-sharp-mcp</PackageId>
     <ToolCommandName>postgresql-sharp-mcp</ToolCommandName>

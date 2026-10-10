@@ -55,6 +55,14 @@ paths = ['''^README\.md$''']
 regexTarget = "match"
 regexes = ['''^Password=<(?:database-password|other-password|YOUR_PASSWORD)>$''']
 
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Database lock hardening guide targets placeholder"
+condition = "AND"
+paths = ['''^SECURITY\.md$''']
+regexTarget = "match"
+regexes = ['''^Password=<password>$''']
+
 # The verifier creates its own loopback-only disposable PostgreSQL containers.
 # These values must remain tied to these exact paths, not entire test files.
 [[allowlists]]
@@ -72,6 +80,14 @@ condition = "AND"
 paths = ['''^tools/PostgreSqlMcp\.Verify/Packages\.cs$''']
 regexTarget = "match"
 regexes = ['''^Password=(?:disposable-package-secret|writer-disposable)$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Database lock scenario interpolates its disposable fixture role constant"
+condition = "AND"
+paths = ['''^tools/PostgreSqlMcp\.Verify/DatabaseLockChecks\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=\{Password\}$''']
 
 # Default rules still run. Only these exact disposable values may be suppressed
 # if the generic provider-independent rule also recognizes them.

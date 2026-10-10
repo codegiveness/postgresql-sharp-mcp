@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Add a database lock: `POSTGRES_DATABASES`/`--databases` now works with targets JSON/file as well as a connection string (previously rejected). Every tool `database`, alias, `target`, `list_databases`, `--validate` and data-source creation is checked against the lock; a profile whose bootstrap database is outside the lock is used only for locked databases, and discovery/validation connect through the first locked database instead. Connection-string and targets formats are unchanged.
+- Add `POSTGRES_REQUIRE_DATABASE_LOCK=true`/`--require-database-lock` (off by default) to make a missing lock a startup error.
+- With a lock configured, startup and `--validate` verify in PostgreSQL, through locked databases only, that each distinct login cannot connect to any other database, is not and cannot `SET ROLE` to a superuser, lacks `CREATEDB`/`CREATEROLE`, owns no out-of-lock database, is not in `pg_read_server_files`/`pg_write_server_files`/`pg_execute_server_program`, and that locked databases have no `dblink`, `postgres_fdw` or foreign servers. Findings go to stderr without connection strings or credentials.
+- **Breaking:** existing `POSTGRES_DATABASES` users are now refused at startup unless PostgreSQL grants match the list. Default `PUBLIC` CONNECT on `postgres` and `template1` (or any other database) fails the check; follow the new [database lock hardening guide](SECURITY.md#database-lock-hardening). A locked server also connects to PostgreSQL at startup instead of on first use, and an unreachable profile now prevents startup.
+- Rejections outside the lock keep code `invalid_target` with a message naming the database lock.
+
 ## 0.3.3
 
 - Remove npm's installed-.NET prerequisite for both npx and global commands: package the .NET 10.0.12 runtime with the server and C# installer for Windows x64, glibc Linux x64/arm64 and macOS x64/arm64.

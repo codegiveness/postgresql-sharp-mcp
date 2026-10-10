@@ -28,7 +28,7 @@ Omit `--validate` to start the stdio server. Access mode defaults to unrestricte
 
 The source layout is `src/PostgreSqlMcp.Core` (configuration, SQL and database behavior), `src/PostgreSqlMcp.Tools` (MCP tools), and `src/PostgreSqlMcp` (stdio host and CLI). Preserve dependency direction `Core <- Tools <- App`. MCP stdout is reserved for JSON-RPC; diagnostics belong on stderr.
 
-An inherited base connection string alone creates the `primary` bootstrap profile and supports live discovery. Optional targets-file entries remain connection profiles for independent credentials, not per-database registration or implicit allowlists. Preserve exact alias selection for bootstrap compatibility, optional `target` for explicit profile selection, and physical database selection without rewriting configuration. Keep combining a base connection string with targets JSON/file fail-closed; do not silently prefer one credential source. Catalog discovery must be live and CONNECT-filtered; PostgreSQL enforces object privileges and RLS. Calls must not share a current database, fall back after selection errors, or grow unbounded pools. A base connection string's optional explicit database allowlist must constrain both listing and selection. See [selection and discovery](README.md#database-selection-and-live-discovery) and [resource boundaries](README.md#access-and-resource-boundaries).
+An inherited base connection string alone creates the `primary` bootstrap profile and supports live discovery. Optional targets-file entries remain connection profiles for independent credentials, not per-database registration or implicit allowlists. Preserve exact alias selection for bootstrap compatibility, optional `target` for explicit profile selection, and physical database selection without rewriting configuration. Keep combining a base connection string with targets JSON/file fail-closed; do not silently prefer one credential source. Catalog discovery must be live and CONNECT-filtered; PostgreSQL enforces object privileges and RLS. Calls must not share a current database, fall back after selection errors, or grow unbounded pools. The optional database lock (`POSTGRES_DATABASES`) applies in both connection modes and must constrain listing, selection, aliases, `target`, `--validate` and every data-source creation; no path may open a connection to a database outside it, and its startup PostgreSQL grant check must fail closed. See [selection and discovery](README.md#database-selection-and-live-discovery), [database lock hardening](SECURITY.md#database-lock-hardening) and [resource boundaries](README.md#access-and-resource-boundaries).
 
 Dependencies use current compatible stable releases verified against [official .NET release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json) and NuGet package indexes, not preview feeds. Central transitive pins keep the portable/five-RID graphs aligned; restore each RID with explicit `-p:RuntimeIdentifier=<rid> -p:RuntimeIdentifiers=<rid>` so its lockfile stays separate. Recheck compatibility and regenerate every affected lock on upgrades; do not infer that today's pins remain the latest indefinitely.
 
@@ -40,7 +40,7 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 
 The .NET verifier builds the application and exercises real MCP calls against a disposable PostgreSQL 17 Docker fixture with `pg_stat_statements` and HypoPG. It creates and removes its own container; do not substitute a production or unrelated database.
 
-For database-discovery/setup changes, exercise one inherited connection string selecting an unregistered physical database with no targets file, live creation/grant/revoke changes, optional protected multi-profile files, optional allowlists, missing/denied selections without fallback, conflicting credential sources failing closed, and concurrent per-call isolation. Verify omitted-mode write commit/rollback with `read_only=false` separately from explicit restricted-mode refusal. Use disposable data; do not treat existing historical verification results as evidence that new behavior passed.
+For database-discovery/setup changes, exercise one inherited connection string selecting an unregistered physical database with no targets file, live creation/grant/revoke changes, optional protected multi-profile files, the database lock in both connection modes (database, alias and `target` rejection, filtered listing, strict-switch refusal and startup grant-check refusal/success), missing/denied selections without fallback, conflicting credential sources failing closed, and concurrent per-call isolation. Verify omitted-mode write commit/rollback with `read_only=false` separately from explicit restricted-mode refusal. Use disposable data; do not treat existing historical verification results as evidence that new behavior passed.
 
 Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Linux subprocess and MCP-client regressions exercise blocked stdin, inherited output pipes, failed-writer disposal and owned-child cleanup. Verification command deadlines cover stdin, exit and output drains; release capture deadlines cover exit and drains. MCP verification requests also bound semaphore wait, stdin writing and response wait with one cancellation-aware deadline. Asynchronous stdin close is bounded, and cleanup observes readers before disposal. An already-orphaned descendant is outside the exited parent's `Process.Kill` tree, so this is not an OS process-group/job-object containment guarantee. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
 
@@ -188,10 +188,10 @@ Keep versions, affected help/docs and release notes consistent. Update [THIRD-PA
 
 ## Automation and releases
 
-Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
+Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the **0.3.0** capability boundary. **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. **0.4.0** adds the database lock and its startup PostgreSQL grant check, which can refuse startup for existing `POSTGRES_DATABASES` configurations. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
-- **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. The locally verified independent publisher changes require review and merge before hosted use: npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Existing public registry versions are skipped. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
+- **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Existing public registry versions are skipped. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
 - **Dependency audit** checks direct and transitive NuGet packages against known advisories. This is not proof that all vulnerabilities are absent.
 - **CodeQL** scans C# and GitHub Actions with `security-extended`. C# uses real builds, including generated sources. Trusted main/scheduled runs publish code-scanning results; PRs scan both the base and candidate with read-only tokens, retain raw SARIF and run the trusted-base severity-delta gate. Extraction errors and missing reports fail closed. Review workflow changes as well as findings.
 - **Scorecard** publishes repository-practice findings on main and weekly. Its score is not a vulnerability-free claim or profile achievement.
@@ -206,7 +206,7 @@ Only authorized maintainers may push release tags, publish packages or change re
 
 ### Independent publisher setup
 
-The setup below describes locally verified workflow changes, not a completed hosted rollout. Keep application/source version **0.3.3** and the existing **v0.3.3** tag unchanged; release-tool changes do not replace immutable shipped artifacts.
+Release-tool changes do not replace immutable shipped artifacts; each release publishes a new version from its own `v<version>` tag.
 
 Use this repository's `release` GitHub environment. Its deployment policy permits the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. No environment reviewer is required for solo-maintainer dispatch. npm's human approval is a separate registry-side 2FA gate. Do not transfer credentials from another repository or depend on a sibling job. Never put credentials in source, command history, issues or pull requests.
 
@@ -241,17 +241,17 @@ Enter the username at the prompt rather than copying a sibling secret. GitHub OI
 
 #### Dispatch the exact existing release
 
-Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and existing `v0.3.3` tag are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
+Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.4.0`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
 
 ```powershell
 # Default all: GitHub Release + npm staging + NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=all
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=all
 # npm staging only; no GitHub Release or NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=npm
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=npm
 # NuGet publication only; no GitHub Release or npm staging.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=nuget
 # GitHub Release only; no registry staging/publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.3.3 -f target=github
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=github
 ```
 
 `target` choices are `all`, `github`, `npm` and `nuget`, defaulting to `all`. Every target retains common preflight, package/installed-distribution verification and attestation. npm-only and NuGet-only jobs tolerate an intentionally skipped GitHub Release job **only for their dedicated target**; failed/canceled prerequisites cannot reach a publisher. In `all` mode both registry jobs require successful GitHub Release publication. The npm command stages the exact attested tarball using `npm stage publish`, never approves it or calls direct `npm publish`. Its successful summary means **staged, pending Windows 2FA approval**, not published.
@@ -264,17 +264,17 @@ After the npm staging job succeeds, review its stage ID and intended `latest` ta
 
 ```powershell
 npm.cmd stage list '@codegiveness/postgresql-sharp-mcp' --registry https://registry.npmjs.org/
-$StageId = Read-Host 'Stage ID for @codegiveness/postgresql-sharp-mcp 0.3.3'
+$StageId = Read-Host 'Stage ID for @codegiveness/postgresql-sharp-mcp 0.4.0'
 npm.cmd stage view $StageId --registry https://registry.npmjs.org/
 npm.cmd stage download $StageId --registry https://registry.npmjs.org/
 ```
 
-Confirm the stage is **`@codegiveness/postgresql-sharp-mcp@0.3.3`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the existing 0.3.3 GitHub release:
+Confirm the stage is **`@codegiveness/postgresql-sharp-mcp@0.4.0`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.4.0 GitHub release:
 
 ```powershell
-gh release download v0.3.3 --repo codegiveness/postgresql-sharp-mcp --pattern codegiveness-postgresql-sharp-mcp-0.3.3.tgz --dir release-verification
-gh attestation verify ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
-Get-FileHash ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz -Algorithm SHA256
+gh release download v0.4.0 --repo codegiveness/postgresql-sharp-mcp --pattern codegiveness-postgresql-sharp-mcp-0.4.0.tgz --dir release-verification
+gh attestation verify ./release-verification/codegiveness-postgresql-sharp-mcp-0.4.0.tgz --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
+Get-FileHash ./release-verification/codegiveness-postgresql-sharp-mcp-0.4.0.tgz -Algorithm SHA256
 $StagedTarball = Read-Host 'Path printed by npm stage download'
 Get-FileHash $StagedTarball -Algorithm SHA256
 ```
@@ -285,12 +285,12 @@ Only after that review, approve the exact stage:
 
 ```powershell
 npm.cmd stage approve $StageId --registry https://registry.npmjs.org/
-npm.cmd view '@codegiveness/postgresql-sharp-mcp@0.3.3' version dist.integrity dist.tarball --registry https://registry.npmjs.org/
+npm.cmd view '@codegiveness/postgresql-sharp-mcp@0.4.0' version dist.integrity dist.tarball --registry https://registry.npmjs.org/
 npm.cmd view '@codegiveness/postgresql-sharp-mcp' dist-tags --registry https://registry.npmjs.org/
-npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.3.3 '@codegiveness/postgresql-sharp-mcp@0.3.3' --version
+npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.4.0 '@codegiveness/postgresql-sharp-mcp@0.4.0' --version
 ```
 
-Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/codegiveness-postgresql-sharp-mcp-0.3.3.tgz --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
+Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/codegiveness-postgresql-sharp-mcp-0.4.0.tgz --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
 
 #### Recorded publication evidence
 

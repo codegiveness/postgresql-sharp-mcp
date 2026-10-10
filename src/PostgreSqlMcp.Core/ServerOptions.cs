@@ -8,7 +8,8 @@ namespace PostgreSqlMcp.Core;
 public sealed class ServerOptions
 {
     public required IReadOnlyDictionary<string, string> Targets { get; init; }
-    public IReadOnlySet<string>? AllowedDatabases { get; init; }
+    /// <summary>Database lock: the only physical databases this server may connect to, in configured order.</summary>
+    public IReadOnlyList<string>? AllowedDatabases { get; init; }
     public bool Unrestricted { get; init; } = true;
     public int QueryTimeout { get; init; } = 30;
     public int MaxRows { get; init; } = 1000;
@@ -22,11 +23,12 @@ public sealed class ServerOptions
     public static ServerOptions Parse(string[] args)
     {
         var cli = new Dictionary<string, string>(StringComparer.Ordinal);
-        bool validate = false;
+        bool validate = false, requireLock = false;
         string[] allowed = ["--targets-file", "--connection-string", "--databases", "--access-mode", "--query-timeout", "--log-level"];
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--validate") { validate = true; continue; }
+            if (args[i] == "--require-database-lock") { requireLock = true; continue; }
             int equals = args[i].IndexOf('=');
             string key = equals < 0 ? args[i] : args[i][..equals];
             if (!allowed.Contains(key, StringComparer.Ordinal)) throw new ToolException("configuration", "Unknown option. Use --help for supported options.");
@@ -45,16 +47,33 @@ public sealed class ServerOptions
                 throw new ToolException("configuration", $"POSTGRES_{env} must be {min}..{max}.");
             return n;
         }
+        string? requireText = Env("REQUIRE_DATABASE_LOCK");
+        if (!requireLock && requireText is not null && !bool.TryParse(requireText, out requireLock))
+            throw new ToolException("configuration", "POSTGRES_REQUIRE_DATABASE_LOCK must be true or false.");
         var targets = new Dictionary<string, string>(StringComparer.Ordinal);
-        HashSet<string>? allowedDatabases = null;
+        List<string>? allowedDatabases = null;
         try
         {
             string? json = Env("TARGETS");
             string? file = Value("--targets-file", "TARGETS_FILE");
             string? baseString = Env("CONNECTION_STRING") ?? cli.GetValueOrDefault("--connection-string");
             string? names = Value("--databases", "DATABASES");
-            if ((json is not null || file is not null) && (baseString is not null || names is not null))
-                throw new ToolException("configuration", "Use targets JSON/file OR connection string + database allowlist, not both.");
+            if ((json is not null || file is not null) && baseString is not null)
+                throw new ToolException("configuration", "Use targets JSON/file OR a connection string, not both.");
+            if (names is not null)
+            {
+                using var doc = JsonDocument.Parse(names);
+                allowedDatabases = [];
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    string db = item.GetString() ?? "";
+                    if (!DatabaseRegistry.IsDatabaseName(db))
+                        throw new ToolException("configuration", "POSTGRES_DATABASES entries must be database names of 1..63 UTF-8 bytes without NUL.");
+                    if (allowedDatabases.Contains(db)) throw new ToolException("configuration", "Duplicate database name in POSTGRES_DATABASES.");
+                    allowedDatabases.Add(db);
+                }
+                if (allowedDatabases.Count == 0) throw new ToolException("configuration", "POSTGRES_DATABASES must list at least one database.");
+            }
             if (json is null && file is not null) json = File.ReadAllText(file);
             if (json is not null)
             {
@@ -67,16 +86,12 @@ public sealed class ServerOptions
             else if (baseString is not null)
             {
                 var builder = new NpgsqlConnectionStringBuilder(baseString);
-                if (names is not null)
+                if (allowedDatabases is not null)
                 {
-                    using var doc = JsonDocument.Parse(names);
-                    allowedDatabases = new HashSet<string>(StringComparer.Ordinal);
-                    foreach (var name in doc.RootElement.EnumerateArray())
+                    foreach (string db in allowedDatabases)
                     {
-                        string db = name.GetString() ?? "";
                         builder.Database = db;
-                        if (!allowedDatabases.Add(db) || !targets.TryAdd(db, builder.ConnectionString))
-                            throw new ToolException("configuration", "Duplicate database target.");
+                        targets.Add(db, builder.ConnectionString);
                     }
                 }
                 else
@@ -103,6 +118,8 @@ public sealed class ServerOptions
             // Provider/parser messages can contain secrets; never echo connection-string input.
             throw new ToolException("configuration", "Invalid targets configuration. Check JSON, file access and Npgsql connection-string syntax.");
         }
+        if (requireLock && allowedDatabases is null)
+            throw new ToolException("configuration", "POSTGRES_REQUIRE_DATABASE_LOCK/--require-database-lock is set, but no POSTGRES_DATABASES/--databases database lock is configured.");
         string mode = Value("--access-mode", "ACCESS_MODE") ?? "unrestricted";
         if (mode is not ("restricted" or "unrestricted")) throw new ToolException("configuration", "Access mode must be restricted or unrestricted.");
         int poolSize = Number("POOL_SIZE", 8, 1, 32);
