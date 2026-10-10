@@ -59,9 +59,9 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
 }
 
 /// <summary>
-/// One server-owned transaction. The connection is not exposed: every statement goes through
-/// <see cref="ExecuteReaderAsync"/>, which prepends the pending transaction setup (READ ONLY/READ WRITE and timeouts)
-/// to the first batch, so no caller can run SQL before the transaction mode is set.
+/// One server-owned transaction. The connection, transaction and batches are not exposed: every statement goes through
+/// <see cref="ExecuteReaderAsync"/>, which builds the batch itself and prepends the pending transaction setup
+/// (READ ONLY/READ WRITE and timeouts) to the first one, so no caller can run SQL before the transaction mode is set.
 /// </summary>
 public sealed class SqlSession
 {
@@ -83,33 +83,44 @@ public sealed class SqlSession
         pendingSetup = setup;
     }
 
-    /// <summary>Creates an empty batch bound to this session's transaction; run it with <see cref="ExecuteReaderAsync"/>.</summary>
-    public NpgsqlBatch CreateBatch(int? timeout = null) => new(connection, transaction) { Timeout = timeout ?? options.QueryTimeout };
-
-    /// <summary>Runs <paramref name="batch"/>, preceded by the transaction setup if it has not reached the server yet.</summary>
-    public async Task<NpgsqlDataReader> ExecuteReaderAsync(NpgsqlBatch batch, CommandBehavior behavior, CancellationToken ct)
+    /// <summary>
+    /// Runs <paramref name="commands"/> as one batch, preceded by the transaction setup if it has not reached the server yet.
+    /// Dispose the result to release the reader and the batch.
+    /// </summary>
+    public async Task<SessionReader> ExecuteReaderAsync(IReadOnlyList<NpgsqlBatchCommand> commands, CommandBehavior behavior,
+        CancellationToken ct, int? timeout = null)
     {
+        var batch = new NpgsqlBatch(connection, transaction) { Timeout = timeout ?? options.QueryTimeout };
         // Each batch command is one extended-protocol statement, so the setup is one command per statement.
         string[]? setup = pendingSetup;
         if (setup is not null)
-            for (int i = setup.Length - 1; i >= 0; i--) batch.BatchCommands.Insert(0, new NpgsqlBatchCommand(setup[i]));
+            foreach (string statement in setup) batch.BatchCommands.Add(new NpgsqlBatchCommand(statement));
+        foreach (NpgsqlBatchCommand command in commands) batch.BatchCommands.Add(command);
         try
         {
             NpgsqlDataReader reader = await batch.ExecuteReaderAsync(behavior, ct).ConfigureAwait(false);
             pendingSetup = null;
-            return reader;
+            return new SessionReader(batch, reader);
         }
-        // The server processed the batch: either the setup ran or the transaction is aborted. Otherwise
-        // (cancelled before sending, I/O failure) the setup stays pending for any later statement.
-        catch (PostgresException) when (setup is not null) { pendingSetup = null; throw; }
+        catch (PostgresException) when (setup is not null)
+        {
+            // The server processed the batch: either the setup ran or the transaction is aborted. Otherwise
+            // (cancelled before sending, I/O failure) the setup stays pending for any later statement.
+            pendingSetup = null;
+            await batch.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+        catch
+        {
+            await batch.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>Runs one fixed control statement and discards its result.</summary>
     public async Task ExecuteAsync(string sql, CancellationToken ct, int? timeout = null)
     {
-        await using NpgsqlBatch batch = CreateBatch(timeout);
-        batch.BatchCommands.Add(new NpgsqlBatchCommand(sql));
-        await using NpgsqlDataReader reader = await ExecuteReaderAsync(batch, CommandBehavior.Default, ct).ConfigureAwait(false);
+        await using SessionReader result = await ExecuteReaderAsync([new NpgsqlBatchCommand(sql)], CommandBehavior.Default, ct, timeout).ConfigureAwait(false);
     }
 
     /// <summary>Marks this session's pooled connections for disposal instead of reuse.</summary>
@@ -126,12 +137,11 @@ public sealed class SqlSession
         bool serverPage = readOnly && kind is "SELECT" or "WITH" or "VALUES" or "TABLE";
         if (serverPage)
             sql = $"SELECT * FROM (\n{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
-        await using NpgsqlBatch batch = CreateBatch();
         var command = new NpgsqlBatchCommand(sql);
         if (parameters is not null)
             foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        batch.BatchCommands.Add(command);
-        await using var reader = await ExecuteReaderAsync(batch, CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
+        await using SessionReader result = await ExecuteReaderAsync([command], CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
+        NpgsqlDataReader reader = result.Reader;
         if (reader.FieldCount > 128) throw new ToolException("result_too_wide", "Select at most 128 columns.");
         var columns = new ColumnInfo[reader.FieldCount];
         for (int col = 0; col < columns.Length; col++)
@@ -223,5 +233,25 @@ public sealed class SqlSession
         int? affected = !truncated && reader.RecordsAffected >= 0 ? reader.RecordsAffected : null;
         return new(database, columns, rows, affected, offset, truncated && readOnly ? offset + rows.Count : null,
             truncated, reason, clips);
+    }
+}
+
+/// <summary>A result reader that owns the batch it reads from; disposing it releases both.</summary>
+public sealed class SessionReader : IAsyncDisposable
+{
+    private readonly NpgsqlBatch batch;
+
+    internal SessionReader(NpgsqlBatch batch, NpgsqlDataReader reader)
+    {
+        this.batch = batch;
+        Reader = reader;
+    }
+
+    public NpgsqlDataReader Reader { get; }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await Reader.DisposeAsync().ConfigureAwait(false); }
+        finally { await batch.DisposeAsync().ConfigureAwait(false); }
     }
 }
