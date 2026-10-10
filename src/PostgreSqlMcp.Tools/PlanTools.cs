@@ -17,10 +17,12 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
     public Task<CallToolResult> ExplainQuery(CancellationToken ct, string database, string sql,
-        string format = "summary", bool analyze = false, string[]? indexes = null, string? target = null) =>
+        string format = "summary", bool analyze = false, string[]? indexes = null, string? target = null,
+        [Description(ParameterDescriptions.Values)] JsonElement[]? parameters = null) =>
         ToolReply.Run(database, async () =>
         {
             string statement = SqlGuard.Validate(sql);
+            IReadOnlyList<string?>? values = SqlParameters.Normalize(parameters);
             bool json = format.Equals("json", StringComparison.OrdinalIgnoreCase);
             if (!json && !format.Equals("summary", StringComparison.OrdinalIgnoreCase))
                 throw new ToolException("invalid_format", "format must be summary or json.");
@@ -31,7 +33,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
             {
                 if (candidates.Length == 0)
                 {
-                    using JsonDocument plan = await ReadPlan(session, statement, analyze, token);
+                    using JsonDocument plan = await ReadPlan(session, statement, values, analyze, token);
                     return new
                     {
                         database, analyzed = analyze, format,
@@ -56,7 +58,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                 try
                 {
                     await ExecuteControl(session, reset, token);
-                    using JsonDocument baseline = await ReadPlan(session, statement, false, token);
+                    using JsonDocument baseline = await ReadPlan(session, statement, values, false, token);
                     var hypotheticalIndexes = new List<HypotheticalIndex>();
                     // Candidates are independent; send one batch rather than one round trip per index.
                     await using var batch = new NpgsqlBatch(session.Connection, session.Transaction) { Timeout = options.QueryTimeout };
@@ -85,7 +87,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                         if (candidate + 1 < candidates.Length && !await reader.NextResultAsync(token))
                             throw new ToolException("invalid_index", "HypoPG did not return a result for each candidate.");
                     }
-                    using JsonDocument evaluated = await ReadPlan(session, statement, false, token);
+                    using JsonDocument evaluated = await ReadPlan(session, statement, values, false, token);
                     PlanSummary before = Summarize(baseline.RootElement);
                     PlanSummary after = Summarize(evaluated.RootElement);
                     return new
@@ -155,11 +157,13 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     [GeneratedRegex(@"\A\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex IndexDefinition { get; }
 
-    private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, bool analyze, CancellationToken ct)
+    private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, IReadOnlyList<string?>? values, bool analyze, CancellationToken ct)
     {
         await using var command = Command(session, analyze
             ? "EXPLAIN (FORMAT JSON, ANALYZE TRUE, BUFFERS TRUE, VERBOSE FALSE) " + sql
             : "EXPLAIN (FORMAT JSON, VERBOSE FALSE) " + sql);
+        // Bound values give PostgreSQL a custom plan for these values, as for the same statement with literals.
+        if (values is not null) SqlParameters.Bind(command.Parameters, values);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.SingleRow, ct);
         if (!await reader.ReadAsync(ct) || reader.IsDBNull(0))
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");

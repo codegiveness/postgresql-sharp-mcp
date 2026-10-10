@@ -49,6 +49,8 @@ public static class ToolReply
         "42P01" => "A referenced relation does not exist or is not visible in the current search path.",
         "42703" => "A referenced column does not exist.",
         "42883" => "No matching PostgreSQL function or operator was found. Check argument types and search path.",
+        "08P01" => "PostgreSQL rejected the request as a protocol violation. With parameters, supply exactly one value per $n placeholder in the statement.",
+        "42P18" => "PostgreSQL could not determine a parameter's data type. Cast the placeholder, for example $1::int or $1::text.",
         "22P02" => "A value has invalid syntax for its PostgreSQL type. Check input values and casts.",
         "22003" => "A numeric value is outside the PostgreSQL type's range.",
         "22012" => "PostgreSQL rejected division by zero.",

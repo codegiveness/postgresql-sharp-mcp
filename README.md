@@ -344,11 +344,13 @@ Except `list_databases`, every tool **requires `database`**. Every tool accepts 
 | `list_schemas` | Schemas with USAGE privilege | literal `prefix`, `include_system`, page |
 | `list_objects` | Tables, views, materialized views, sequences, functions, procedures and extensions | `schema`, `type`, literal `search`, `include_system`, page |
 | `get_object_details` | One object's metadata section | `schema`, `name`, `section`: columns/constraints/indexes/triggers/definition/parameters; `type`, `identity_arguments`, page |
-| `execute_sql` | One SQL statement; bounded results or explicitly enabled writes | `sql`, `read_only`, page |
-| `explain_query` | Estimated/actual JSON plan and compact major-node summary | `sql`, `format`: summary/json, `analyze`, optional HypoPG `indexes` |
+| `execute_sql` | One SQL statement; bounded results or explicitly enabled writes | `sql`, `parameters` (values for `$1..$n`), `read_only`, page |
+| `explain_query` | Estimated/actual JSON plan and compact major-node summary | `sql`, `parameters`, `format`: summary/json, `analyze`, optional HypoPG `indexes` |
 | `analyze_indexes` | Index size, usage, validity, constraints and structural duplicate evidence | `schema`, `table`, page |
 | `get_top_queries` | Current-database `pg_stat_statements` workload | `order_by`: total_time/mean_time/calls/rows/reads, page |
 | `analyze_db_health` | Summary or focused PostgreSQL health evidence | `section`: summary/vacuum/index/constraints/sequences/replication/blocking; `schema` where applicable, page |
+
+`parameters` binds up to 256 JSON scalars (string, number, boolean or `null`) to `$1..$n` in order. Values are sent separately from the SQL text, never interpolated, so quotes and statement-like text in a value stay data. Each value is sent as PostgreSQL's untyped `unknown`, so the server infers its type from context exactly as for a quoted literal (`WHERE created_at > $1` with `"2026-01-20"`). Cast where context is ambiguous (`$1::int`, `$1::jsonb`); objects and arrays are refused, so pass JSON documents as strings and cast. A value-count mismatch returns SQLSTATE `08P01`. Paging re-binds the same values for `next_offset`, and parameters do not change read-only enforcement.
 
 Routine overloads require the exact `identity_arguments` from `list_objects`, including parameter names; an empty string selects zero arguments. Use `type` to disambiguate relation/routine name collisions. Discovery filters by role privileges; missing or hidden objects return an error. Table definitions are structural fragments, not a round-trip DDL export.
 
