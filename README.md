@@ -391,11 +391,23 @@ The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", 
 
 To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
 
+### Supported PostgreSQL versions
+
+**PostgreSQL 13 or newer** is supported. The integration verifier runs the MCP scenarios against official Docker images of majors 13 through 18 in CI. PostgreSQL 13 reached community end of life in November 2025, so the minimum can rise in a later release. Older servers are untested and unsupported; some catalog queries need 13 (`regcollation`) and there is no compatibility layer below it.
+
+| Area | Requirement and behavior |
+|---|---|
+| All tools | PostgreSQL 13+ |
+| `get_top_queries` | `pg_stat_statements` extension 1.8+ (the PostgreSQL 13 layout). The `toplevel` column is filled with extension 1.9+ (PostgreSQL 14+ default); with 1.8 the column is still returned, always null, and the notes say so. A cluster upgraded with `pg_upgrade` keeps its old extension version until `ALTER EXTENSION pg_stat_statements UPDATE` runs in each database; below 1.8 the tool returns `extension_outdated` with that instruction instead of a generic column error. |
+| `get_object_details` | Column collations use `regcollation` (13+). PostgreSQL 18 virtual generated columns are shown as such. |
+| `analyze_indexes` | `NULLS NOT DISTINCT` (PostgreSQL 15+) is compared when the server has it. |
+| `explain_query` with `indexes` | HypoPG package for the server's major version (no preload needed). |
+
 ### Plans and optional extensions
 
 No extensions are installed automatically. An authorized administrator must configure extensions in the databases where they are needed:
 
-- **`pg_stat_statements`:** install the server extension package, add it to `shared_preload_libraries` without removing existing entries, restart PostgreSQL, and run `CREATE EXTENSION pg_stat_statements` in each selected database. It is needed only for workload statistics.
+- **`pg_stat_statements`:** install the server extension package, preload it at server start (`shared_preload_libraries` in the server configuration, or the equivalent parameter-group/console setting of a managed service, without removing existing entries), restart PostgreSQL as that setting requires, and run `CREATE EXTENSION pg_stat_statements` in each selected database. After a major-version upgrade, also run `ALTER EXTENSION pg_stat_statements UPDATE` there. It is needed only for workload statistics.
 - **HypoPG:** install the extension package matching the PostgreSQL server major version, then run `CREATE EXTENSION hypopg` in the selected database. HypoPG itself does not require preload or a restart. It is needed only for hypothetical `indexes` in `explain_query`.
 
 Extension schemas are discovered and quoted rather than assumed to be `public`. Missing or unready extensions produce explicit errors. Check availability and installation before changing a database:
@@ -525,7 +537,7 @@ The .NET tool and framework-dependent source builds require the .NET 10 runtime;
 
 ## Development and licensing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture uses PostgreSQL 17; this is a verification target, not a guarantee for every PostgreSQL version, platform or MCP client.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture defaults to PostgreSQL 17 and CI also runs 13–16 and 18; this is a verification target, not a guarantee for every platform, hosting provider or MCP client.
 
 The server, npm installer, packaging, verification and release automation are C#/.NET. Workflow badges and [Scorecard](https://scorecard.dev/viewer/?uri=github.com/codegiveness/postgresql-sharp-mcp) report checks and practices, not certifications. Feature, platform and practice badges link to the documentation or configuration behind them; they describe implemented capabilities, not guarantees. [Best Practices](https://www.bestpractices.dev/en/projects/15155) is the saved owner self-assessment and may be in progress. See [Security posture](docs/security-posture.md) for [supply-chain evidence](docs/security-posture.md#supply-chain-evidence), SBOMs and limits, and [SECURITY.md](SECURITY.md) for reporting.
 

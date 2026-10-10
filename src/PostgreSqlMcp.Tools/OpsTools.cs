@@ -44,7 +44,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
         });
 
     [McpServerTool(Name = "get_top_queries", ReadOnly = true, Destructive = false, OpenWorld = false)]
-    [Description("Rank pg_stat_statements for the current database only. Requires an installed, preloaded extension; query text clipping is explicit.")]
+    [Description("Rank pg_stat_statements for the current database only. Requires an installed, preloaded extension at version 1.8 or newer (PostgreSQL 13+); toplevel is null before extension version 1.9 (PostgreSQL 14). Query text clipping is explicit.")]
     public Task<CallToolResult> GetTopQueries(CancellationToken ct, string database,
         string order_by = "total_time", int? limit = null, int offset = 0, string? target = null) =>
         ToolReply.Run(database, async () =>
@@ -60,14 +60,18 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
             };
             return await executor.WithSessionAsync<object>(database, async (session, token) =>
             {
-                QueryPage extension = await session.QueryAsync("SELECT n.nspname FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_stat_statements'", limit: 1, ct: token);
+                QueryPage extension = await session.QueryAsync(ExtensionLayoutSql, limit: 1, ct: token);
                 if (extension.Rows.Count == 0)
-                    throw new ToolException("extension_missing", "pg_stat_statements is not installed in this database. Ask the administrator to configure shared_preload_libraries and install the extension; this tool does not install extensions.");
+                    throw new ToolException("extension_missing", "pg_stat_statements is not installed in this database. Ask the administrator to preload the module at server start (shared_preload_libraries, or the managed service's equivalent setting) and run CREATE EXTENSION pg_stat_statements in this database; this tool does not install extensions.");
                 if (extension.ClippedCells.Count != 0)
                     throw new ToolException("metadata_truncated", "The cell limit is too small to resolve the extension schema safely.");
-                string ns = QuoteIdentifier((string)extension.Rows[0][0]!);
+                object?[] layout = extension.Rows[0];
+                string ns = QuoteIdentifier((string)layout[0]!);
+                if (layout[2] is not true)
+                    throw new ToolException("extension_outdated", $"The pg_stat_statements extension in this database is version {layout[1]}, older than the minimum 1.8 (PostgreSQL 13 layout; its view has no total_exec_time column). Ask the administrator to run ALTER EXTENSION pg_stat_statements UPDATE in this database, typically needed after a PostgreSQL major-version upgrade; this tool does not change extensions.");
+                bool hasToplevel = layout[3] is true;
                 string sql = $"""
-                    SELECT s.userid, s.queryid, s.toplevel, s.calls, s.total_exec_time AS total_time_ms,
+                    SELECT s.userid, s.queryid, {(hasToplevel ? "s.toplevel" : "NULL::boolean AS toplevel")}, s.calls, s.total_exec_time AS total_time_ms,
                            s.mean_exec_time AS mean_time_ms, s.min_exec_time AS min_time_ms,
                            s.max_exec_time AS max_time_ms, s.rows, s.shared_blks_hit, s.shared_blks_read,
                            s.shared_blks_written, s.temp_blks_read, s.temp_blks_written,
@@ -76,20 +80,32 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
                            s.query IS NULL OR s.query = '<insufficient privilege>' AS query_text_unavailable
                     FROM {ns}.pg_stat_statements s
                     WHERE s.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
-                    ORDER BY {order} DESC NULLS LAST, s.userid, s.queryid, s.toplevel
+                    ORDER BY {order} DESC NULLS LAST, s.userid, s.queryid{(hasToplevel ? ", s.toplevel" : "")}
                     """;
                 try
                 {
                     QueryPage page = await session.QueryAsync(sql,
                         new Dictionary<string, object?> { ["text_limit"] = options.MaxCellChars }, limit ?? Math.Min(10, options.MaxRows), offset, token);
-                    return new { database, order_by, result = page, notes = "Statistics are cumulative and can reset or entries can be evicted. PostgreSQL hides other users' query text without appropriate privileges. Pagination re-executes against changing statistics, not a snapshot." };
+                    return new { database, order_by, result = page, notes = "Statistics are cumulative and can reset or entries can be evicted. PostgreSQL hides other users' query text without appropriate privileges. Pagination re-executes against changing statistics, not a snapshot." + (hasToplevel ? "" : " toplevel is null because this pg_stat_statements version (older than 1.9, PostgreSQL 14) does not record it; update the extension to distinguish nested statements.") };
                 }
                 catch (PostgresException ex) when (ex.SqlState == "55000")
                 {
-                    throw new ToolException("extension_not_ready", "pg_stat_statements is installed but not initialized (SQLSTATE 55000). Ask the administrator to configure shared_preload_libraries and restart PostgreSQL; this tool does not change server configuration.");
+                    throw new ToolException("extension_not_ready", "pg_stat_statements is installed but its module is not loaded (SQLSTATE 55000). Ask the administrator to preload pg_stat_statements at server start: shared_preload_libraries in the server configuration, or the equivalent parameter-group/console setting of a managed service, followed by the restart that setting requires. This tool does not change server configuration.");
                 }
             }, ct: ct, target: target);
         });
+
+    // Column presence, not PostgreSQL's version, decides the query: an upgraded cluster can keep an older extension version.
+    // total_exec_time and its siblings arrived with extension 1.8 (PostgreSQL 13); toplevel with 1.9 (PostgreSQL 14).
+    private const string ExtensionLayoutSql = """
+        SELECT n.nspname::text, e.extversion::text,
+               EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = v.oid AND a.attname = 'total_exec_time' AND NOT a.attisdropped) AS has_exec_time,
+               EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = v.oid AND a.attname = 'toplevel' AND NOT a.attisdropped) AS has_toplevel
+        FROM pg_catalog.pg_extension e
+        JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+        LEFT JOIN pg_catalog.pg_class v ON v.relnamespace = n.oid AND v.relname = 'pg_stat_statements' AND v.relkind = 'v'
+        WHERE e.extname = 'pg_stat_statements'
+        """;
 
     [McpServerTool(Name = "analyze_indexes", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Paged current-database index validity, usage, size and structurally duplicate evidence. Recommendations are contextual, never fabricated missing-index predictions.")]
