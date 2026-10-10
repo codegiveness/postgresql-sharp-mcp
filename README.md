@@ -506,7 +506,7 @@ For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `prim
 | `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object |
 | `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported |
 | `POSTGRES_CONNECTION_STRING` | Base Npgsql string; bootstrap `Database` defaults to `postgres` if omitted; `--connection-string` supported |
-| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (no 32-name limit; names are not profiles), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
+| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names (no 32-name limit; with a connection string the names are `target` aliases of one login profile and do not count toward the profile limit), with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
 | `POSTGRES_REQUIRE_DATABASE_LOCK` | `false`; `true` makes a missing `POSTGRES_DATABASES` a startup error; `--require-database-lock` supported |
 | `POSTGRES_ACCESS_MODE` | unrestricted when omitted; opt into restricted to refuse writes; `--access-mode` supported |
 | `POSTGRES_QUERY_TIMEOUT` | 30 seconds; 1–600; `--query-timeout` supported |
