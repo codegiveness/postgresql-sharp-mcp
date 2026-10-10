@@ -48,7 +48,7 @@ public static class ToolReply
         "42501" => "The configured PostgreSQL role does not have permission for this operation.",
         // Tell the agent whether retrying as a write can work on this server at all.
         "25006" => _unrestricted
-            ? "PostgreSQL rejected a write in a READ ONLY transaction. On this server only execute_sql with read_only=false can write."
+            ? "PostgreSQL rejected a write in a READ ONLY transaction. If a write is intended, retry execute_sql with read_only=false; the target database must also accept writes (not a standby)."
             : "PostgreSQL rejected a write in a READ ONLY transaction. This server is in restricted access mode and refuses writes.",
         "25001" => "PostgreSQL rejected a transaction setting change after the transaction became active.",
         "28P01" or "28000" => "PostgreSQL authentication failed. Check the configured credentials and authentication policy.",

@@ -4,8 +4,8 @@ namespace PostgreSqlMcp.Tools;
 internal static class ParameterText
 {
     public const string Database = "Database name from list_databases, or a profile alias.";
-    public const string Target = "Connection profile; default profile if omitted.";
-    public const string Limit = "Page size; default 100.";
+    public const string Target = "Connection profile; if omitted, a profile alias given as database selects its profile, otherwise the default profile.";
+    public const string Limit = "Page size; default 100, at most max_rows (see list_databases limits).";
     public const string Offset = "next_offset from the previous page.";
     public const string IncludeSystem = "Include pg_catalog, information_schema and pg_* schemas.";
     public const string Sql = "One SQL statement.";

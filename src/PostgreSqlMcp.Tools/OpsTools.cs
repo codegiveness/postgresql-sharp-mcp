@@ -53,7 +53,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
     public Task<CallToolResult> GetTopQueries(CancellationToken ct,
         [Description(ParameterText.Database)] string database,
         [Description("total_time (default), mean_time, calls, rows, or reads; descending.")] string order_by = "total_time",
-        [Description("Page size; default 10.")] int? limit = null,
+        [Description("Page size; default 10, at most max_rows.")] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
         [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () =>
