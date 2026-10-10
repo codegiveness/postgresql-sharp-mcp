@@ -238,7 +238,7 @@ After publication, update an existing global .NET tool with `dotnet tool update 
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
 
-**Rolling back the 0.4.0 lock startup refusal:** if an existing `POSTGRES_DATABASES`/`--databases` configuration is refused after upgrading, you do not have to give up the upgrade permanently. Read the refusal findings on stderr, then either (a) pin the previous release (**0.3.3**: `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.3.3`, or `@0.3.3` in the npx `args`), which enforces the list inside the server without the PostgreSQL grant check, or (b) temporarily remove `POSTGRES_DATABASES`/`--databases` and any `POSTGRES_REQUIRE_DATABASE_LOCK`/`--require-database-lock` setting so the server starts on 0.4.0. Both are stopgaps: 0.3.3 accepts a lock only with a connection string (not with targets JSON/file), and removing the lock leaves the login's full PostgreSQL privileges reachable, so keep that login least-privileged and restore the lock soon. Fix the findings with the [hardening guide](SECURITY.md#database-lock-hardening), restore the lock, and re-run `--validate` before reconnecting the client.
+**Rolling back the 0.4.0 lock startup refusal:** if an existing `POSTGRES_DATABASES`/`--databases` configuration is refused after upgrading, you do not have to give up the upgrade permanently. Read the refusal findings on stderr, then either (a) pin the previous release (**0.3.3**: `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.3.3`, or `@0.3.3` in the npx `args`), which enforces the list inside the server without the PostgreSQL grant check, and **remove `--require-database-lock` from `args`** because 0.3.3 does not recognize it and exits with "Unknown option" (a `POSTGRES_REQUIRE_DATABASE_LOCK` environment variable is ignored by 0.3.3, so it is harmless there but no longer enforces anything), or (b) temporarily remove `POSTGRES_DATABASES`/`--databases` and any `POSTGRES_REQUIRE_DATABASE_LOCK`/`--require-database-lock` setting so the server starts on 0.4.0. Both are stopgaps: 0.3.3 accepts a lock only with a connection string (not with targets JSON/file), and removing the lock leaves the login's full PostgreSQL privileges reachable, so keep that login least-privileged and restore the lock soon. Fix the findings with the [hardening guide](SECURITY.md#database-lock-hardening), restore the lock, and re-run `--validate` before reconnecting the client.
 
 To migrate an existing MCP entry to the environment workflow, remove `POSTGRES_TARGETS`, `POSTGRES_TARGETS_FILE` and literal `POSTGRES_CONNECTION_STRING` from its PostgreSQL `env`, plus `--targets-file`/`--connection-string` arguments. Preserve other nonsensitive settings, especially restricted access mode. Step 2 clears conflicting variables only in the current shell. Combining a connection string with targets JSON/file fails closed. Protected files can remain on disk; do not delete or rename them merely to switch workflows.
 
@@ -339,17 +339,33 @@ docker build -t postgresql-sharp-mcp .
 
 MCP client entry. It carries no credential: `-e POSTGRES_CONNECTION_STRING` without a value makes Docker copy the variable from the environment of the process that starts `docker`, so launch the client from the shell prepared in [step 2](#2-prepare-the-connection-environment). `-i` keeps stdin open for MCP stdio; `--rm` removes the stopped container.
 
+**With `"command": "docker"`, the MCP entry's `env` block reaches only the `docker` CLI, not the server inside the container.** The container receives only what you pass explicitly: forward every setting (`POSTGRES_ACCESS_MODE`, `POSTGRES_DATABASES`, `POSTGRES_REQUIRE_DATABASE_LOCK`, `POSTGRES_QUERY_TIMEOUT`, ...) with its own `-e NAME` **before the image name**, or pass it as a CLI option **after the image name** (for example `--access-mode restricted`). The image sets no defaults, so a setting that is not forwarded is silently absent: the server runs `unrestricted` with no database lock and no error. The example keeps restricted mode and a required database lock:
+
 ```json
 {
   "mcpServers": {
     "postgresql": {
       "type": "stdio",
       "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "POSTGRES_CONNECTION_STRING", "postgresql-sharp-mcp"]
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "POSTGRES_CONNECTION_STRING",
+        "-e", "POSTGRES_ACCESS_MODE",
+        "-e", "POSTGRES_DATABASES",
+        "-e", "POSTGRES_REQUIRE_DATABASE_LOCK",
+        "postgresql-sharp-mcp"
+      ],
+      "env": {
+        "POSTGRES_ACCESS_MODE": "restricted",
+        "POSTGRES_DATABASES": "[\"<app_db>\"]",
+        "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
+      }
     }
   }
 }
 ```
+
+Omit the `POSTGRES_DATABASES`/`POSTGRES_REQUIRE_DATABASE_LOCK` lines (both `-e` pairs and `env` entries) if you do not use a [database lock](#database-lock); the lock needs the PostgreSQL grants described in the [hardening guide](SECURITY.md#database-lock-hardening).
 
 - **`Host=127.0.0.1` or `localhost` inside the container is the container itself,** not your computer. For PostgreSQL on the Docker host use a host name the container can resolve, such as `host.docker.internal` (Docker Desktop; on Linux Engine add `"--add-host=host.docker.internal:host-gateway"` to `args` before the image name), or `"--network", "host"` on Linux. For a remote server use its real host name and keep `SSL Mode=VerifyFull`.
 - The container environment is plaintext to Docker inspection and privileged operators; it is not a secret store. Restart the container after credential changes.

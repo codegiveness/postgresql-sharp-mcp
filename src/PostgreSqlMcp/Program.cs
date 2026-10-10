@@ -14,7 +14,9 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
         environment variable except where noted.
 
         Connection source (set exactly one; a connection string cannot be combined with targets JSON/file):
-          POSTGRES_CONNECTION_STRING   Npgsql key=value string; creates profile "primary". Database defaults to postgres.
+          POSTGRES_CONNECTION_STRING   Npgsql key=value string. Without a database lock it creates profile "primary"
+                                       (Database defaults to postgres); with --databases it creates one profile per
+                                       locked name, and Database is set to that name.
           --connection-string STR      Same, but POSTGRES_CONNECTION_STRING wins when both are set.
           POSTGRES_TARGETS             JSON object: profile -> Npgsql string. Each needs Host and Database; names are
                                        1..128 characters without control characters. Wins over a targets file.
@@ -41,7 +43,8 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
           POSTGRES_POOL_SIZE 8; 1..32 (profiles x pool size must not exceed 256)
 
         Discover accessible databases with list_databases; select a physical name per call with the tool's
-        database argument. Optional tool target selects a profile; default is primary or the first ordinal alias.
+        database argument. Optional tool target selects a profile; the default is the profile named primary if it
+        exists, otherwise the first profile name in ordinal order.
         """);
     return 0;
 }
