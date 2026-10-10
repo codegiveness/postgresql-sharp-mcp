@@ -11,6 +11,7 @@ internal static class Integration
         await Processes.RunAsync(new("dotnet", "build", Path.Combine(root, "postgresql-sharp-mcp.slnx"), "-c", "Release"), timeout: 180);
         await ResourceChecks.RunAsync();
         SarifRegression.Run();
+        ReleaseRegressions.Run();
         await using var fixture = new PostgresFixture();
         await fixture.StartAsync();
         var command = new Command("dotnet", Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net10.0", "PostgreSqlMcp.dll"));

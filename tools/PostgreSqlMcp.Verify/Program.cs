@@ -18,6 +18,8 @@ internal static class Program
                 SarifGate.Run(baseline, candidate, Console.Out);
             else if (args is ["sarif-regressions"])
                 SarifRegression.Run();
+            else if (args is ["release-regressions"])
+                ReleaseRegressions.Run();
             else if (args.Length > 0 && args[0] == "packages")
             {
                 string artifacts = Path.Combine(root, "artifacts", "packages");
@@ -44,7 +46,7 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions");
+                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions");
             return 0;
         }
         catch (Exception ex)

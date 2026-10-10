@@ -17,7 +17,7 @@ internal static class Release
     {
         try
         {
-            if (args.Length == 0) throw new InvalidOperationException("Expected validate-tag, metadata, context, archives, sbom, github, npm, or require-secret command.");
+            if (args.Length == 0) throw new InvalidOperationException("Expected validate-tag, metadata, context, archives, sbom, github, npm, nuget, or require-secret command.");
             string command = args[0];
             string tag = Environment.GetEnvironmentVariable("RELEASE_TAG") ?? "";
             if (command == "require-secret")
@@ -26,7 +26,7 @@ internal static class Release
                     throw new InvalidOperationException("The required publishing environment credential is missing.");
                 return 0;
             }
-            bool publication = command is "github" or "npm";
+            bool publication = command is "github" or "npm" or "nuget";
             string root = publication ? Environment.CurrentDirectory : FindRoot();
             if (command == "validate-tag")
             {
@@ -70,6 +70,9 @@ internal static class Release
                     break;
                 case "npm":
                     await StageNpmAsync(root, metadata.NpmName, metadata.Version, args.Length == 4);
+                    break;
+                case "nuget":
+                    await PublishNuGetAsync(root, metadata.Version);
                     break;
                 default:
                     throw new InvalidOperationException("Unknown release command.");
@@ -146,22 +149,20 @@ internal static class Release
                 await RunAsync("dotnet", ["publish", "src/PostgreSqlMcp/PostgreSqlMcp.csproj", "-c", "Release", "-r", rid, "--self-contained", "-p:RestoreLockedMode=true", "-o", temporary], root);
                 string archive = Path.Combine(output, "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"));
                 if (File.Exists(archive)) File.Delete(archive);
-                if (rid == "win-x64") ZipFile.CreateFromDirectory(temporary, archive);
+                if (rid == "win-x64") ReleaseArchive.CreateZip(temporary, archive);
                 else
                 {
                     await using var file = File.Create(archive);
                     await using var gzip = new GZipStream(file, CompressionLevel.Optimal);
                     using var tar = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: true);
-                    foreach (string path in Directory.EnumerateFiles(temporary, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+                    foreach (string path in ReleaseArchive.OrderedFiles(temporary))
                     {
                         using var data = File.OpenRead(path);
-                        var entry = new PaxTarEntry(TarEntryType.RegularFile, Path.GetRelativePath(temporary, path).Replace(Path.DirectorySeparatorChar, '/'))
+                        var entry = new PaxTarEntry(TarEntryType.RegularFile, ReleaseArchive.EntryName(temporary, path))
                         {
                             Uid = 0, Gid = 0, UserName = "", GroupName = "",
                             ModificationTime = DateTimeOffset.UnixEpoch,
-                            Mode = OperatingSystem.IsWindows()
-                                ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
-                                : File.GetUnixFileMode(path),
+                            Mode = ReleaseArchive.EntryMode(path),
                             DataStream = data
                         };
                         tar.WriteEntry(entry);
@@ -177,12 +178,14 @@ internal static class Release
         var files = ArtifactFiles(root, ReadMetadata(root)).Order(StringComparer.Ordinal).ToArray();
         var checksums = new List<string>(files.Length);
         foreach (string file in files)
-        {
-            await using var stream = File.OpenRead(file);
-            string hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
-            checksums.Add(hash + "  " + Path.GetFileName(file));
-        }
+            checksums.Add(await Sha256Async(file) + "  " + Path.GetFileName(file));
         await File.WriteAllLinesAsync(Path.Combine(root, "artifacts/SHA256SUMS"), checksums);
+    }
+
+    private static async Task<string> Sha256Async(string file)
+    {
+        await using var stream = File.OpenRead(file);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
     }
 
     private static string[] ArtifactFiles(string root, (string Version, string NpmName) metadata)
@@ -200,9 +203,13 @@ internal static class Release
     private static async Task PublishGitHubAsync(string root, string tag, (string Version, string NpmName) metadata)
     {
         string repo = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? throw new InvalidOperationException("GITHUB_REPOSITORY is required.");
-        string[] files = ArtifactFiles(root, metadata);
+        var local = new List<LocalAsset>();
+        foreach (string file in ArtifactFiles(root, metadata).Append(Path.Combine(root, "artifacts/SHA256SUMS")))
+            local.Add(new LocalAsset(Path.GetFileName(file), file, await Sha256Async(file)));
         var lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
-        if (lookup.ExitCode != 0)
+        IReadOnlyList<RemoteAsset> existing = [];
+        if (lookup.ExitCode == 0) existing = ReleaseAssets.Parse(lookup.Output);
+        else
         {
             // Only a genuine 404 means absent; authorization/network errors must not create a second release.
             if (!lookup.Error.Contains("HTTP 404", StringComparison.Ordinal)) throw new InvalidOperationException("GitHub release lookup failed.");
@@ -210,8 +217,47 @@ internal static class Release
             if (tag.Contains('-')) create.Add("--prerelease");
             await RunAsync("gh", create, root);
         }
-        await RunAsync("gh", ["release", "upload", tag, "--repo", repo, "--clobber", .. files, Path.Combine(root, "artifacts/SHA256SUMS")], root);
-        await SummaryAsync($"GitHub Release {tag}: archives, packages, checksums and application SBOM uploaded.\n");
+        // A re-run never replaces a published asset: existing ones must be byte-identical, only missing ones are uploaded.
+        var missing = await ReleaseAssets.PlanUploadsAsync(local, existing, async name =>
+        {
+            string directory = Directory.CreateTempSubdirectory("postgresql-release-asset-").FullName;
+            try
+            {
+                await RunAsync("gh", ["release", "download", tag, "--repo", repo, "--pattern", name, "--dir", directory], root);
+                return await Sha256Async(Path.Combine(directory, name));
+            }
+            finally { Directory.Delete(directory, true); }
+        });
+        if (missing.Count > 0)
+            await RunAsync("gh", ["release", "upload", tag, "--repo", repo, .. missing.Select(asset => asset.Path)], root);
+        await SummaryAsync($"GitHub Release {tag}: uploaded {missing.Count} missing asset(s); {local.Count - missing.Count} existing asset(s) already matched the built SHA-256 digests.\n");
+    }
+
+    private static async Task PublishNuGetAsync(string root, string version)
+    {
+        const string PackageId = "codegiveness.postgresql-sharp-mcp";
+        string apiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY") ?? "";
+        if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("NUGET_API_KEY is required.");
+        string package = Path.Combine(root, "artifacts/packages", PackageId + "." + version + ".nupkg");
+        if (!File.Exists(package)) throw new InvalidOperationException("The current NuGet package is missing.");
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        if (await NuGetRegistry.HasVersionAsync(http, PackageId, version))
+        {
+            // Versions are immutable: a duplicate is success only if it is this exact payload.
+            string registry = Path.Combine(Directory.CreateTempSubdirectory("postgresql-nuget-").FullName, "registry.nupkg");
+            try
+            {
+                await NuGetRegistry.DownloadAsync(http, PackageId, version, registry);
+                var differences = NuGetRegistry.ComparePayload(package, registry);
+                if (differences.Count > 0)
+                    throw new InvalidOperationException($"NuGet {version} already exists with a different payload ({string.Join("; ", differences.Take(5))}); refusing to treat it as published.");
+            }
+            finally { Directory.Delete(Path.GetDirectoryName(registry)!, true); }
+            await SummaryAsync($"NuGet {version} already exists with an identical payload (repository signature ignored); not republished.\n");
+            return;
+        }
+        await RunAsync("dotnet", ["nuget", "push", package, "--source", "https://api.nuget.org/v3/index.json", "--api-key", apiKey], root);
+        await SummaryAsync($"NuGet {version} pushed.\n");
     }
 
     private static async Task StageNpmAsync(string root, string name, string version, bool dryRun)
