@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Formats.Tar;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -150,24 +148,7 @@ internal static class Release
                 string archive = Path.Combine(output, "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"));
                 if (File.Exists(archive)) File.Delete(archive);
                 if (rid == "win-x64") ReleaseArchive.CreateZip(temporary, archive);
-                else
-                {
-                    await using var file = File.Create(archive);
-                    await using var gzip = new GZipStream(file, CompressionLevel.Optimal);
-                    using var tar = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: true);
-                    foreach (string path in ReleaseArchive.OrderedFiles(temporary))
-                    {
-                        using var data = File.OpenRead(path);
-                        var entry = new PaxTarEntry(TarEntryType.RegularFile, ReleaseArchive.EntryName(temporary, path))
-                        {
-                            Uid = 0, Gid = 0, UserName = "", GroupName = "",
-                            ModificationTime = DateTimeOffset.UnixEpoch,
-                            Mode = ReleaseArchive.EntryMode(path),
-                            DataStream = data
-                        };
-                        tar.WriteEntry(entry);
-                    }
-                }
+                else ReleaseArchive.CreateTarGz(temporary, archive);
             }
             finally { Directory.Delete(temporary, true); }
         }

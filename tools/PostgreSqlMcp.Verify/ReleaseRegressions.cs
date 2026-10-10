@@ -1,3 +1,4 @@
+using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,7 +11,7 @@ internal static class ReleaseRegressions
     public static void Run()
     {
         AssetPlanning().GetAwaiter().GetResult();
-        ZipReproducibility();
+        ArchiveReproducibility();
         NuGetPayloadComparison();
     }
 
@@ -59,7 +60,7 @@ internal static class ReleaseRegressions
             "GitHub release asset JSON was parsed incorrectly.");
     }
 
-    private static void ZipReproducibility()
+    private static void ArchiveReproducibility()
     {
         using TemporaryDirectory temporary = new();
         string source = Directory.CreateDirectory(Path.Combine(temporary.Path, "payload")).FullName;
@@ -85,6 +86,31 @@ internal static class ReleaseRegressions
         string third = Path.Combine(temporary.Path, "third.zip");
         ReleaseArchive.CreateZip(source, third);
         Check.That(!File.ReadAllBytes(first).AsSpan().SequenceEqual(File.ReadAllBytes(third)), "A changed payload must change the zip.");
+
+        // tar.gz uses GNU format because .NET's PAX writer embeds the process ID in extended-header names, which no
+        // single-process comparison can see; assert the format and the fixed metadata directly as well.
+        string tarFirst = Path.Combine(temporary.Path, "first.tar.gz"), tarSecond = Path.Combine(temporary.Path, "second.tar.gz");
+        File.WriteAllText(Path.Combine(source, "alpha.txt"), "first");
+        ReleaseArchive.CreateTarGz(source, tarFirst);
+        foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            File.SetLastWriteTimeUtc(file, new DateTime(2032, 6, 18, 5, 6, 7, DateTimeKind.Utc));
+        ReleaseArchive.CreateTarGz(source, tarSecond);
+        Check.That(File.ReadAllBytes(tarFirst).AsSpan().SequenceEqual(File.ReadAllBytes(tarSecond)), "tar.gz archives must not depend on on-disk modification times.");
+        using var tarFile = File.OpenRead(tarFirst);
+        using var gunzip = new GZipStream(tarFile, CompressionMode.Decompress);
+        using var memory = new MemoryStream();
+        gunzip.CopyTo(memory);
+        Check.That(!Encoding.ASCII.GetString(memory.ToArray()).Contains("PaxHeaders", StringComparison.Ordinal), "tar.gz archives must not contain process-ID-named PAX headers.");
+        memory.Position = 0;
+        var names = new List<string>();
+        using (var reader = new TarReader(memory))
+            while (reader.GetNextEntry() is { } entry)
+            {
+                names.Add(entry.Name);
+                Check.That(entry.Format == TarEntryFormat.Gnu && entry.ModificationTime == DateTimeOffset.UnixEpoch && entry.Uid == 0 && entry.Gid == 0,
+                    "tar.gz entries must use fixed GNU-format metadata.");
+            }
+        Check.That(names.SequenceEqual(["alpha.txt", "sub/nested.txt", "zeta.txt"]), "tar.gz entries must be sorted.");
     }
 
     private static void NuGetPayloadComparison()

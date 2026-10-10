@@ -1,3 +1,4 @@
+using System.Formats.Tar;
 using System.IO.Compression;
 
 internal static class ReleaseArchive
@@ -29,6 +30,28 @@ internal static class ReleaseArchive
             using var source = File.OpenRead(path);
             using Stream target = entry.Open();
             source.CopyTo(target);
+        }
+    }
+
+    /// <summary>
+    /// Writes a tar.gz whose bytes depend only on file names, contents and modes. GNU format on purpose: .NET's PAX writer
+    /// names each extended header after the process ID, so identical content would hash differently in every build.
+    /// </summary>
+    public static void CreateTarGz(string directory, string archive)
+    {
+        using var file = File.Create(archive);
+        using var gzip = new GZipStream(file, CompressionLevel.Optimal);
+        using var tar = new TarWriter(gzip, TarEntryFormat.Gnu, leaveOpen: true);
+        foreach (string path in OrderedFiles(directory))
+        {
+            using var data = File.OpenRead(path);
+            tar.WriteEntry(new GnuTarEntry(TarEntryType.RegularFile, EntryName(directory, path))
+            {
+                Uid = 0, Gid = 0, UserName = "", GroupName = "",
+                ModificationTime = DateTimeOffset.UnixEpoch,
+                Mode = EntryMode(path),
+                DataStream = data
+            });
         }
     }
 }
