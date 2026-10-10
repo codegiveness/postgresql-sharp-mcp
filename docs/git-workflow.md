@@ -490,6 +490,20 @@ EOF
 
 Creating a new `v*` tag stays allowed; moving or deleting an existing one is blocked, even for administrators. Release artifacts and attestations refer to the tagged commit, so a moved tag would make them misleading. In a genuine emergency the maintainer can disable the ruleset under **Settings → Rules → Rulesets**.
 
+### 4. Description, topics and Discussions
+
+```bash
+gh repo edit codegiveness/postgresql-sharp-mcp \
+  --description "PostgreSQL MCP server (C#/.NET) that lets AI assistants and coding agents discover databases, inspect schemas, run SQL (read-only by default), explain query plans and check index and database health. Install with npx, as a .NET tool or as a standalone binary." \
+  --enable-discussions \
+  --add-topic mcp,mcp-server,model-context-protocol,postgresql,postgres,csharp,dotnet,npgsql,dotnet-tool,llm,ai-tools,ai-agents,database,sql,database-tools,dba,query-optimization,hypopg,pg-stat-statements,postgresql-tool
+gh repo view codegiveness/postgresql-sharp-mcp --json description,homepageUrl,repositoryTopics,hasDiscussionsEnabled
+```
+
+- The description and topics are what GitHub search and topic pages match. Keep them true of the current release; GitHub allows at most 20 topics.
+- The homepage field stays empty: the README is the documentation, and the npm and NuGet pages are linked from its badges.
+- Discussions host questions (the issue chooser links to **Q&A**) and maintainer announcements. GitHub has no API for discussion categories or the social preview image; manage them under **Discussions → Categories** and **Settings → General → Social preview**. The uploaded social preview is [docs/assets/social-preview.png](assets/social-preview.png) (1280×640), which the README also shows as its banner; upload it again after changing it.
+
 ### Not recommended now
 
 - **Required approvals ≥ 1 or required code-owner review:** GitHub forbids approving your own pull request, so a solo maintainer could never merge. Revisit if a second maintainer joins. CODEOWNERS is in place for that day.
