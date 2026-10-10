@@ -127,7 +127,7 @@ GitHub profile Achievements are separate from repository status badges. Useful i
 
 The public [project entry 15155](https://www.bestpractices.dev/en/projects/15155) was verified on 2026-10-02: enrolled, **19% in progress**, with no passing achievement. This corrects the earlier lack-of-enrollment assessment. The form was read-only in the available unauthenticated browser session; no answers were saved.
 
-[`.bestpractices.json`](../.bestpractices.json) supplies 34 evidence-backed proposed answers, not certification or a claim that the hosted entry has changed. The proposals and major-feature test policy are available on `main` after [PR #17](https://github.com/codegiveness/postgresql-sharp-mcp/pull/17) merged; historical CI evidence remains specific to its named revision. The entry owner can review automation proposals using **Save (and continue) 🤖**, following the badge application's [repository proposal instructions](https://github.com/ossf/best-practices-badge/blob/main/docs/bestpractices-json.md). Review every proposed answer before saving. Neither repository publication nor CI saves answers on the badge website.
+[`.bestpractices.json`](../.bestpractices.json) supplies 54 proposed answers (49 Met, 4 N/A, 1 Unmet), not certification or a claim that the hosted entry has changed. The first 34 proposals and the major-feature test policy reached `main` in [PR #17](https://github.com/codegiveness/postgresql-sharp-mcp/pull/17); the remaining 20 passing-level answers were added from evidence checked on 2026-10-10. Historical CI evidence remains specific to its named revision. The entry owner can review automation proposals using **Save (and continue) 🤖**, following the badge application's [repository proposal instructions](https://github.com/ossf/best-practices-badge/blob/main/docs/bestpractices-json.md). Review every proposed answer before saving. Neither repository publication nor CI saves answers on the badge website.
 
 | Evidence available | Criteria supported |
 |---|---|
@@ -136,8 +136,15 @@ The public [project entry 15155](https://www.bestpractices.dev/en/projects/15155
 | [Security reporting policy](../SECURITY.md#reporting-a-vulnerability), enabled private-reporting API response | Public reporting process and confidential HTTPS reporting route |
 | [Build settings](../Directory.Build.props), [verification instructions](../CONTRIBUTING.md#verify-behavior), [successful CI run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/36975816424) | Common build tools, automated suite, .NET invocation, CI, nullable checking and warnings-as-errors |
 | [Successful CodeQL run](https://github.com/codegiveness/postgresql-sharp-mcp/actions/runs/36975816274), [scanner workflow](../.github/workflows/codeql.yml) | Common-vulnerability static-analysis rules and push/PR scan frequency |
+| Owner attestation, [trust boundary](../SECURITY.md#trust-boundary), [permission model](../SECURITY.md#postgresql-permissions-are-the-authority) | Secure-design and common-error knowledge, attested by the owner rather than proven by the documents |
+| GitHub API counts on 2026-10-10: 0 issues, 0 security advisories, 0 Dependabot alerts, 0 open CodeQL alerts | Bug and enhancement responses (met only vacuously), vulnerability-report response and release-note vulnerability listing (N/A), 60-day and critical vulnerability fixes, static- and dynamic-analysis fixes |
+| [CodeQL](../.github/workflows/codeql.yml), [fuzzing](../.github/workflows/fuzzing.yml) and [secret-scanning](../.github/workflows/secrets.yml) workflows with successful runs on `main` and before the v0.4.0 release | Pre-release static analysis, dynamic analysis and leaked-credential scanning |
+| HTTPS downloads checked against committed digests; release checksums and attestations | No unsigned hash retrieved over HTTP |
+| Npgsql 10.0.3 and .NET `SslStream` delegation; operator-controlled [TLS settings](../SECURITY.md#connection-and-resource-settings) | Key lengths, working algorithms, known weaknesses, forward secrecy and secure random generation |
 
-Leave developer-knowledge attestations, historical response-time claims, branch-coverage percentages, cryptographic policy guarantees, release-specific pre-release analysis and absence-of-vulnerabilities/credentials claims unanswered until their evidence is established. Configuration or a successful current scan does not prove those criteria. The repository was created on the assessment date; activity does not supply months of maintenance or response history. Independent review also remains distinct from the enforced PR/check policy.
+The owner chose on 2026-10-10 to answer the criteria previously left open. Developer-knowledge answers rest on the owner's attestation. Response and fix answers record zero reports and alerts on that date; where the criterion offers no N/A they are met only vacuously, and all must be re-evaluated when reports arrive. Cryptographic answers describe Npgsql, .NET and operating-system defaults; negotiated TLS parameters depend on the operator's `SSL Mode` and PostgreSQL server, and Npgsql still answers a server's legacy MD5 request unless `Require Auth` refuses it. Scanner results are point-in-time and do not prove the absence of vulnerabilities or credentials. `test_most` is Unmet because no statement or branch coverage is measured.
+
+The file does not propose 13 passing criteria: `contribution`, `floss_license`, `floss_license_osi`, `license_location`, `documentation_basics`, `sites_https`, `discussion`, `repo_public`, `repo_track`, `repo_distributed`, `release_notes`, `report_process` and `delivery_mitm`. Answer them on the badge website or add evidence-backed proposals. The repository was created on 2026-10-02; activity does not supply months of maintenance or response history. Independent review also remains distinct from the enforced PR/check policy.
 
 ## Sources
 
@@ -149,6 +156,8 @@ Leave developer-knowledge attestations, historical response-time claims, branch-
 - [GitHub generic-pattern enablement](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enabling-secret-scanning-for-generic-patterns)
 - [GitHub validity checks and issuer requests](https://docs.github.com/en/code-security/concepts/secret-security/validity-checks)
 - [OpenSSF Best Practices passing criteria](https://www.bestpractices.dev/en/criteria/0)
+- [.NET TLS/SSL best practices](https://learn.microsoft.com/dotnet/core/extensions/sslstream-best-practices)
+- [Npgsql connection-string security parameters](https://www.npgsql.org/doc/connection-string-parameters.html#security-and-encryption)
 - [Gitleaks CLI and configuration](https://github.com/gitleaks/gitleaks)
 - [Trivy image vulnerability scanning](https://github.com/aquasecurity/trivy)
 - [OpenSSF Scorecard](https://github.com/ossf/scorecard)
