@@ -55,6 +55,7 @@ internal static class DatabaseLockChecks
 
         await VerifyRequireSwitchAsync(command, connectionMode, targetsMode);
         await VerifyConnectionModeAsync(command, connectionMode);
+        await VerifyLargeLockAsync(command, connectionMode);
         await VerifyTargetsModeAsync(command, targetsMode);
         await VerifyValidateAsync(command, connectionMode, targetsMode);
         await VerifyRefusalsAsync(command, fixture, connectionMode, targetsMode);
@@ -92,6 +93,24 @@ internal static class DatabaseLockChecks
         }
         await client.StopAsync();
         Check.That(client.StandardError.Contains("Database lock verified", StringComparison.Ordinal), "Startup did not report the PostgreSQL lock verification.");
+        Check.Confidential(client.StandardError, Password);
+    }
+
+    // A lock is an allow-list, not a set of profiles: more than 32 names and a large pool must not hit profile limits.
+    private static async Task VerifyLargeLockAsync(Command command, Dictionary<string, string> connectionMode)
+    {
+        string[] names = [.. Locked, .. Enumerable.Range(1, 40).Select(i => $"lock_absent_{i:D2}")];
+        var environment = new Dictionary<string, string>(connectionMode)
+        {
+            ["POSTGRES_DATABASES"] = JsonSerializer.Serialize(names), ["POSTGRES_POOL_SIZE"] = "32"
+        };
+        await using var client = await McpClient.StartAsync(command, environment);
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
+            new[] { new[] { "lock_b", "LOCK_B" } }, "A 42-name lock did not select an allowed database.");
+        Check.That(ListedNames(await client.OkAsync("list_databases")).SequenceEqual(Locked),
+            "A 42-name lock listed databases that do not exist or are outside the lock.");
+        await ExpectLockRejectionAsync(client, new { database = "lock_protected" });
+        await client.StopAsync();
         Check.Confidential(client.StandardError, Password);
     }
 
