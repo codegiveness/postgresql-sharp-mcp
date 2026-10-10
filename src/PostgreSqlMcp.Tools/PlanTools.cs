@@ -16,11 +16,18 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
 {
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
-    public Task<CallToolResult> ExplainQuery(CancellationToken ct, string database, string sql,
-        string format = "summary", bool analyze = false, string[]? indexes = null, string? target = null) =>
+    public Task<CallToolResult> ExplainQuery(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description(ParameterText.Sql)] string sql,
+        [Description("summary (default): ranked major plan nodes. json: the complete planner JSON within the byte limit.")] string format = "summary",
+        [Description("true executes the statement with EXPLAIN ANALYZE, BUFFERS inside a READ ONLY transaction; not combinable with indexes.")] bool analyze = false,
+        [Description("Up to 16 hypothetical CREATE INDEX statements compared together through the installed hypopg extension.")] string[]? indexes = null,
+        [Description(ParameterText.Target)] string? target = null,
+        [Description(ParameterText.Values)] JsonElement[]? parameters = null) =>
         ToolReply.Run(database, async () =>
         {
             string statement = SqlGuard.Validate(sql);
+            IReadOnlyList<string?>? values = SqlParameters.Normalize(parameters);
             bool json = format.Equals("json", StringComparison.OrdinalIgnoreCase);
             if (!json && !format.Equals("summary", StringComparison.OrdinalIgnoreCase))
                 throw new ToolException("invalid_format", "format must be summary or json.");
@@ -31,7 +38,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
             {
                 if (candidates.Length == 0)
                 {
-                    using JsonDocument plan = await ReadPlan(session, statement, analyze, token);
+                    using JsonDocument plan = await ReadPlan(session, statement, values, analyze, token);
                     return new
                     {
                         database, analyzed = analyze, format,
@@ -56,36 +63,39 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                 try
                 {
                     await ExecuteControl(session, reset, token);
-                    using JsonDocument baseline = await ReadPlan(session, statement, false, token);
+                    using JsonDocument baseline = await ReadPlan(session, statement, values, false, token);
                     var hypotheticalIndexes = new List<HypotheticalIndex>();
                     // Candidates are independent; send one batch rather than one round trip per index.
-                    await using var batch = new NpgsqlBatch(session.Connection, session.Transaction) { Timeout = options.QueryTimeout };
+                    var commands = new List<NpgsqlBatchCommand>(candidates.Length);
                     foreach (string candidate in candidates)
                     {
                         var command = new NpgsqlBatchCommand($"SELECT indexrelid::bigint, indexname FROM {ns}.hypopg_create_index(@candidate)");
                         command.Parameters.AddWithValue("candidate", candidate);
-                        batch.BatchCommands.Add(command);
+                        commands.Add(command);
                     }
-                    await using (var reader = await batch.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token))
-                    for (int candidate = 0; candidate < candidates.Length; candidate++)
+                    await using (SessionReader result = await session.ExecuteReaderAsync(commands, CommandBehavior.SequentialAccess, token))
                     {
-                        int created = 0;
-                        while (await reader.ReadAsync(token))
+                        NpgsqlDataReader reader = result.Reader;
+                        for (int candidate = 0; candidate < candidates.Length; candidate++)
                         {
-                            if (++created > 1)
-                                throw new ToolException("invalid_index", "Each candidate must describe exactly one CREATE INDEX statement.");
-                            long oid = reader.GetInt64(0);
-                            string name = reader.GetString(1);
-                            if (name.Length > options.MaxCellChars)
-                                throw new ToolException("result_too_large", "Hypothetical index name exceeds the result cell limit; simplify the candidate.");
-                            hypotheticalIndexes.Add(new(candidate, oid, name));
+                            int created = 0;
+                            while (await reader.ReadAsync(token))
+                            {
+                                if (++created > 1)
+                                    throw new ToolException("invalid_index", "Each candidate must describe exactly one CREATE INDEX statement.");
+                                long oid = reader.GetInt64(0);
+                                string name = reader.GetString(1);
+                                if (name.Length > options.MaxCellChars)
+                                    throw new ToolException("result_too_large", "Hypothetical index name exceeds the result cell limit; simplify the candidate.");
+                                hypotheticalIndexes.Add(new(candidate, oid, name));
+                            }
+                            if (created != 1)
+                                throw new ToolException("invalid_index", $"Candidate {candidate} did not create a hypothetical index. Supply a supported CREATE INDEX definition.");
+                            if (candidate + 1 < candidates.Length && !await reader.NextResultAsync(token))
+                                throw new ToolException("invalid_index", "HypoPG did not return a result for each candidate.");
                         }
-                        if (created != 1)
-                            throw new ToolException("invalid_index", $"Candidate {candidate} did not create a hypothetical index. Supply a supported CREATE INDEX definition.");
-                        if (candidate + 1 < candidates.Length && !await reader.NextResultAsync(token))
-                            throw new ToolException("invalid_index", "HypoPG did not return a result for each candidate.");
                     }
-                    using JsonDocument evaluated = await ReadPlan(session, statement, false, token);
+                    using JsonDocument evaluated = await ReadPlan(session, statement, values, false, token);
                     PlanSummary before = Summarize(baseline.RootElement);
                     PlanSummary after = Summarize(evaluated.RootElement);
                     return new
@@ -122,7 +132,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                     catch
                     {
                         // Clearing marks checked-out connectors for disposal on return to the pool.
-                        NpgsqlConnection.ClearPool(session.Connection);
+                        session.ClearPool();
                         if (!failed)
                             throw new ToolException("hypopg_cleanup_failed", "Hypothetical index cleanup failed. The connection pool was cleared so this session cannot leak candidates to later calls.");
                     }
@@ -155,12 +165,18 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     [GeneratedRegex(@"\A\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex IndexDefinition { get; }
 
-    private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, bool analyze, CancellationToken ct)
+    private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, IReadOnlyList<string?>? values, bool analyze, CancellationToken ct)
     {
-        await using var command = Command(session, analyze
-            ? "EXPLAIN (FORMAT JSON, ANALYZE TRUE, BUFFERS TRUE, VERBOSE FALSE) " + sql
-            : "EXPLAIN (FORMAT JSON, VERBOSE FALSE) " + sql);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.SingleRow, ct);
+        string prefix = analyze ? "EXPLAIN (FORMAT JSON, ANALYZE TRUE, BUFFERS TRUE, VERBOSE FALSE) " : "EXPLAIN (FORMAT JSON, VERBOSE FALSE) ";
+        var command = new NpgsqlBatchCommand(prefix + sql);
+        // Bound values give PostgreSQL a custom plan for these values, as for the same statement with literals.
+        if (values is not null) SqlParameters.Bind(command.Parameters, values);
+        // EXPLAIN returns one row; SingleRow is not used because the batch may begin with the session's setup commands.
+        SessionReader result;
+        try { result = await session.ExecuteReaderAsync([command], CommandBehavior.SequentialAccess, ct); }
+        catch (PostgresException ex) when (ToolReply.MarkStatementPosition(ex, prefix.Length, sql)) { throw; }
+        await using var _ = result;
+        NpgsqlDataReader reader = result.Reader;
         if (!await reader.ReadAsync(ct) || reader.IsDBNull(0))
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");
         using TextReader text = await reader.GetTextReaderAsync(0, ct);
@@ -197,14 +213,8 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     private ToolException OversizedPlan() => new("plan_too_large",
         $"Planner JSON exceeds MaxResultBytes ({options.MaxResultBytes}); no plan was silently truncated. Narrow the query or explain a smaller subquery, or ask the operator to increase the byte limit. Summary also requires reading the bounded complete planner JSON.");
 
-    private NpgsqlCommand Command(SqlSession session, string sql, int? timeout = null) =>
-        new(sql, session.Connection, session.Transaction) { CommandTimeout = timeout ?? options.QueryTimeout };
-
-    private async Task ExecuteControl(SqlSession session, string sql, CancellationToken ct, int? timeout = null)
-    {
-        await using var command = Command(session, sql, timeout);
-        await command.ExecuteNonQueryAsync(ct);
-    }
+    private static Task ExecuteControl(SqlSession session, string sql, CancellationToken ct, int? timeout = null) =>
+        session.ExecuteAsync(sql, ct, timeout);
 
     private static string QuoteIdentifier(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
 
