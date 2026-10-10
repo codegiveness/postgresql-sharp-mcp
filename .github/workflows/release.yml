@@ -191,7 +191,19 @@ jobs:
         with:
           node-version: '24.15.0'
       - name: Install reviewed npm CLI with staged-publishing support
-        run: npm install --global npm@12.2.0 --ignore-scripts --registry https://registry.npmjs.org/
+        # Exact registry tarball for npm 12.2.0; NPM_SHA512 is the hex form of its
+        # published dist.integrity. No npm install or lifecycle scripts run.
+        env:
+          NPM_SHA512: 66c2632a94e796649738b2d7894d710c2cc2e1696893823066687f6b0d8a52e5f2b54eeaeaa32ffdc513ecca1e49ff794a5c2ec3f9515d879f1b3182b291cf35
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-cli" "$RUNNER_TEMP/npm-bin"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://registry.npmjs.org/npm/-/npm-12.2.0.tgz --output "$RUNNER_TEMP/npm.tgz"
+          printf '%s  %s\n' "$NPM_SHA512" "$RUNNER_TEMP/npm.tgz" | sha512sum --check --strict
+          tar -xzf "$RUNNER_TEMP/npm.tgz" -C "$RUNNER_TEMP/npm-cli" --strip-components=1
+          ln -s "$RUNNER_TEMP/npm-cli/bin/npm-cli.js" "$RUNNER_TEMP/npm-bin/npm"
+          echo "$RUNNER_TEMP/npm-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/npm-bin/npm" --version
       - name: Download trusted main publication tooling
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
