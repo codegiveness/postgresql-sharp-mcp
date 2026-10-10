@@ -171,6 +171,17 @@ internal static class DatabaseLockChecks
                 await ExpectRefusalAsync(command, mode, "database lock_b: extension dblink is installed");
         }
         finally { await fixture.SqlAsync("lock_b", "DROP EXTENSION dblink;"); }
+        // An explicit EXECUTE grant (no predefined-role membership) reads other databases' relation files.
+        await fixture.SqlAsync("lock_b", "GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO mcp_locked;");
+        try
+        {
+            foreach (var mode in new[] { connectionMode, targetsMode })
+            {
+                await ExpectRefusalAsync(command, mode, "database lock_b: login can execute server-file function pg_read_binary_file(text)");
+                await ExpectRefusalAsync(command.With("--validate"), mode, "login can execute server-file function pg_read_binary_file(text)");
+            }
+        }
+        finally { await fixture.SqlAsync("lock_b", "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) FROM mcp_locked;"); }
         // Grants matching the lock again: startup succeeds after every refusal was restored.
         ProcessResult restored = await Processes.RunAsync(command.With("--validate"), targetsMode);
         Check.That(restored.Error.Contains("Database lock verified", StringComparison.Ordinal), "Startup did not recover after grants matched the lock.");

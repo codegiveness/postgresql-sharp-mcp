@@ -42,6 +42,7 @@ When a lock is configured, normal startup and `--validate` connect only through 
 | `CREATEROLE` on the login or a role it is a member of | It can create roles and grant memberships, so the verified grants need not hold one statement later. |
 | `CREATEDB` on the login or a role it is a member of | It can create databases outside the lock (and drop ones it then owns), changing the set of databases the check verified. |
 | The login (or a role it is a member of) owns a database outside the lock | Owners hold implicit CONNECT and can `ALTER`/`DROP DATABASE` from a connection to any other database, without connecting to it. |
+| Explicit `EXECUTE` on a server-file function (`pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, server-side `lo_import`/`lo_export`, adminpack `pg_file_write`) in a locked database the login can connect to | PostgreSQL revokes these from `PUBLIC`, but a direct grant needs no predefined-role membership. `pg_read_binary_file` can then read any file in the data directory, including other databases' relation files, so the role reads protected data without connecting to it. Function grants are per database, so every reachable locked database is checked. |
 | `dblink` or `postgres_fdw` installed, or any foreign server defined, in a locked database the login can connect to | They open new connections from inside PostgreSQL, bypassing the server's connection-level lock. Installation is not checked as availability: both extensions are untrusted, so only a superuser can install them, which is already refused. |
 
 Deliberately not refused: `REPLICATION` (the server never opens replication-protocol connections and logical decoding SQL functions decode only the current database), `BYPASSRLS` (affects rows only inside locked databases), and monitoring roles such as `pg_read_all_stats` (they expose names and activity, see below, not data). Review them anyway.
@@ -66,6 +67,8 @@ GRANT CONNECT ON DATABASE <locked_db> TO <mcp_role>;
 
 ALTER ROLE <mcp_role> NOSUPERUSER NOCREATEDB NOCREATEROLE;
 -- Remove memberships in superuser roles and pg_*_server_files/pg_execute_server_program;
+-- In each locked database, revoke direct grants such as:
+-- REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) FROM <mcp_role>;
 -- transfer ownership of out-of-lock databases away from the MCP role.
 ```
 

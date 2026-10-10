@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Security: the database lock check now also refuses startup when the login has a direct `EXECUTE` grant on a server-file function (`pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, server-side `lo_import`/`lo_export`, adminpack `pg_file_write`) in any reachable locked database. Such a grant needs no `pg_read_server_files` membership, and `pg_read_binary_file` can read other databases' relation files from the data directory, bypassing the lock. Existing locked configurations with such grants are now refused; revoke the grant as described in the [hardening guide](SECURITY.md#database-lock-hardening).
 - Show a grouped README badge table covering build/tests, security scanning, supply chain, registries, platforms, stack versions, features and project activity. Feature and practice badges link to the documentation or configuration that supports them; stack versions are read live from `global.json` and `Directory.Packages.props`.
 - Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
 - Release npm job: accept npm 12's one-element JSON array from `npm view <name>@<version> version --json`. Previously an already-published version failed with "requires an element of type 'String'" instead of being reported as not republished.
