@@ -71,8 +71,9 @@ public static class SecurityWarnings
             {
                 List<string> found = await executor.WithSessionAsync(registry.GetDiscoveryDatabase(target), async (session, token) =>
                 {
-                    await using var command = new NpgsqlCommand(RoleSql, session.Connection, session.Transaction);
-                    await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    await using SessionReader result = await session.ExecuteReaderAsync([new NpgsqlBatchCommand(RoleSql)],
+                        System.Data.CommandBehavior.Default, token).ConfigureAwait(false);
+                    NpgsqlDataReader reader = result.Reader;
                     var values = new List<string>();
                     while (await reader.ReadAsync(token).ConfigureAwait(false)) values.Add(reader.GetString(0));
                     return values;
