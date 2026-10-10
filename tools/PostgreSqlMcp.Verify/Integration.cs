@@ -572,6 +572,22 @@ internal static class Integration
                 $"Unverified-TLS warning was {(warns ? "missing" : "emitted")} for '{mode}'.");
             Check.Confidential(result.Error, "sensitive-tls-marker");
         }
+        // Profiles on the same host but different ports are different servers: both are named. A connection-string lock's
+        // aliases share one connection, so they share one line instead of repeating it per locked name.
+        var ports = new Dictionary<string, string>(environment)
+        {
+            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { one = remote, two = remote + ";Port=6543" })
+        };
+        ProcessResult grouped = await Processes.RunAsync(command.With("--validate"), ports, expected: 1);
+        Check.That(grouped.Error.Contains("[warning] profile one: SSL Mode=", StringComparison.Ordinal)
+            && grouped.Error.Contains("[warning] profile two: SSL Mode=", StringComparison.Ordinal),
+            "A remote profile on another port was not named in an unverified-TLS warning.");
+        var locked = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = remote, ["POSTGRES_DATABASES"] = "[\"d1\",\"d2\"]" };
+        locked.Remove("POSTGRES_TARGETS");
+        ProcessResult shared = await Processes.RunAsync(command.With("--validate"), locked, expected: 1);
+        Check.That(shared.Error.Contains("[warning] profiles d1, d2: SSL Mode=", StringComparison.Ordinal),
+            "Lock aliases of one connection string did not share one unverified-TLS warning.");
+        Check.Confidential(grouped.Error + shared.Error, "sensitive-tls-marker");
         Console.WriteLine("PASS privileged-login and unverified-TLS warnings, non-blocking and credential-free");
     }
 }

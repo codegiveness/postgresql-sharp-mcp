@@ -37,15 +37,25 @@ public static class SecurityWarnings
     /// <summary>Profiles that reach a non-local host without certificate verification (Npgsql's default SSL Mode is Prefer).</summary>
     public static IReadOnlyList<string> Tls(ServerOptions options)
     {
-        var warnings = new List<string>();
-        var seen = new HashSet<(string Host, SslMode Mode)>();
+        // One line per distinct server login (host, port, user, mode) naming its profiles: lock aliases of one connection
+        // string share a line, while profiles that reach different ports or users are each named.
+        var groups = new Dictionary<(string Host, int Port, string? User, SslMode Mode), List<string>>();
         foreach (var (alias, connectionString) in options.Targets.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             var builder = new NpgsqlConnectionStringBuilder(connectionString);
             if (builder.SslMode is SslMode.VerifyCA or SslMode.VerifyFull) continue;
             string host = builder.Host ?? "";
-            if (host.Split(',').All(IsLocal) || !seen.Add((host, builder.SslMode))) continue;
-            warnings.Add($"profile {alias}: SSL Mode={builder.SslMode} to a non-local host does not verify the server certificate, " +
+            if (host.Split(',').All(IsLocal)) continue;
+            var key = (host, builder.Port, builder.Username, builder.SslMode);
+            if (!groups.TryGetValue(key, out List<string>? aliases)) groups[key] = aliases = [];
+            aliases.Add(alias);
+        }
+        var warnings = new List<string>();
+        foreach (var ((_, _, _, mode), aliases) in groups)
+        {
+            string names = aliases.Count == 1 ? $"profile {aliases[0]}"
+                : $"profiles {string.Join(", ", aliases.Take(5))}{(aliases.Count > 5 ? $" and {aliases.Count - 5} more" : "")}";
+            warnings.Add($"{names}: SSL Mode={mode} to a non-local host does not verify the server certificate, " +
                 "so a network attacker can impersonate the server. Use SSL Mode=VerifyFull with the provider's CA certificate.");
         }
         return warnings;
@@ -70,8 +80,8 @@ public static class SecurityWarnings
                 foreach (string warning in found)
                     warnings.Add($"target {target}: {warning}. READ ONLY transactions and restricted mode do not stop its privileged functions or side effects; use a least-privileged role.");
             }
-            // Connectivity is reported by --validate itself; an unreadable catalog only means no warning.
-            catch (Exception ex) when (ex is ToolException or NpgsqlException or TimeoutException) { }
+            // Connectivity is reported by --validate itself; any failure here only means no warning, never a crash.
+            catch (Exception) when (!ct.IsCancellationRequested) { }
         }
         return warnings;
     }
