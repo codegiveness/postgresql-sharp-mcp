@@ -29,11 +29,15 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
             source = await registry.AcquireAsync(selection, token).ConfigureAwait(false);
             await using var connection = await source.Source.OpenConnectionAsync(token).ConfigureAwait(false);
             await using var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
-            // Control statements are fixed server text. User SQL cannot end this transaction.
-            await using (var setup = new NpgsqlCommand($"SET TRANSACTION {(readOnly ? "READ ONLY" : "READ WRITE")}; SET LOCAL standard_conforming_strings=on; SET LOCAL statement_timeout='{options.QueryTimeout * 1000}ms'; SET LOCAL lock_timeout='{options.QueryTimeout * 1000}ms'", connection, transaction)
-                { CommandTimeout = options.QueryTimeout })
-                await setup.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-            var session = new SqlSession(database, connection, transaction, options, readOnly);
+            // Control statements are fixed server text. User SQL cannot end this transaction. The session sends them
+            // in the same batch as its first statement, so setup costs no extra network round trip.
+            var session = new SqlSession(database, connection, transaction, options, readOnly,
+            [
+                readOnly ? "SET TRANSACTION READ ONLY" : "SET TRANSACTION READ WRITE",
+                "SET LOCAL standard_conforming_strings=on",
+                $"SET LOCAL statement_timeout='{options.QueryTimeout * 1000}ms'",
+                $"SET LOCAL lock_timeout='{options.QueryTimeout * 1000}ms'"
+            ]);
             T result = await action(session, token).ConfigureAwait(false);
             if (readOnly) await transaction.RollbackAsync(token).ConfigureAwait(false);
             else await transaction.CommitAsync(token).ConfigureAwait(false);
@@ -54,11 +58,62 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     public void Dispose() => _calls.Dispose();
 }
 
-public sealed class SqlSession(string database, NpgsqlConnection connection, NpgsqlTransaction transaction,
-    ServerOptions options, bool readOnly)
+/// <summary>
+/// One server-owned transaction. The connection is not exposed: every statement goes through
+/// <see cref="ExecuteReaderAsync"/>, which prepends the pending transaction setup (READ ONLY/READ WRITE and timeouts)
+/// to the first batch, so no caller can run SQL before the transaction mode is set.
+/// </summary>
+public sealed class SqlSession
 {
-    public NpgsqlConnection Connection { get; } = connection;
-    public NpgsqlTransaction Transaction { get; } = transaction;
+    private readonly string database;
+    private readonly NpgsqlConnection connection;
+    private readonly NpgsqlTransaction transaction;
+    private readonly ServerOptions options;
+    private readonly bool readOnly;
+    private string[]? pendingSetup;
+
+    internal SqlSession(string database, NpgsqlConnection connection, NpgsqlTransaction transaction,
+        ServerOptions options, bool readOnly, string[] setup)
+    {
+        this.database = database;
+        this.connection = connection;
+        this.transaction = transaction;
+        this.options = options;
+        this.readOnly = readOnly;
+        pendingSetup = setup;
+    }
+
+    /// <summary>Creates an empty batch bound to this session's transaction; run it with <see cref="ExecuteReaderAsync"/>.</summary>
+    public NpgsqlBatch CreateBatch(int? timeout = null) => new(connection, transaction) { Timeout = timeout ?? options.QueryTimeout };
+
+    /// <summary>Runs <paramref name="batch"/>, preceded by the transaction setup if it has not reached the server yet.</summary>
+    public async Task<NpgsqlDataReader> ExecuteReaderAsync(NpgsqlBatch batch, CommandBehavior behavior, CancellationToken ct)
+    {
+        // Each batch command is one extended-protocol statement, so the setup is one command per statement.
+        string[]? setup = pendingSetup;
+        if (setup is not null)
+            for (int i = setup.Length - 1; i >= 0; i--) batch.BatchCommands.Insert(0, new NpgsqlBatchCommand(setup[i]));
+        try
+        {
+            NpgsqlDataReader reader = await batch.ExecuteReaderAsync(behavior, ct).ConfigureAwait(false);
+            pendingSetup = null;
+            return reader;
+        }
+        // The server processed the batch: either the setup ran or the transaction is aborted. Otherwise
+        // (cancelled before sending, I/O failure) the setup stays pending for any later statement.
+        catch (PostgresException) when (setup is not null) { pendingSetup = null; throw; }
+    }
+
+    /// <summary>Runs one fixed control statement and discards its result.</summary>
+    public async Task ExecuteAsync(string sql, CancellationToken ct, int? timeout = null)
+    {
+        await using NpgsqlBatch batch = CreateBatch(timeout);
+        batch.BatchCommands.Add(new NpgsqlBatchCommand(sql));
+        await using NpgsqlDataReader reader = await ExecuteReaderAsync(batch, CommandBehavior.Default, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Marks this session's pooled connections for disposal instead of reuse.</summary>
+    public void ClearPool() => NpgsqlConnection.ClearPool(connection);
 
     public async Task<QueryPage> QueryAsync(string sql, IReadOnlyDictionary<string, object?>? parameters = null,
         int? limit = null, int offset = 0, CancellationToken ct = default)
@@ -71,10 +126,12 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
         bool serverPage = readOnly && kind is "SELECT" or "WITH" or "VALUES" or "TABLE";
         if (serverPage)
             sql = $"SELECT * FROM (\n{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
-        await using var command = new NpgsqlCommand(sql, Connection, Transaction) { CommandTimeout = options.QueryTimeout };
+        await using NpgsqlBatch batch = CreateBatch();
+        var command = new NpgsqlBatchCommand(sql);
         if (parameters is not null)
             foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
+        batch.BatchCommands.Add(command);
+        await using var reader = await ExecuteReaderAsync(batch, CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
         if (reader.FieldCount > 128) throw new ToolException("result_too_wide", "Select at most 128 columns.");
         var columns = new ColumnInfo[reader.FieldCount];
         for (int col = 0; col < columns.Length; col++)
