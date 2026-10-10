@@ -24,8 +24,8 @@ public static class ToolReply
         catch (PostgresException ex)
         {
             string code = ex.SqlState == "57014" ? "timeout" : "postgresql_error";
-            // MessageText and Hint can contain values even when IncludeErrorDetail is disabled.
-            return Error(database, code, PostgreSqlMessage(ex.SqlState), ex.SqlState);
+            // MessageText and Hint can contain values even when IncludeErrorDetail is disabled; only Diagnostics() passes on safe parts.
+            return Error(database, code, PostgreSqlMessage(ex.SqlState), ex.SqlState, Diagnostics(ex));
         }
         catch (OperationCanceledException) { throw; }
         catch (NpgsqlException ex) when (ex.InnerException is TimeoutException)
@@ -73,12 +73,48 @@ public static class ToolReply
         return Result(element, false, text);
     }
 
-    public static CallToolResult Error(string database, string code, string message, string? sqlState = null)
+    private const string StatementPositionKey = "postgresql-sharp-mcp:statement-position";
+
+    /// <summary>
+    /// Exception filter for code that sends a caller's statement inside server-owned text: records PostgreSQL's
+    /// 1-based cursor position relative to the caller's statement. Always returns false, so nothing is caught.
+    /// </summary>
+    public static bool MarkStatementPosition(PostgresException ex, int prefixLength, int statementLength)
     {
-        // Bound diagnostics without forwarding provider-controlled text.
+        int position = ex.Position - prefixLength;
+        if (position >= 1 && position <= statementLength) ex.Data[StatementPositionKey] = position;
+        return false;
+    }
+
+    // Class 42 (syntax error or access rule violation) text raised directly by the statement's own parse/analysis or
+    // privilege checks names only tokens and catalog objects from that statement. Errors raised inside a routine
+    // (Where is set) can carry arbitrary text, and other classes can echo data values, so they stay withheld.
+    private static Diagnostic? Diagnostics(PostgresException ex)
+    {
+        int? position = ex.Data[StatementPositionKey] as int?;
+        bool statementText = ex.SqlState.StartsWith("42", StringComparison.Ordinal) && string.IsNullOrEmpty(ex.Where);
+        string? constraint = ex.SqlState.StartsWith("23", StringComparison.Ordinal) ? ex.ConstraintName : null;
+        if (position is null && !statementText && constraint is null) return null;
+        return new(position, statementText ? Clip(ex.MessageText, 512) : null,
+            statementText && ex.Hint is { Length: > 0 } hint ? Clip(hint, 512) : null, constraint is null ? null : Clip(constraint, 128));
+    }
+
+    private sealed record Diagnostic(int? Position, string? ServerMessage, string? ServerHint, string? Constraint);
+
+    public static CallToolResult Error(string database, string code, string message, string? sqlState = null)
+        => Error(database, code, message, sqlState, null);
+
+    private static CallToolResult Error(string database, string code, string message, string? sqlState, Diagnostic? diagnostic)
+    {
+        // Bound diagnostics; provider-controlled text is limited to the fields Diagnostics() allows.
         var value = JsonSerializer.SerializeToElement(new
         {
-            database = Clip(database, 128), error = new { code, message = Clip(message, 768), sql_state = sqlState }
+            database = Clip(database, 128),
+            error = new
+            {
+                code, message = Clip(message, 768), sql_state = sqlState, position = diagnostic?.Position,
+                server_message = diagnostic?.ServerMessage, server_hint = diagnostic?.ServerHint, constraint = diagnostic?.Constraint
+            }
         }, JsonOptions);
         return Result(value, true);
     }

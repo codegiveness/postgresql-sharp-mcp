@@ -157,10 +157,12 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
 
     private async Task<JsonDocument> ReadPlan(SqlSession session, string sql, bool analyze, CancellationToken ct)
     {
-        await using var command = Command(session, analyze
-            ? "EXPLAIN (FORMAT JSON, ANALYZE TRUE, BUFFERS TRUE, VERBOSE FALSE) " + sql
-            : "EXPLAIN (FORMAT JSON, VERBOSE FALSE) " + sql);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.SingleRow, ct);
+        string prefix = analyze ? "EXPLAIN (FORMAT JSON, ANALYZE TRUE, BUFFERS TRUE, VERBOSE FALSE) " : "EXPLAIN (FORMAT JSON, VERBOSE FALSE) ";
+        await using var command = Command(session, prefix + sql);
+        NpgsqlDataReader reader;
+        try { reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.SingleRow, ct); }
+        catch (PostgresException ex) when (ToolReply.MarkStatementPosition(ex, prefix.Length, sql.Length)) { throw; }
+        await using var _ = reader;
         if (!await reader.ReadAsync(ct) || reader.IsDBNull(0))
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");
         using TextReader text = await reader.GetTextReaderAsync(0, ct);

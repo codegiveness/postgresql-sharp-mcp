@@ -12,5 +12,5 @@ public sealed class SqlTools(SqlExecutor executor)
     [Description("Run one SQL statement on a physical database or configured profile alias. Optional target selects a connection profile. Bounded column/row arrays; next_offset re-executes read-only SQL. Use stable ORDER BY. Writes need unrestricted mode (default) and read_only=false; never replay a truncated write.")]
     public Task<CallToolResult> ExecuteSql(CancellationToken ct, string database, string sql,
         int? limit = null, int offset = 0, bool read_only = true, string? target = null) =>
-        ToolReply.Run(database, async () => await executor.QueryAsync(database, sql, limit: limit, offset: offset, readOnly: read_only, ct: ct, target: target).ConfigureAwait(false));
+        ToolReply.Run(database, async () => await executor.QueryAsync(database, sql, limit: limit, offset: offset, readOnly: read_only, ct: ct, target: target, callerStatement: true).ConfigureAwait(false));
 }

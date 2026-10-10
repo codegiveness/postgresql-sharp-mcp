@@ -185,16 +185,27 @@ internal static class Integration
         await client.FailsAsync("execute_sql", new { database = "a", sql = "WITH x AS (DELETE FROM marker RETURNING *) SELECT * FROM x" }, "postgresql_error");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT set_config('transaction_read_only','off',true)" }, "postgresql_error");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')", read_only = false }, "read_only");
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT FROM WHERE" }, "postgresql_error", "42601");
+        // Statement-level class 42 errors return PostgreSQL's text and a position relative to the caller's SQL, not the paging wrapper.
+        JsonNode syntax = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT FROM WHERE" }, "postgresql_error", "42601"))["error"]!;
+        Check.That(syntax["position"].Int() == 13 && syntax["server_message"].Text().Contains("syntax error", StringComparison.Ordinal),
+            "Syntax error did not report its position in the submitted statement.");
+        JsonNode column = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT missing_column FROM marker" }, "postgresql_error", "42703"))["error"]!;
+        Check.That(column["position"].Int() == 8 && column["server_message"].Text().Contains("missing_column", StringComparison.Ordinal),
+            "Undefined-column error did not name the column and its position.");
+        JsonNode explained = (await client.FailsAsync("explain_query", new { database = "a", sql = "SELECT * FROM missing_relation" }, "postgresql_error", "42P01"))["error"]!;
+        Check.That(explained["position"].Int() == 15 && explained["server_message"].Text().Contains("missing_relation", StringComparison.Ordinal),
+            "explain_query did not map the error position past its EXPLAIN prefix.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(10)::text" }, "timeout");
         JsonNode quoted = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $$a;b$$ AS d, E'escaped\\';still-string' AS e, 'ordinary;string' AS s; -- tail" });
         Check.Equal(quoted["rows"], new[] { new[] { "a;b", "escaped';still-string", "ordinary;string" } }, "Quoted SQL single-statement parsing changed values.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], new[] { new[] { "A_ONLY" } }, "Read-only protection changed fixture data.");
-        foreach (var (sql, state) in new[] { ("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"), ("SELECT app.fail_with_sensitive_diagnostic()", "P0001") })
+        foreach (var (sql, state) in new[] { ("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"), ("SELECT app.fail_with_sensitive_diagnostic()", "P0001"),
+            ("SELECT app.fail_with_sensitive_access_error()", "42501") })
         {
             JsonNode diagnostic = await client.FailsAsync("execute_sql", new { database = "a", sql }, "postgresql_error", state);
             Check.Confidential(diagnostic.ToJsonString(), "sensitive-");
-            Check.That(diagnostic["error"]?["hint"] is null, "PostgreSQL hint leaked in error envelope.");
+            Check.That(diagnostic["error"]?["hint"] is null && diagnostic["error"]?["server_hint"] is null && diagnostic["error"]?["server_message"] is null,
+                "PostgreSQL message or hint leaked in error envelope.");
         }
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT 'sensitive-result-marker'" }))["rows"], new[] { new[] { "sensitive-result-marker" } }, "Result confidentiality probe did not return the marker.");
         Console.WriteLine("PASS SQL guards, read-only DML/CTE protection, quoted literals, syntax errors and timeout");
@@ -309,13 +320,17 @@ internal static class Integration
         await client.FailsAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker RETURNING *", offset = 1, read_only = false }, "invalid_offset");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT * FROM secret", read_only = false }, "postgresql_error", "42501");
         await client.OkAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker WHERE value='WRITE_OK'", read_only = false });
-        await client.OkAsync("execute_sql", new { database = "a", sql = "CREATE TABLE mcp_write_test(id integer)", read_only = false });
+        await client.OkAsync("execute_sql", new { database = "a", sql = "CREATE TABLE mcp_write_test(id integer CONSTRAINT mcp_write_test_pk PRIMARY KEY)", read_only = false });
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT to_regclass('public.mcp_write_test')::text" }))["rows"], new[] { new[] { "mcp_write_test" } }, "Destructive DDL did not commit.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test SELECT 100/(g-2) FROM generate_series(1,3) g", read_only = false }, "postgresql_error", "22012");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], new[] { new[] { 0 } }, "Failed write transaction did not roll back.");
         JsonNode returning = await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test SELECT g FROM generate_series(1,10) g RETURNING id", limit = 3, read_only = false });
         Check.That(returning["truncated"].Flag() && returning["next_offset"] is null, "Write RETURNING incorrectly advertised replay pagination.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], new[] { new[] { 10 } }, "Truncated RETURNING did not commit all writes.");
+        // Integrity errors name the violated constraint, never the conflicting key values.
+        JsonNode duplicate = (await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test VALUES (7)", read_only = false }, "postgresql_error", "23505"))["error"]!;
+        Check.That(duplicate["constraint"].Text() == "mcp_write_test_pk" && duplicate["server_message"] is null,
+            "Unique violation did not name only its constraint.");
         await client.OkAsync("execute_sql", new { database = "a", sql = "DROP TABLE mcp_write_test", read_only = false });
         await client.StopAsync();
         Check.Confidential(client.StandardError, "writer-disposable");

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- SQL errors are now actionable without exposing data values. Errors for statements submitted to `execute_sql` and `explain_query` include `position`, PostgreSQL's 1-based character position mapped into the submitted statement (previously absent; the server's paging/EXPLAIN wrapper would also have shifted it). Statement-level SQLSTATE class `42` errors (syntax, undefined/ambiguous objects, privileges) not raised inside a routine add `server_message` and `server_hint`, and class `23` integrity errors add `constraint`. All other PostgreSQL messages, hints and details remain withheld. Existing `code`, `message` and `sql_state` fields are unchanged.
 - Show a grouped README badge table covering build/tests, security scanning, supply chain, registries, platforms, stack versions, features and project activity. Feature and practice badges link to the documentation or configuration that supports them; stack versions are read live from `global.json` and `Directory.Packages.props`.
 - Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
 - Release npm job: accept npm 12's one-element JSON array from `npm view <name>@<version> version --json`. Previously an already-published version failed with "requires an element of type 'String'" instead of being reported as not republished.
