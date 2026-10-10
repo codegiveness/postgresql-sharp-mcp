@@ -221,6 +221,9 @@ internal static class Integration
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = new object[] { new { k = 1 } } }, "invalid_parameters");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = Enumerable.Repeat<object>(1, 257).ToArray() }, "invalid_parameters");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1, $2", parameters = new object[] { 1 } }, "postgresql_error", "08P01");
+        // Surplus values and skipped placeholders leave a parameter untypeable, so PostgreSQL answers 42P18, not 08P01.
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = new object[] { 1, 2 } }, "postgresql_error", "42P18");
+        await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $2", parameters = new object[] { 1, 2 } }, "postgresql_error", "42P18");
         // Parameters do not bypass the read-only transaction.
         await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ($1)", parameters = new object[] { "BAD" } }, "postgresql_error", "25006");
         JsonNode plan = await client.OkAsync("explain_query", new { database = "a", sql = "SELECT * FROM orders WHERE id = $1", parameters = new object[] { 1 } });
