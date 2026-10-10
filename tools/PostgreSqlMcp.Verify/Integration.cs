@@ -63,8 +63,23 @@ internal static class Integration
         JsonArray tools = (await client.RequestAsync("tools/list", new { }))["result"]!["tools"].Array();
         string[] expected = ["list_databases", "list_schemas", "list_objects", "get_object_details", "execute_sql", "explain_query", "get_top_queries", "analyze_indexes", "analyze_db_health"];
         Check.That(tools.Select(tool => tool!["name"].Text()).ToHashSet().SetEquals(expected), "Incorrect shared nine-tool set.");
+        foreach (JsonNode? tool in tools)
+        {
+            // Restricted mode: no tool may advertise writes or destructive effects.
+            Check.That(tool!["annotations"]!["readOnlyHint"].Flag() && !tool["annotations"]!["destructiveHint"].Flag(),
+                $"Restricted mode advertised a writable tool: {tool["name"].Text()}.");
+            Check.That(tool["inputSchema"]!["properties"]!.AsObject().All(property => property.Value?["description"]?.Text().Length > 0),
+                $"Undocumented parameter on {tool["name"].Text()}.");
+        }
+        JsonNode executeSql = tools.Single(tool => tool!["name"].Text() == "execute_sql")!;
+        Check.That(executeSql["description"].Text().Contains("restricted access mode", StringComparison.Ordinal)
+            && !executeSql["description"].Text().Contains("allows writes", StringComparison.Ordinal),
+            "Restricted-mode execute_sql description did not state that writes are refused.");
+        Check.That(client.Initialization["instructions"].Text().Contains("Access mode: restricted", StringComparison.Ordinal)
+            && client.Initialization["instructions"].Text().Contains("No database lock", StringComparison.Ordinal),
+            "Server instructions did not describe restricted access without a database lock.");
         JsonNode listed = await client.OkAsync("list_databases", new { target = "a", limit = 2 });
-        Check.That(listed["access_mode"].Text() == "restricted", "Explicit restricted access was not retained.");
+        Check.That(listed["access_mode"].Text() == "restricted" && !listed["database_lock"].Flag(), "Explicit restricted access was not retained.");
         Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Single(row => row["is_current"].Flag())["name"].Text() == "tenant_a",
             "Default discovery did not select the ordinal-first profile when primary was absent.");
         var discovered = new List<string>();
@@ -182,10 +197,12 @@ internal static class Integration
     {
         foreach (string sql in new[] { "SELECT 1; SELECT 2", "/*outer /*nested*/ */ COMMIT", "ROLLBACK", "SET transaction_read_only=off", "DO $$BEGIN END$$", "SELECT 'bad" })
             await client.FailsAsync("execute_sql", new { database = "a", sql }, "invalid_sql");
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')" }, "postgresql_error", "25006");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "WITH x AS (DELETE FROM marker RETURNING *) SELECT * FROM x" }, "postgresql_error");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT set_config('transaction_read_only','off',true)" }, "postgresql_error");
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')", read_only = false }, "read_only");
+        JsonNode refused = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')", read_only = false }, "read_only");
+        Check.That(refused["error"]!["message"].Text().Contains("restricted access mode", StringComparison.Ordinal), "Restricted write refusal did not name the access mode.");
+        JsonNode readOnlyWrite = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('BAD')" }, "postgresql_error", "25006");
+        Check.That(readOnlyWrite["error"]!["message"].Text().Contains("refuses writes", StringComparison.Ordinal), "Restricted read-only rejection suggested a write retry.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT FROM WHERE" }, "postgresql_error", "42601");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(10)::text" }, "timeout");
         JsonNode quoted = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $$a;b$$ AS d, E'escaped\\';still-string' AS e, 'ordinary;string' AS s; -- tail" });
@@ -303,7 +320,18 @@ internal static class Integration
         };
         writerEnvironment.Remove("POSTGRES_ACCESS_MODE");
         await using var client = await McpClient.StartAsync(command, writerEnvironment);
-        await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')" }, "postgresql_error", "25006");
+        JsonNode executeSql = await client.ToolAsync("execute_sql");
+        Check.That(!executeSql["annotations"]!["readOnlyHint"].Flag() && executeSql["annotations"]!["destructiveHint"].Flag()
+            && executeSql["description"].Text().Contains("read_only=false commits", StringComparison.Ordinal),
+            "Unrestricted execute_sql did not advertise its enforced write capability.");
+        JsonNode explain = await client.ToolAsync("explain_query");
+        Check.That(explain["annotations"]!["readOnlyHint"].Flag() && !explain["annotations"]!["destructiveHint"].Flag(),
+            "A read-only tool advertised writes in unrestricted mode.");
+        Check.That(client.Initialization["instructions"].Text().Contains("Access mode: unrestricted", StringComparison.Ordinal),
+            "Server instructions did not describe unrestricted access.");
+        JsonNode readOnlyWrite = await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')" }, "postgresql_error", "25006");
+        Check.That(readOnlyWrite["error"]!["message"].Text().Contains("read_only=false", StringComparison.Ordinal),
+            "Unrestricted read-only rejection did not name the write opt-in.");
         JsonNode mutation = await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')", read_only = false });
         Check.That(mutation["rows_affected"].Int() == 1, "Write opt-in did not report affected rows.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker ORDER BY value" }))["rows"], new[] { new[] { "A_ONLY" }, new[] { "WRITE_OK" } }, "Write transaction did not commit.");

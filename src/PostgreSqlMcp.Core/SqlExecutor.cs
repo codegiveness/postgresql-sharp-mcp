@@ -17,7 +17,7 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
         bool readOnly = true, CancellationToken ct = default, string? target = null)
     {
         DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target);
-        if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "Writes require server access-mode unrestricted and read_only=false.");
+        if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "This server is in restricted access mode and refuses writes; use read_only=true.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.QueryTimeout));
         CancellationToken token = deadline.Token;

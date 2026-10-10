@@ -84,8 +84,13 @@ internal static class DatabaseLockChecks
         await using var client = await McpClient.StartAsync(command, environment);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
             new[] { new[] { "lock_b", "LOCK_B" } }, "Connection-string lock did not select an allowed database.");
-        Check.That(ListedNames(await client.OkAsync("list_databases")).SequenceEqual(Locked),
-            "Connection-string list_databases exposed databases outside the lock.");
+        JsonNode listed = await client.OkAsync("list_databases");
+        Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag(),
+            "Connection-string list_databases exposed databases outside the lock or did not report the lock.");
+        Check.That((await client.ToolAsync("list_databases"))["description"].Text().Contains("database lock", StringComparison.Ordinal)
+            && (await client.ToolAsync("execute_sql"))["description"].Text().Contains("Database lock", StringComparison.Ordinal)
+            && client.Initialization["instructions"].Text().Contains("Database lock:", StringComparison.Ordinal),
+            "Tool descriptions or server instructions did not disclose the database lock.");
         foreach (string outside in new[] { "lock_protected", "postgres", "template1" })
         {
             await ExpectLockRejectionAsync(client, new { database = outside });
