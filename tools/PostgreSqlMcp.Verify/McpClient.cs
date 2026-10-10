@@ -6,6 +6,8 @@ using System.Text.Json.Nodes;
 
 namespace PostgreSqlMcp.Verify;
 
+internal sealed record InFlightRequest(int Id, Task<JsonNode> Response);
+
 internal sealed class McpClient : IAsyncDisposable
 {
     private readonly Process process;
@@ -106,6 +108,33 @@ internal sealed class McpClient : IAsyncDisposable
         { throw new TimeoutException("MCP request exceeded its timeout."); }
         finally { pending.TryRemove(id, out _); }
     }
+
+    /// <summary>Sends a request without waiting for its response, so a test can cancel it or prove that none arrives.</summary>
+    public async Task<InFlightRequest> StartRequestAsync(string method, object parameters, int timeoutSeconds = 20)
+    {
+        int id = Interlocked.Increment(ref nextId);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(reading.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var completion = new TaskCompletionSource<JsonNode>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending[id] = completion;
+        try { await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters }, deadline.Token); }
+        catch
+        {
+            pending.TryRemove(id, out _);
+            throw;
+        }
+        return new InFlightRequest(id, completion.Task);
+    }
+
+    public async Task CancelAsync(InFlightRequest request, string reason, int timeoutSeconds = 20)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(reading.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        await SendAsync(new { jsonrpc = "2.0", method = "notifications/cancelled", @params = new { requestId = request.Id, reason } }, deadline.Token);
+    }
+
+    /// <summary>Stops correlating a request that is expected never to be answered.</summary>
+    public void Abandon(InFlightRequest request) => pending.TryRemove(request.Id, out _);
 
     public async Task<(bool Error, JsonNode Data)> CallAsync(string tool, object? arguments = null)
     {
