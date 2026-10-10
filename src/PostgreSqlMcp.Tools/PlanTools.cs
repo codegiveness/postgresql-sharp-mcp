@@ -161,7 +161,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
         await using var command = Command(session, prefix + sql);
         NpgsqlDataReader reader;
         try { reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess | CommandBehavior.SingleRow, ct); }
-        catch (PostgresException ex) when (ToolReply.MarkStatementPosition(ex, prefix.Length, sql.Length)) { throw; }
+        catch (PostgresException ex) when (ToolReply.MarkStatementPosition(ex, prefix.Length, sql)) { throw; }
         await using var _ = reader;
         if (!await reader.ReadAsync(ct) || reader.IsDBNull(0))
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");

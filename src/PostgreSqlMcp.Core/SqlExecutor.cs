@@ -65,7 +65,8 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
         int? limit = null, int offset = 0, CancellationToken ct = default, bool callerStatement = false)
     {
         sql = SqlGuard.Validate(sql, out string kind);
-        int statementLength = sql.Length, prefixLength = 0;
+        string statement = sql;
+        int prefixLength = 0;
         int rowLimit = limit ?? Math.Min(100, options.MaxRows);
         if (rowLimit < 1 || rowLimit > options.MaxRows) throw new ToolException("invalid_limit", $"limit must be 1..{options.MaxRows}.");
         if (offset < 0 || offset > 1000000) throw new ToolException("invalid_offset", "offset must be 0..1000000. Prefer SQL keyset pagination for deep pages.");
@@ -77,7 +78,7 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
             sql = $"{PagePrefix}{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
         }
         try { return await ReadAsync(sql, parameters, rowLimit, offset, serverPage, ct).ConfigureAwait(false); }
-        catch (PostgresException ex) when (callerStatement && ToolReply.MarkStatementPosition(ex, prefixLength, statementLength)) { throw; }
+        catch (PostgresException ex) when (callerStatement && ToolReply.MarkStatementPosition(ex, prefixLength, statement)) { throw; }
     }
 
     private const string PagePrefix = "SELECT * FROM (\n";

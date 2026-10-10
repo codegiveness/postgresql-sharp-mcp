@@ -192,6 +192,14 @@ internal static class Integration
         JsonNode column = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT missing_column FROM marker" }, "postgresql_error", "42703"))["error"]!;
         Check.That(column["position"].Int() == 8 && column["server_message"].Text().Contains("missing_column", StringComparison.Ordinal),
             "Undefined-column error did not name the column and its position.");
+        JsonNode hinted = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT valu FROM marker" }, "postgresql_error", "42703"))["error"]!;
+        Check.That(hinted["position"].Int() == 8 && hinted["server_hint"].Text().Contains("value", StringComparison.Ordinal),
+            "Undefined-column hint was not returned.");
+        JsonNode denied = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT * FROM pg_authid" }, "postgresql_error", "42501"))["error"]!;
+        Check.That(denied["server_message"].Text().Contains("pg_authid", StringComparison.Ordinal), "Privilege error did not name the denied object.");
+        // PostgreSQL counts positions in code points: an error in the paging wrapper must not map into the statement, even with non-BMP text.
+        JsonNode wrapper = (await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT '\U0001F600\U0001F600' AS a WHERE" }, "postgresql_error", "42601"))["error"]!;
+        Check.That(wrapper["position"] is null && wrapper["server_message"] is null, "Error located in the paging wrapper was mapped into the submitted statement.");
         JsonNode explained = (await client.FailsAsync("explain_query", new { database = "a", sql = "SELECT * FROM missing_relation" }, "postgresql_error", "42P01"))["error"]!;
         Check.That(explained["position"].Int() == 15 && explained["server_message"].Text().Contains("missing_relation", StringComparison.Ordinal),
             "explain_query did not map the error position past its EXPLAIN prefix.");
@@ -199,8 +207,14 @@ internal static class Integration
         JsonNode quoted = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $$a;b$$ AS d, E'escaped\\';still-string' AS e, 'ordinary;string' AS s; -- tail" });
         Check.Equal(quoted["rows"], new[] { new[] { "a;b", "escaped';still-string", "ordinary;string" } }, "Quoted SQL single-statement parsing changed values.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], new[] { new[] { "A_ONLY" } }, "Read-only protection changed fixture data.");
+        // Class-42 errors raised while executing (current_setting, reg* input functions, SPI inside query_to_xml) echo row values; only
+        // errors positioned in the caller's statement may forward server text.
         foreach (var (sql, state) in new[] { ("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"), ("SELECT app.fail_with_sensitive_diagnostic()", "P0001"),
-            ("SELECT app.fail_with_sensitive_access_error()", "42501") })
+            ("SELECT app.fail_with_sensitive_access_error()", "42501"),
+            ("SELECT current_setting(v) FROM (VALUES ('sensitive-error-marker')) s(v)", "42704"),
+            ("SELECT v::regclass FROM (VALUES ('sensitive-error-marker')) s(v)", "42P01"),
+            ("SELECT v::regrole FROM (VALUES ('sensitive-error-marker')) s(v)", "42704"),
+            ("SELECT query_to_xml(v,true,false,'') FROM (VALUES ('sensitive-error-marker')) s(v)", "42601") })
         {
             JsonNode diagnostic = await client.FailsAsync("execute_sql", new { database = "a", sql }, "postgresql_error", state);
             Check.Confidential(diagnostic.ToJsonString(), "sensitive-");
