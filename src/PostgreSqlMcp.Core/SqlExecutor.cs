@@ -10,8 +10,9 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     private readonly SemaphoreSlim _calls = new(options.MaxConcurrentCalls);
 
     public Task<QueryPage> QueryAsync(string database, string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null, bool callerStatement = false) =>
-        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token, callerStatement), readOnly, ct, target);
+        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null, bool callerStatement = false,
+        IReadOnlyList<string?>? positional = null) =>
+        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token, callerStatement, positional), readOnly, ct, target);
 
     public async Task<T> WithSessionAsync<T>(string database, Func<SqlSession, CancellationToken, Task<T>> action,
         bool readOnly = true, CancellationToken ct = default, string? target = null)
@@ -61,8 +62,9 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
     public NpgsqlTransaction Transaction { get; } = transaction;
 
     /// <param name="callerStatement">The SQL came from the tool caller, so PostgreSQL error positions are reported relative to it.</param>
+    /// <param name="positional">Caller values for $1..$n (see <see cref="SqlParameters"/>); exclusive with named parameters.</param>
     public async Task<QueryPage> QueryAsync(string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, CancellationToken ct = default, bool callerStatement = false)
+        int? limit = null, int offset = 0, CancellationToken ct = default, bool callerStatement = false, IReadOnlyList<string?>? positional = null)
     {
         sql = SqlGuard.Validate(sql, out string kind);
         string statement = sql;
@@ -77,18 +79,20 @@ public sealed class SqlSession(string database, NpgsqlConnection connection, Npg
             prefixLength = PagePrefix.Length;
             sql = $"{PagePrefix}{sql}\n) AS mcp_page LIMIT {rowLimit + 1} OFFSET {offset}";
         }
-        try { return await ReadAsync(sql, parameters, rowLimit, offset, serverPage, ct).ConfigureAwait(false); }
+        try { return await ReadAsync(sql, parameters, positional, rowLimit, offset, serverPage, ct).ConfigureAwait(false); }
         catch (PostgresException ex) when (callerStatement && ToolReply.MarkStatementPosition(ex, prefixLength, statement)) { throw; }
     }
 
     private const string PagePrefix = "SELECT * FROM (\n";
 
-    private async Task<QueryPage> ReadAsync(string sql, IReadOnlyDictionary<string, object?>? parameters, int rowLimit, int offset,
-        bool serverPage, CancellationToken ct)
+    private async Task<QueryPage> ReadAsync(string sql, IReadOnlyDictionary<string, object?>? parameters, IReadOnlyList<string?>? positional,
+        int rowLimit, int offset, bool serverPage, CancellationToken ct)
     {
         await using var command = new NpgsqlCommand(sql, Connection, Transaction) { CommandTimeout = options.QueryTimeout };
         if (parameters is not null)
             foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        else if (positional is not null)
+            SqlParameters.Bind(command.Parameters, positional);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
         if (reader.FieldCount > 128) throw new ToolException("result_too_wide", "Select at most 128 columns.");
         var columns = new ColumnInfo[reader.FieldCount];

@@ -10,4 +10,5 @@ internal static class ParameterText
     public const string IncludeSystem = "Include pg_catalog, information_schema and pg_* schemas.";
     public const string Sql = "One SQL statement.";
     public const string SchemaFilter = "Exact schema name; all if omitted.";
+    public const string Values = "Values for $1..$n placeholders, in order: strings, numbers, booleans or null (max 256). Never interpolated; PostgreSQL infers each type from context like a quoted literal, so cast when ambiguous ($1::int, $1::jsonb).";
 }
