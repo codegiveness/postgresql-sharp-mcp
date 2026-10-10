@@ -442,7 +442,7 @@ The settings below were applied on 2026-10-10 with the maintainer's approval. Th
 
 ### Branch protection on `main`
 
-Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
+Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 
