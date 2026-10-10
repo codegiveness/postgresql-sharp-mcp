@@ -245,10 +245,11 @@ jobs:
           artifact-ids: ${{ needs.preflight.outputs.tool_artifact_id }}
           path: release-tool
           digest-mismatch: error
-      - name: Download release artifacts
+      - name: Download metadata and release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
       - name: Require NuGet publishing account
         env:
@@ -258,7 +259,7 @@ jobs:
         id: nuget-login
         with:
           user: ${{ secrets.NUGET_USERNAME }}
-      - name: Publish NuGet with short-lived OIDC credential
+      - name: Publish NuGet with short-lived OIDC credential, verifying any existing version
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push "artifacts/packages/codegiveness.postgresql-sharp-mcp.${{ needs.package.outputs.version }}.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+        run: dotnet release-tool/PostgreSqlMcp.Release.dll nuget --context publication-context/publication-context.json

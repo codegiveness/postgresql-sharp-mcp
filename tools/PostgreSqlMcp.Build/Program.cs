@@ -218,11 +218,12 @@ internal static class PackageBuilder
     {
         using var stream = File.Create(destination);
         using var gzip = new GZipStream(stream, CompressionLevel.Optimal);
-        using var tar = new TarWriter(gzip, TarEntryFormat.Pax);
+        // GNU format: .NET's PAX writer names each extended header after the process ID, which makes identical content hash differently per build.
+        using var tar = new TarWriter(gzip, TarEntryFormat.Gnu);
         foreach (var file in Directory.EnumerateFiles(package, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         {
             var relative = Path.GetRelativePath(package, file).Replace(Path.DirectorySeparatorChar, '/');
-            var entry = new PaxTarEntry(TarEntryType.RegularFile, $"package/{relative}")
+            var entry = new GnuTarEntry(TarEntryType.RegularFile, $"package/{relative}")
             {
                 Uid = 0,
                 Gid = 0,
