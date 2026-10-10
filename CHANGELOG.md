@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Tooling: replace seven copies of the child-process runner (verifier, release tool, package builder, fuzz campaign, npm installer, MCP client and resource checks) and three repository-root finders with `tools/Shared/ProcessRunner.cs` and `RepositoryRoot.cs`, linked into each tool project. Every call states its timeout and output policy (`Inherit`, `Capture`, `Suppress`, `Redact`); existing timeouts and exit-code handling are kept. Process-tree cleanup, drain observation and deadlines now live in one place.
+- Release tool: child output is echoed through the `Redact` policy, which replaces the values of credential-looking environment variables (names containing TOKEN, SECRET, PASSWORD, KEY or CREDENTIAL, values of 8+ characters) with `***`. Previously raw output was printed while the failure message claimed "redacted runner diagnostics". A timed-out release subprocess now reports `TimeoutException` instead of a bare cancellation.
+- Verifier: add a Linux regression for the runner's `Capture`, `Suppress` and `Redact` policies (no echo for the first two; no secret in the redacted echo or result).
 - Show a grouped README badge table covering build/tests, security scanning, supply chain, registries, platforms, stack versions, features and project activity. Feature and practice badges link to the documentation or configuration that supports them; stack versions are read live from `global.json` and `Directory.Packages.props`.
 - Release npm job: install npm 12.2.0 from its registry tarball after a pinned SHA-512 check matching the published `dist.integrity`, replacing the unpinned `npm install --global` flagged by Scorecard Pinned-Dependencies.
 - Release npm job: accept npm 12's one-element JSON array from `npm view <name>@<version> version --json`. Previously an already-published version failed with "requires an element of type 'String'" instead of being reported as not republished.

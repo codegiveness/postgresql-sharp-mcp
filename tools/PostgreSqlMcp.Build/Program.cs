@@ -128,7 +128,8 @@ internal static class PackageBuilder
             CopyFile(Path.Combine(root, name), Path.Combine(stage, name));
         foreach (var notice in Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt"))
             CopyFile(notice, Path.Combine(stage, "LICENSES", Path.GetFileName(notice)));
-        foreach (var relative in ServerProjects.Select(name => Path.Combine("src", name)).Append(Path.Combine("tools", InstallerName)))
+        // The installer links tools/Shared/ProcessRunner.cs, so staged builds need it at the same relative path.
+        foreach (var relative in ServerProjects.Select(name => Path.Combine("src", name)).Append(Path.Combine("tools", InstallerName)).Append(Path.Combine("tools", "Shared")))
             StageProject(Path.Combine(root, relative), Path.Combine(stage, relative));
     }
 
@@ -186,32 +187,19 @@ internal static class PackageBuilder
 
     private static async Task DotnetAsync(string stage, params string[] arguments)
     {
-        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = stage, UseShellExecute = false };
-        foreach (var argument in arguments)
-            start.ArgumentList.Add(argument);
-        foreach (var property in new[]
+        var properties = new[]
         {
             "RestoreLockedMode=true", "EnableSourceControlManagerQueries=false", "EnableSourceLink=false", "EmbedUntrackedSources=false",
             "DebugType=None", "DebugSymbols=false", "IncludeSymbols=false", $"PathMap={stage}=/_/"
-        })
-            start.ArgumentList.Add($"-p:{property}");
-        using var process = new Process { StartInfo = start };
-        if (!process.Start()) throw new IOException("Unable to start dotnet.");
-        try
+        };
+        var result = await ProcessRunner.RunAsync(new ProcessSpec("dotnet", [.. arguments, .. properties.Select(property => $"-p:{property}")])
         {
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException($"dotnet {arguments[0]} failed with exit code {process.ExitCode}.");
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-                await process.WaitForExitAsync();
-            }
-        }
+            WorkingDirectory = stage,
+            Timeout = Timeout.InfiniteTimeSpan,
+            Output = OutputPolicy.Inherit
+        });
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"dotnet {arguments[0]} failed with exit code {result.ExitCode}.");
     }
 
     private static void CreateTarball(string package, string destination)

@@ -46,47 +46,16 @@ try
             UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 
     // Exercise the installed self-contained command, including its bundled runtime.
-    var start = new ProcessStartInfo(executable)
+    var result = await ProcessRunner.RunAsync(new ProcessSpec(executable, ["--version"])
     {
-        UseShellExecute = false,
-        RedirectStandardOutput = true,
-        RedirectStandardError = true
-    };
-    start.ArgumentList.Add("--version");
-    using var process = new Process { StartInfo = start };
-    if (!process.Start()) throw new IOException("Unable to start the installed executable.");
-    using var reading = new CancellationTokenSource();
-    var stdout = process.StandardOutput.ReadToEndAsync(reading.Token);
-    var stderr = process.StandardError.ReadToEndAsync(reading.Token);
-    Task drains = Task.WhenAll(stdout, stderr);
-    try
+        Timeout = Timeout.InfiniteTimeSpan,
+        Output = OutputPolicy.Capture
+    });
+    if (result.ExitCode != 0)
     {
-        await process.WaitForExitAsync();
-        await drains;
-        var diagnostics = stderr.Result;
-        if (process.ExitCode != 0)
-        {
-            if (!string.IsNullOrWhiteSpace(diagnostics))
-                Console.Error.Write(diagnostics);
-            throw new InvalidOperationException("The bundled executable could not start. Check that this OS supports the packaged .NET runtime and its native library prerequisites.");
-        }
-    }
-    finally
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-                await process.WaitForExitAsync();
-            }
-        }
-        finally
-        {
-            await reading.CancelAsync();
-            await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        }
+        if (!string.IsNullOrWhiteSpace(result.Error))
+            Console.Error.Write(result.Error);
+        throw new InvalidOperationException("The bundled executable could not start. Check that this OS supports the packaged .NET runtime and its native library prerequisites.");
     }
     return 0;
 }

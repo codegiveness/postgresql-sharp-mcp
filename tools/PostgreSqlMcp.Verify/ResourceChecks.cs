@@ -8,6 +8,7 @@ internal static class ResourceChecks
     public static async Task RunAsync()
     {
         if (!OperatingSystem.IsLinux()) return;
+        await OutputPoliciesAsync();
         using var temporary = new TemporaryDirectory();
         string pidFile = Path.Combine(temporary.Path, "child.pid");
         string quotedPath = "'" + pidFile.Replace("'", "'\"'\"'") + "'";
@@ -63,6 +64,45 @@ internal static class ResourceChecks
         Console.WriteLine("PASS subprocess deadlines cover blocked stdin and inherited output pipes; owned child cleanup verified");
     }
 
+    // The shared runner's per-call output policy decides what reaches the console; a credential must never be echoed.
+    private static async Task OutputPoliciesAsync()
+    {
+        const string secret = "synthetic-credential-0123456789";
+        Task<ProcessResult> Run(OutputPolicy policy) => ProcessRunner.RunAsync(new("/bin/sh", ["-c", $"echo out:{secret}; echo err:{secret} >&2; exit 3"])
+        {
+            Timeout = TimeSpan.FromSeconds(10), Output = policy
+        });
+
+        TextWriter originalOut = Console.Out, originalError = Console.Error;
+        using StringWriter echoedOut = new(), echoedError = new();
+        ProcessResult captured, suppressed, redacted;
+        string echoedBeforeRedaction;
+        Console.SetOut(echoedOut);
+        Console.SetError(echoedError);
+        try
+        {
+            captured = await Run(OutputPolicy.Capture);
+            suppressed = await Run(OutputPolicy.Suppress);
+            echoedBeforeRedaction = echoedOut.ToString() + echoedError.ToString();
+            redacted = await Run(OutputPolicy.Redact([secret, null, ""]));
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
+        Check.That(captured.ExitCode == 3 && captured.Output.Contains(secret, StringComparison.Ordinal) && captured.Error.Contains(secret, StringComparison.Ordinal),
+            "Capture must hand the caller the raw output.");
+        Check.That(suppressed.ExitCode == 3 && suppressed.Output.Length == 0 && suppressed.Error.Length == 0, "Suppress must discard the output.");
+        Check.That(echoedBeforeRedaction.Length == 0, "Capture and Suppress must not echo child output.");
+        Check.That(redacted.ExitCode == 3 && redacted.Output.Contains("out:***", StringComparison.Ordinal) && redacted.Error.Contains("err:***", StringComparison.Ordinal)
+            && !(redacted.Output + redacted.Error).Contains(secret, StringComparison.Ordinal), "Redact must replace the secret in the returned output.");
+        string echoed = echoedOut.ToString() + echoedError.ToString();
+        Check.That(echoed.Contains("out:***", StringComparison.Ordinal) && echoed.Contains("err:***", StringComparison.Ordinal) && !echoed.Contains(secret, StringComparison.Ordinal),
+            "Redact must echo the redacted output and never the secret.");
+        Console.WriteLine("PASS shared runner output policies: capture returns raw output, suppress discards it, redact echoes and returns text without the secret");
+    }
+
     private static async Task ExpectDeadlineAsync(Task operation, int timeout = 10)
     {
         try { await operation.WaitAsync(TimeSpan.FromSeconds(timeout)); }
@@ -84,12 +124,7 @@ internal static class ResourceChecks
         try
         {
             using var process = Process.GetProcessById(pid);
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-                await process.WaitForExitAsync();
-            }
+            await ProcessRunner.KillTreeAsync(process);
         }
         catch (ArgumentException) { }
     }

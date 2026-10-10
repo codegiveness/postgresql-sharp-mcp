@@ -11,7 +11,7 @@ internal static class Program
     {
         try
         {
-            string root = FindRoot();
+            string root = RepositoryRoot.Find() ?? throw new VerificationException("Run the verifier from the repository or a child directory.");
             if (args is ["integration"])
                 await Integration.RunAsync(root);
             else if (args is ["sarif", "--baseline", var baseline, "--candidate", var candidate])
@@ -54,13 +54,6 @@ internal static class Program
             return 1;
         }
     }
-
-    private static string FindRoot()
-    {
-        for (DirectoryInfo? directory = new(Environment.CurrentDirectory); directory is not null; directory = directory.Parent)
-            if (File.Exists(Path.Combine(directory.FullName, "postgresql-sharp-mcp.slnx"))) return directory.FullName;
-        throw new VerificationException("Run the verifier from the repository or a child directory.");
-    }
 }
 
 internal sealed class VerificationException(string message) : Exception(message)
@@ -100,8 +93,6 @@ internal sealed record Command(string File, params string[] Arguments)
     public Command With(params string[] arguments) => this with { Arguments = [.. Arguments, .. arguments] };
 }
 
-internal sealed record ProcessResult(int ExitCode, string Output, string Error);
-
 internal static class Processes
 {
     public static Dictionary<string, string> CleanEnvironment() => Environment.GetEnvironmentVariables()
@@ -109,84 +100,33 @@ internal static class Processes
         .Where(entry => !((string)entry.Key).StartsWith("POSTGRES_", StringComparison.OrdinalIgnoreCase))
         .ToDictionary(entry => (string)entry.Key, entry => (string)entry.Value!, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
+    private static ProcessSpec Spec(Command command, IReadOnlyDictionary<string, string>? environment, string? directory, TimeSpan timeout) =>
+        new(command.File, command.Arguments)
+        {
+            Timeout = timeout,
+            // Output is never echoed: it can contain credentials, so callers inspect it deliberately.
+            Output = OutputPolicy.Capture,
+            RedirectInput = true,
+            WorkingDirectory = directory ?? command.WorkingDirectory,
+            Environment = environment?.ToDictionary(pair => pair.Key, pair => (string?)pair.Value),
+            ClearEnvironment = environment is not null
+        };
+
     public static Process Start(Command command, IReadOnlyDictionary<string, string>? environment = null, string? directory = null)
     {
-        var info = new ProcessStartInfo(command.File)
-        {
-            UseShellExecute = false, RedirectStandardInput = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            WorkingDirectory = directory ?? command.WorkingDirectory ?? Environment.CurrentDirectory
-        };
-        if (OperatingSystem.IsWindows() && Path.GetExtension(command.File) is ".cmd" or ".bat")
-        {
-            string[] words = [command.File, .. command.Arguments];
-            Check.That(words.All(word => !word.Contains('"') && !word.Contains('%') && !word.Contains('!') && !word.Contains('\r') && !word.Contains('\n')),
-                "Unsupported metacharacter in Windows command path or argument.");
-            info.FileName = Environment.GetEnvironmentVariable("ComSpec")
-                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-            info.Arguments = "/d /s /c \"" + string.Join(" ", words.Select(word => "\"" + word + "\"")) + "\"";
-        }
-        else
-            foreach (string argument in command.Arguments) info.ArgumentList.Add(argument);
-        if (environment is not null)
-        {
-            info.Environment.Clear();
-            foreach (var (key, value) in environment) info.Environment[key] = value;
-        }
-        var process = new Process { StartInfo = info };
-        try
-        {
-            if (!process.Start()) throw new VerificationException("Could not start verification subprocess.");
-            return process;
-        }
-        catch
-        {
-            process.Dispose();
-            throw;
-        }
+        try { return ProcessRunner.Start(Spec(command, environment, directory, Timeout.InfiniteTimeSpan)); }
+        catch (ArgumentException exception) { throw new VerificationException(exception.Message); }
     }
 
     public static async Task<ProcessResult> RunAsync(Command command, IReadOnlyDictionary<string, string>? environment = null,
         int? expected = 0, string? input = null, int timeout = 45, string? directory = null)
     {
-        using Process process = Start(command, environment, directory);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
-        Task<string> output = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        Task<string> error = process.StandardError.ReadToEndAsync(deadline.Token);
-        Task drains = Task.WhenAll(output, error);
-        try
-        {
-            if (input is not null) await process.StandardInput.WriteAsync(input.AsMemory(), deadline.Token);
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(deadline.Token);
-            await drains;
-            var result = new ProcessResult(process.ExitCode, output.Result, error.Result);
-            if (expected is not null)
-                Check.That(result.ExitCode == expected, $"{Path.GetFileName(command.File)} exited with status {result.ExitCode}; expected {expected}. Captured output suppressed to protect credentials.");
-            return result;
-        }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
-        {
-            throw new TimeoutException("Verification subprocess exceeded its timeout.");
-        }
-        finally
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    try { process.Kill(entireProcessTree: true); }
-                    catch (InvalidOperationException) when (process.HasExited) { }
-                    await process.WaitForExitAsync();
-                }
-            }
-            finally
-            {
-                await deadline.CancelAsync();
-                // Observe both drains before disposing their streams, without masking the command failure.
-                await drains.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            }
-        }
+        ProcessResult result;
+        try { result = await ProcessRunner.RunAsync(Spec(command, environment, directory, TimeSpan.FromSeconds(timeout)) with { Input = input }); }
+        catch (ArgumentException exception) { throw new VerificationException(exception.Message); }
+        if (expected is not null)
+            Check.That(result.ExitCode == expected, $"{Path.GetFileName(command.File)} exited with status {result.ExitCode}; expected {expected}. Captured output suppressed to protect credentials.");
+        return result;
     }
 
     public static string FindExecutable(string name)

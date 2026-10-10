@@ -158,12 +158,7 @@ internal sealed class McpClient : IAsyncDisposable
         {
             try
             {
-                if (!process.HasExited)
-                {
-                    try { process.Kill(entireProcessTree: true); }
-                    catch (InvalidOperationException) when (process.HasExited) { }
-                    await process.WaitForExitAsync();
-                }
+                await ProcessRunner.KillTreeAsync(process);
             }
             finally
             {
