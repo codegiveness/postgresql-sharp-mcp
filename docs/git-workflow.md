@@ -440,9 +440,42 @@ Agents also:
 
 The settings below were applied on 2026-10-10 with the maintainer's approval. The commands are kept as an exact record and for re-applying them; any change to them needs the maintainer's explicit approval. They use the [GitHub REST API](https://docs.github.com/en/rest) through `gh api` and need an account with admin rights on the repository.
 
-### Branch protection on `main`
+### Protection on `main` (ruleset)
 
-Classic branch protection: pull request required (zero approvals, stale approvals dismissed), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, resolved conversations, rules enforced for administrators, no force pushes and no deletion. The `release` environment accepts deployments from `main` only.
+The `release` environment accepts deployments from `main` only. On 2026-10-10 the former classic branch protection was replaced by this equivalent ruleset (created first, verified active, then the classic rule was deleted). Rulesets are readable with a repository's ordinary read permission, so OpenSSF Scorecard's default workflow token can measure them; classic protection needed an administration-read token.
+
+```bash
+gh api -X POST repos/codegiveness/postgresql-sharp-mcp/rulesets --input - <<'EOF'
+{
+  "name": "main: pull requests and required checks",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "pull_request", "parameters": {
+      "required_approving_review_count": 0, "dismiss_stale_reviews_on_push": true,
+      "require_code_owner_review": false, "require_last_push_approval": false,
+      "required_review_thread_resolution": true } },
+    { "type": "required_status_checks", "parameters": {
+      "strict_required_status_checks_policy": true, "do_not_enforce_on_create": false,
+      "required_status_checks": [
+        { "context": "verify", "integration_id": 15368 },
+        { "context": "dependencies", "integration_id": 15368 },
+        { "context": "Native installation (windows-latest)", "integration_id": 15368 },
+        { "context": "Native installation (macos-latest)", "integration_id": 15368 },
+        { "context": "pull-request-analysis", "integration_id": 15368 },
+        { "context": "gitleaks", "integration_id": 15368 },
+        { "context": "container-security", "integration_id": 15368 },
+        { "context": "sql-boundaries", "integration_id": 15368 } ] } }
+  ]
+}
+EOF
+```
+
+Pull requests are required with zero approvals and stale approvals dismissed; the eight checks must pass from GitHub Actions (integration 15368) on an up-to-date branch; conversations must be resolved; force pushes and deletion are blocked. No bypass actors, so the rules apply to administrators too.
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 
@@ -472,7 +505,7 @@ gh api -X POST repos/codegiveness/postgresql-sharp-mcp/rulesets --input - <<'EOF
 EOF
 ```
 
-This adds to the classic protection instead of replacing it. It blocks merge commits on `main`, enforcing the squash-only rule at the branch level.
+This adds to the main ruleset above. It blocks merge commits on `main`, enforcing the squash-only rule at the branch level.
 
 ### 3. Immutable release tags (ruleset)
 
@@ -501,7 +534,7 @@ Creating a new `v*` tag stays allowed; moving or deleting an existing one is blo
 ```bash
 gh api repos/codegiveness/postgresql-sharp-mcp --jq '{allow_squash_merge, allow_merge_commit, allow_rebase_merge, delete_branch_on_merge, allow_update_branch, squash_merge_commit_title, squash_merge_commit_message}'
 gh api repos/codegiveness/postgresql-sharp-mcp/rulesets --jq '.[] | {id, name, target, enforcement}'
-gh api repos/codegiveness/postgresql-sharp-mcp/branches/main/protection --jq '{checks: [.required_status_checks.checks[].context], strict: .required_status_checks.strict, enforce_admins: .enforce_admins.enabled}'
+gh api repos/codegiveness/postgresql-sharp-mcp/rules/branches/main --jq '.[] | {type, ruleset_id}'
 ```
 
 To undo a ruleset: `gh api -X DELETE repos/codegiveness/postgresql-sharp-mcp/rulesets/<id>`.
