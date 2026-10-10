@@ -20,12 +20,12 @@ SQL calls are read-only by default, but the server's default access mode permits
 
 Choose **npx** for on-demand execution or a **.NET tool** for a persistent command. Starting with **0.3.3**, npm bundles the .NET runtime: npx requires only Node.js 22+ and npm, not an installed .NET runtime or SDK. The .NET tool still requires the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0), and installing it requires the .NET 10 SDK.
 
-This guide targets **0.3.3**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
+This guide targets **0.4.0**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
 
 **npx — run without a global install:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.3 --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --version
 ```
 
 The package-specific `--allow-scripts` approves installation on npm 12. Do not use `--ignore-scripts` for automatic setup: a bundled upstream OS runner selects the self-contained C# installer, which installs the server and runtime for your OS/CPU. No runtime or binary is downloaded by the installer. The installed server command is native; it needs neither Node.js nor `dotnet` to run. Unix installation also uses the system `uname` command.
@@ -33,18 +33,18 @@ The package-specific `--allow-scripts` approves installation on npm 12. Do not u
 **.NET tool — install once, then run by name:**
 
 ```sh
-dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.3.3
+dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.4.0
 postgresql-sharp-mcp --version
 ```
 
 If the command is not found, add the .NET tools directory to your PATH (`$HOME/.dotnet/tools` on Linux/macOS; `%USERPROFILE%\.dotnet\tools` on Windows), or use its absolute executable path. Do not reinstall to fix PATH.
 
-The command should report **0.3.3** (or assembly version **0.3.3.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
+The command should report **0.4.0** (or assembly version **0.4.0.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
 
 <details>
 <summary>Standalone archives — no .NET, Node.js or npm installation needed</summary>
 
-Download **one archive** and `SHA256SUMS` from [release 0.3.2](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.3.2). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
+Download **one archive** and `SHA256SUMS` from [release 0.4.0](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.4.0). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
 
 | Your computer | Archive |
 |---|---|
@@ -107,7 +107,7 @@ Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Destina
 
 </details>
 
-The executable should report **0.3.2**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
+The executable should report **0.4.0**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
 
 </details>
 
@@ -121,7 +121,7 @@ For **npx**, use this JSON for a new file. If the file already has other servers
     "postgresql": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.3.3"]
+      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.4.0"]
     }
   }
 }
@@ -180,7 +180,7 @@ Use the command for your installation method. If you use a standalone archive, r
 **npx, Linux/macOS:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.3 --validate && omp
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --validate && omp
 ```
 
 **.NET tool, Linux/macOS:**
@@ -200,7 +200,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 ```
 
-For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.3 --validate`; keep the `$LASTEXITCODE` check and launch block.
+For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --validate`; keep the `$LASTEXITCODE` check and launch block.
 
 Validation is read-only and exits; its successful stderr output includes your database name, so keep it private. Empty input is rejected before OMP starts. If it fails, fix your connection details and repeat step 2; [troubleshooting](#if-setup-does-not-work) covers common failures.
 
@@ -227,9 +227,9 @@ For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFu
 
 ### Upgrading an existing installation
 
-Automatic discovery and the unrestricted default require **0.3.0 or newer**. This guide targets the **0.3.3** npm runtime-bundling fix. Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
+Automatic discovery and the unrestricted default require **0.3.0 or newer**; npm runtime bundling requires **0.3.3 or newer**. This guide targets **0.4.0**, which adds the [database lock](#database-lock): an existing `POSTGRES_DATABASES` configuration now refuses to start unless PostgreSQL grants match the list (see the [hardening guide](SECURITY.md#database-lock-hardening)). Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
 
-After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.3.3`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.3.3`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
+After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.4.0`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.4.0`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
 
@@ -283,7 +283,7 @@ Populate it with a plain-text editor, using the connection-string/TLS guidance a
 
 A file has **two escaping layers**: Npgsql, then JSON. The synthetic Npgsql fragment `Password="sample;value"` becomes `Password=\"sample;value\"` in a JSON string. Double a literal quote inside an Npgsql quoted value, then escape each quote for JSON; double JSON backslashes too. A JSON-aware editor/serializer helps. No trailing commas are allowed. Never commit the file or paste it into chat/public reports.
 
-For separate hosts/logins, add case-sensitive profile keys such as `reporting`, each with its own bootstrap string—not an entry per database. A profile is **not an allowlist**. Optional `target` selects a profile explicitly; see [selection rules](#database-selection-and-live-discovery).
+For separate hosts/logins, add case-sensitive profile keys such as `reporting`, each with its own bootstrap string—not an entry per database. A profile is **not an allowlist**; add a [database lock](SECURITY.md#database-lock-hardening) (`POSTGRES_DATABASES`) to confine every profile to named databases. Optional `target` selects a profile explicitly; see [selection rules](#database-selection-and-live-discovery).
 
 In the MCP entry, add only `"POSTGRES_TARGETS_FILE"` in `env` with the actual absolute file path, alongside nonsensitive options. Linux: `/home/YOUR_USER/postgresql-mcp/targets.json`; macOS: `/Users/YOUR_USER/postgresql-mcp/targets.json`; Windows JSON: `"C:\\Users\\YOUR_USER\\postgresql-mcp\\targets.json"`. This path points to the credentials file, not MCP JSON. Do not also add a connection string.
 
@@ -306,7 +306,7 @@ Use your actual paths and keep validation stderr private. Reload the saved MCP c
 | Executable not found / spawn error | Use an absolute executable path including `.exe` on Windows, not an archive/folder; keep extracted files together. |
 | Wrong architecture / cannot execute binary | Match the archive to your OS and CPU. |
 | npm reports blocked install scripts / native command cannot execute | Use the full npx command above with package-specific `--allow-scripts`; if a previous install skipped scripts, use a fresh npm cache for the corrected command. |
-| .NET runtime not found | npm 0.3.2 and earlier require .NET; upgrade to 0.3.3 after publication or use a local fixed artifact. The .NET tool still requires .NET 10 and `DOTNET_ROOT` for custom runtime locations. npm 0.3.3 and standalone archives bundle the runtime. |
+| .NET runtime not found | npm 0.3.2 and earlier require .NET; upgrade to 0.3.3 or newer after publication or use a local fixed artifact. The .NET tool still requires .NET 10 and `DOTNET_ROOT` for custom runtime locations. npm 0.3.3 and newer and standalone archives bundle the runtime. |
 | Invalid configuration / missing credentials | Repeat the hidden prompt, clear stale credential sources from the shell/client entry, and start a new client from that shell. Raw PostgreSQL URLs are not accepted. For files, check the path, JSON escaping and accidental `.txt` extension. |
 | Connection refused, timeout or authentication error | Run `--validate`; check host, port, database, login/password, network/VPN and PostgreSQL access rules. Installing this app does not grant access. |
 | Certificate validation error | Use the provider's correct hostname and CA certificate. Do not disable remote TLS. |
@@ -320,7 +320,7 @@ Normal stdout is reserved for MCP JSON-RPC; diagnostics use stderr. Keep credent
 
 Choose one installation method from step 1 and follow the same environment/client setup. If registry installation is unavailable, use the self-contained archive, a [verified local NuGet package](CONTRIBUTING.md#install-a-verified-release-artifact), or a [source build](CONTRIBUTING.md#build-from-source). Downloadable npm/NuGet release package files alone do not establish registry publication.
 
-After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.3.3`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
+After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
@@ -366,6 +366,7 @@ A profile is a case-sensitive name mapped to a bootstrap connection string: `POS
 - **Without `target`:** an exact configured alias in `database` selects that alias's bootstrap database for compatibility. Any other value is a physical database name on the default profile.
 - **With `target`:** that profile supplies the host, authentication and TLS settings; `database` is always a physical database name. Use this form to select a database whose name happens to match an alias.
 - Only the connection string's `Database` changes. Tool calls cannot supply credentials, change the host, or rewrite the protected file. An unknown profile returns `invalid_target`; a nonexistent physical database returns PostgreSQL SQLSTATE `3D000`, and insufficient privilege returns `42501`. Connectivity failures remain errors, not fallback requests.
+- **With a database lock** (`POSTGRES_DATABASES`), every resolved physical database—from `database`, an alias's bootstrap database or `target`—must be on the list, otherwise the call returns `invalid_target` without connecting. See [Database lock](#database-lock).
 
 For example, discover and select databases on the `primary` profile:
 
@@ -377,9 +378,13 @@ For example, discover and select databases on the `primary` profile:
 {"name":"execute_sql","arguments":{"target":"primary","database":"tenant_b","sql":"SELECT current_database() AS selected_database","limit":1}}
 ```
 
-`list_databases` queries live `pg_catalog.pg_database` on the selected profile's bootstrap database. It excludes templates, databases with connections disabled and databases for which the current role lacks CONNECT; an optional explicit allowlist further filters the page. Names are ordered with PostgreSQL `COLLATE "C"`, and `is_current` marks the bootstrap database used for that listing. New databases and grant/revoke changes appear on subsequent calls without restarting; listing does not guarantee network/authentication or object access for a later connection.
+`list_databases` queries live `pg_catalog.pg_database` on the selected profile's bootstrap database (under a database lock, the first locked database when the bootstrap database is not locked). It excludes templates, databases with connections disabled and databases for which the current role lacks CONNECT; a database lock further filters the page. Names are ordered with PostgreSQL `COLLATE "C"`, and `is_current` marks the database used for that listing. New databases and grant/revoke changes appear on subsequent calls without restarting; listing does not guarantee network/authentication or object access for a later connection.
 
 The response is `{ "target": "...", "databases": { ... }, "access_mode": "...", "limits": { ... } }`. `databases` is the same bounded query-page shape described below, with `columns` named `name` and `is_current`, positional `rows` such as `[["postgres",true],["tenant_b",false]]`, and `offset`, `next_offset`, `truncated`, `truncation_reason` and `clipped_cells`. Follow `databases.next_offset` using the same `target` and `limit`; pages are live queries, not a shared snapshot. The obsolete `targets` alias-list payload is no longer returned. Catalog failures are reported rather than silently replaced with configured aliases.
+
+### Database lock
+
+To protect databases that must never be touched, run one server instance per PostgreSQL server and set `POSTGRES_DATABASES` (or `--databases`) to a JSON array of the exact databases that instance may use, for example `["<app_db>"]`. It works with either a connection string or a targets JSON/file and does not change their formats. The server rejects every other database on every path, and at startup and in `--validate` it verifies that PostgreSQL itself confines the login: it refuses to start if the role can connect to any other database, is or can become a superuser, has `CREATEDB`/`CREATEROLE`, owns an out-of-lock database, holds server-file roles, or has `dblink`/`postgres_fdw`/foreign servers in a locked database. Set `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) to make a missing lock a startup error. Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, so most roles need hardening first: follow the [database lock hardening guide](SECURITY.md#database-lock-hardening), which also includes a multi-instance harness example.
 
 ### Plans and optional extensions
 
@@ -489,14 +494,15 @@ SDK/provider payload logging is disabled even at debug/trace levels; host diagno
 
 ## Configuration reference
 
-For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `primary` seed and enables live discovery without targets JSON. Choose a base connection string (optionally with a database allowlist) **or** targets JSON/file. Combining a connection string with either targets source is rejected, not silently prioritized. Within the targets-only route, `POSTGRES_TARGETS` takes precedence over the file. CLI flags override corresponding environment variables, except that `POSTGRES_CONNECTION_STRING` overrides `--connection-string`; avoid CLI secrets because process arguments/history can expose them. Profile/credential changes require a server restart; environment secret changes also require fully restarting the client from the newly prepared shell. Live database/grant changes do not.
+For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `primary` seed and enables live discovery without targets JSON. Choose a base connection string **or** targets JSON/file; either may add a [database lock](#database-lock). Combining a connection string with either targets source is rejected, not silently prioritized. Within the targets-only route, `POSTGRES_TARGETS` takes precedence over the file. CLI flags override corresponding environment variables, except that `POSTGRES_CONNECTION_STRING` overrides `--connection-string`; avoid CLI secrets because process arguments/history can expose them. Profile/credential changes require a server restart; environment secret changes also require fully restarting the client from the newly prepared shell. Live database/grant changes do not.
 
 | Environment | Default / bounds |
 |---|---|
 | `POSTGRES_TARGETS` | JSON profile-name-to-bootstrap-connection-string object |
 | `POSTGRES_TARGETS_FILE` | Protected JSON profile file; `--targets-file` supported |
 | `POSTGRES_CONNECTION_STRING` | Base Npgsql string; bootstrap `Database` defaults to `postgres` if omitted; `--connection-string` supported |
-| `POSTGRES_DATABASES` | Optional explicit JSON database-name array with the base string; `--databases` supported |
+| `POSTGRES_DATABASES` | Optional database lock: JSON array of 1+ unique physical database names, with a connection string or targets JSON/file; startup verifies PostgreSQL grants enforce it; `--databases` supported |
+| `POSTGRES_REQUIRE_DATABASE_LOCK` | `false`; `true` makes a missing `POSTGRES_DATABASES` a startup error; `--require-database-lock` supported |
 | `POSTGRES_ACCESS_MODE` | unrestricted when omitted; opt into restricted to refuse writes; `--access-mode` supported |
 | `POSTGRES_QUERY_TIMEOUT` | 30 seconds; 1–600; `--query-timeout` supported |
 | `POSTGRES_MAX_ROWS` | 1000; 1–5000 |
@@ -506,9 +512,9 @@ For one server, use inherited `POSTGRES_CONNECTION_STRING`; it creates the `prim
 | `POSTGRES_MAX_CONCURRENT_CALLS` | 16; 1–64 |
 | `POSTGRES_LOG_LEVEL` | warning; trace/debug/information/warning/error/critical/none; `--log-level` supported |
 
-A base connection string alone creates the `primary` profile and supports live discovery. With an explicit `POSTGRES_DATABASES` JSON array, each allowlisted name becomes a seed alias and replaces any `Database` in the base string; catalog results are filtered to these names and selection of a nonallowlisted physical database is rejected. This allowlist is optional and must be maintained if used. Targets-file aliases are **not** an implicit allowlist. The [optional protected targets file](#optional-protected-targets-file) supports independent credentials/multiple profiles and launch environments where session propagation is impractical; neither method requires putting secrets in process arguments. Environment variables are plaintext inherited state, while files are persistent plaintext protected by OS permissions—choose according to the deployment's exposure and lifecycle, not a blanket safety claim.
+A base connection string alone creates the `primary` profile and supports live discovery. With a `POSTGRES_DATABASES` database lock, each locked name becomes a seed alias and replaces any `Database` in the base string; with targets JSON/file, profiles keep their aliases and the lock applies to all of them. In both modes catalog results are filtered to the locked names, selection of any other physical database is rejected, and startup refuses to run unless PostgreSQL grants enforce the same lock ([details](SECURITY.md#database-lock-hardening)). The lock must be maintained when databases are added. The [optional protected targets file](#optional-protected-targets-file) supports independent credentials/multiple profiles and launch environments where session propagation is impractical; neither method requires putting secrets in process arguments. Environment variables are plaintext inherited state, while files are persistent plaintext protected by OS permissions—choose according to the deployment's exposure and lifecycle, not a blanket safety claim.
 
-The .NET tool and framework-dependent source builds require the .NET 10 runtime; npm 0.3.3 and standalone archives include it. Self-contained executables still require native OS libraries. For example, Debian/Ubuntu GSS/Kerberos support uses `libgssapi-krb5-2`; install the platform's appropriate library if that authentication is needed. Password fallback does not verify Kerberos support. The container includes this dependency. See [Npgsql security and encryption](https://www.npgsql.org/doc/security.html).
+The .NET tool and framework-dependent source builds require the .NET 10 runtime; npm 0.3.3 and newer and standalone archives include it. Self-contained executables still require native OS libraries. For example, Debian/Ubuntu GSS/Kerberos support uses `libgssapi-krb5-2`; install the platform's appropriate library if that authentication is needed. Password fallback does not verify Kerberos support. The container includes this dependency. See [Npgsql security and encryption](https://www.npgsql.org/doc/security.html).
 
 </details>
 

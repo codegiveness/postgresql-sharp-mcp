@@ -4,9 +4,9 @@
 
 This server exposes PostgreSQL operations to an MCP client over stdio. Anyone who can use that client can request queries using the configured database credentials. There is no separate MCP user authentication, per-tool authorization, or tenant identity mechanism. Protect the host process and the client that launches it; do not expose stdio through an unauthenticated network bridge.
 
-Connection profiles are case-sensitive names mapped to bootstrap connection strings, **not a database allowlist**. An inherited `POSTGRES_CONNECTION_STRING` alone creates the `primary` profile; protected targets JSON/file remains optional for multiple independent profiles. Tool requests can select a physical PostgreSQL database on a profile's server, but cannot supply a new connection string or change its host, login or TLS settings. Optional `target` selects the profile; without it, exact aliases select their configured bootstrap database and other database names use the default profile (`primary`, otherwise ordinal-first). With `target`, `database` is always a physical name. Unknown profiles, missing databases and denied connections fail without falling back. Each call owns its connection selection; there is no shared current database. Equivalent configurations for the same physical database may share a bounded connection pool.
+Connection profiles are case-sensitive names mapped to bootstrap connection strings; a profile alone is **not a database allowlist** (use the [database lock](#database-lock-hardening) for that). An inherited `POSTGRES_CONNECTION_STRING` alone creates the `primary` profile; protected targets JSON/file remains optional for multiple independent profiles. Tool requests can select a physical PostgreSQL database on a profile's server, but cannot supply a new connection string or change its host, login or TLS settings. Optional `target` selects the profile; without it, exact aliases select their configured bootstrap database and other database names use the default profile (`primary`, otherwise ordinal-first). With `target`, `database` is always a physical name. Unknown profiles, missing databases and denied connections fail without falling back. Each call owns its connection selection; there is no shared current database. Equivalent configurations for the same physical database may share a bounded connection pool.
 
-Live `list_databases` uses the bootstrap database's catalog, excluding templates, disabled connections and databases lacking the current role's CONNECT privilege. It exposes accessible database names, not just configured aliases. CONNECT discovery does not prove actual connectivity or schema/table access. Newly created or granted databases are selectable without configuration edits or restarting, whether credentials came from the session environment or a protected file. Review grants, including `PUBLIC` CONNECT, before upgrading from alias-only selection. An optional `POSTGRES_DATABASES`/`--databases` allowlist with a base connection string filters listing and rejects other physical names; targets-file aliases do not impose that restriction.
+Live `list_databases` uses the catalog of the profile's bootstrap database (or, under a database lock, the first locked database when the bootstrap database is outside the lock), excluding templates, disabled connections and databases lacking the current role's CONNECT privilege. It exposes accessible database names, not just configured aliases. CONNECT discovery does not prove actual connectivity or schema/table access. Newly created or granted databases are selectable without configuration edits or restarting, whether credentials came from the session environment or a protected file. Review grants, including `PUBLIC` CONNECT, before upgrading from alias-only selection. A `POSTGRES_DATABASES`/`--databases` database lock filters listing and rejects every other physical name in both connection modes.
 
 ## PostgreSQL permissions are the authority
 
@@ -17,6 +17,101 @@ Use dedicated, least-privileged PostgreSQL roles, not superusers or database own
 The SQL guard is a statement-boundary lexer, **not an authorization parser or SQL sandbox**. It accepts one statement, handles quoted SQL and comments, and rejects direct transaction/session control plus unsupported operations such as `COPY`, `DO`, `CALL`, and `VACUUM`. PostgreSQL transactions and role permissions enforce the actual access restrictions.
 
 Read-only transactions do not make arbitrary SQL harmless. Queries can execute functions, change session settings through functions, use advisory locks, access temporary objects, consume database resources, or cause external effects through installed extensions and privileged routines. `EXPLAIN ANALYZE` executes the query. Neither transaction rollback nor connection reset can undo external effects. Restrict these capabilities in PostgreSQL. HypoPG evaluation uses installed extension functions and connection-local hypothetical indexes; it does not grant permission to create permanent indexes or install extensions.
+
+## Database lock hardening
+
+Run one server instance per PostgreSQL server and give each instance a **database lock**: `POSTGRES_DATABASES` (or `--databases`) as a JSON array of exact, case-sensitive physical database names. The lock is a separate setting on top of either connection mode; connection-string and targets JSON/file formats are unchanged.
+
+### What the server enforces
+
+- Every path that opens a connection resolves to a physical database first and must name a locked database: every tool's `database`, alias resolution, explicit `target`, `list_databases`, `--validate` and the startup check. The data-source cache re-checks the lock before creating any pool, so no pool for another database can exist.
+- **Connection-string mode:** each locked database becomes a profile whose alias is its name; the connection string's own `Database` is not used.
+- **Targets mode:** the lock applies to every profile. A profile still supplies host, login and TLS settings, but its bootstrap database is used only when it is locked. Passing the alias of a profile whose bootstrap database is outside the lock as `database` is rejected, while `target` with that profile and a locked `database` works. `list_databases`, `--validate` and the startup check connect through the profile's bootstrap database when locked, otherwise through the first database in `POSTGRES_DATABASES` order; they never open an out-of-lock bootstrap database.
+- Rejections return `invalid_target` with a message naming the database lock, before any connection is attempted.
+- `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) makes a missing lock a startup error. It is off by default; without a lock, behavior is unchanged.
+
+### What startup verifies in PostgreSQL
+
+When a lock is configured, normal startup and `--validate` connect only through locked databases, once per distinct login/server profile, and refuse to start (exit code 1, findings on stderr) if any of these hold. Messages name profiles, roles and databases, never connection strings or credentials.
+
+| Finding | Why it fails |
+|---|---|
+| The login can connect (`has_database_privilege(..., 'CONNECT')`, including `PUBLIC` and inherited grants, on any database with `datallowconn`) to a database outside the lock | PostgreSQL would accept that connection from any other client using the same credentials; the lock would be the only barrier. |
+| The login is a superuser or a member of a superuser role | Superusers bypass every privilege check, including CONNECT grants, and can reach other databases through server-side features; membership allows `SET ROLE` to one. |
+| Membership in `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program` | Server file access and `COPY ... PROGRAM` reach other databases' data files or open new local connections outside PostgreSQL's database grants. |
+| `CREATEROLE` on the login or a role it is a member of | It can create roles and grant memberships, so the verified grants need not hold one statement later. |
+| `CREATEDB` on the login or a role it is a member of | It can create databases outside the lock (and drop ones it then owns), changing the set of databases the check verified. |
+| The login (or a role it is a member of) owns a database outside the lock | Owners hold implicit CONNECT and can `ALTER`/`DROP DATABASE` from a connection to any other database, without connecting to it. |
+| `dblink` or `postgres_fdw` installed, or any foreign server defined, in a locked database the login can connect to | They open new connections from inside PostgreSQL, bypassing the server's connection-level lock. Installation is not checked as availability: both extensions are untrusted, so only a superuser can install them, which is already refused. |
+
+Deliberately not refused: `REPLICATION` (the server never opens replication-protocol connections and logical decoding SQL functions decode only the current database), `BYPASSRLS` (affects rows only inside locked databases), and monitoring roles such as `pg_read_all_stats` (they expose names and activity, see below, not data). Review them anyway.
+
+The check is a startup snapshot. Grants, role attributes, extensions or ownership changed after startup are not re-verified until the next start or `--validate`; the in-process lock still rejects other databases. Because CONNECT is evaluated from grants, a role that is confined only by `pg_hba.conf` rules is refused: revoke the grants too. Unreachable or unauthenticated profiles also refuse startup, because the lock cannot be verified.
+
+### Hardening the role
+
+Run as a superuser or the database owners, once per protected and locked database (replace placeholders):
+
+```sql
+-- Remove the default PUBLIC CONNECT from every database the MCP role must not reach,
+-- including postgres and template1; grant it back explicitly to roles that need it.
+REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;
+REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;
+REVOKE CONNECT ON DATABASE <protected_db> FROM PUBLIC;
+GRANT CONNECT ON DATABASE postgres, <protected_db> TO <application_role>;
+
+-- Locked databases: CONNECT for the MCP role only.
+REVOKE CONNECT ON DATABASE <locked_db> FROM PUBLIC;
+GRANT CONNECT ON DATABASE <locked_db> TO <mcp_role>;
+
+ALTER ROLE <mcp_role> NOSUPERUSER NOCREATEDB NOCREATEROLE;
+-- Remove memberships in superuser roles and pg_*_server_files/pg_execute_server_program;
+-- transfer ownership of out-of-lock databases away from the MCP role.
+```
+
+Add `pg_hba.conf` rules so the server also rejects the role at authentication time. Rules match top to bottom, so place them before broader entries:
+
+```text
+# TYPE   DATABASE           USER         ADDRESS          METHOD
+hostssl  <locked_db>        <mcp_role>   <client_cidr>    scram-sha-256
+host     all                <mcp_role>   all              reject
+local    all                <mcp_role>                    reject
+```
+
+Do not install `dblink` or `postgres_fdw` and do not define foreign servers or user mappings in locked databases. If another application needs them, give it a separate database outside this role's lock. The server does not add SQL-guard rules for these features; PostgreSQL permissions remain the authority.
+
+Database **names** remain visible: shared catalogs such as `pg_database`, `pg_shdescription`, `pg_stat_database` and `pg_stat_activity` (database and, with monitoring roles, other sessions' details) are readable from any locked database. `list_databases` filters by the lock, but `execute_sql` can query these catalogs directly. Treat database names as disclosed; the lock protects contents and connections, not names.
+
+### One instance per PostgreSQL server
+
+Each instance gets its own credentials source and lock. Keep credentials in each instance's owner-protected targets file or inherited environment, never in MCP JSON:
+
+```json
+{
+  "mcpServers": {
+    "postgresql-server-a": {
+      "type": "stdio",
+      "command": "postgresql-sharp-mcp",
+      "env": {
+        "POSTGRES_TARGETS_FILE": "/home/<user>/postgresql-mcp/server-a-targets.json",
+        "POSTGRES_DATABASES": "[\"<server_a_db_1>\",\"<server_a_db_2>\"]",
+        "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
+      }
+    },
+    "postgresql-server-b": {
+      "type": "stdio",
+      "command": "postgresql-sharp-mcp",
+      "env": {
+        "POSTGRES_TARGETS_FILE": "/home/<user>/postgresql-mcp/server-b-targets.json",
+        "POSTGRES_DATABASES": "[\"<server_b_db>\"]",
+        "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
+      }
+    }
+  }
+}
+```
+
+Each targets file stays in its existing format, for example `{"primary":"Host=<server_a_host>;Port=5432;Username=<mcp_role>;Password=<password>;Database=<server_a_db_1>;SSL Mode=VerifyFull"}`. Run the same command with `--validate` and the same environment before starting the client; it exits non-zero with the findings above if PostgreSQL does not enforce the lock.
 
 ## Credentials and diagnostics
 

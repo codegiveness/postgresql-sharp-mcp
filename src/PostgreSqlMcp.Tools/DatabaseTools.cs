@@ -28,7 +28,8 @@ public sealed class DatabaseTools
             ct.ThrowIfCancellationRequested();
             ValidatePage(limit, offset);
             string profile = target ?? _registry.DefaultTarget;
-            string database = _registry.GetBootstrapDatabase(profile);
+            // A bootstrap database outside the lock is never opened; discovery uses a locked database instead.
+            string database = _registry.GetDiscoveryDatabase(profile);
             QueryPage databases = await _executor.QueryAsync(database, """
                 SELECT datname::text AS name, datname = current_database() AS is_current
                 FROM pg_catalog.pg_database

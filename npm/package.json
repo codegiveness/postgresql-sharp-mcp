@@ -1,6 +1,6 @@
 {
   "name": "@codegiveness/postgresql-sharp-mcp",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Bundles the .NET runtime; no .NET installation or runtime downloads required.",
   "license": "MIT",
   "author": "codegiveness",

@@ -9,20 +9,21 @@ public sealed class DatabaseRegistry : IAsyncDisposable
     private readonly Dictionary<DatabaseSelection, SourceEntry> _sources = new();
     private readonly SemaphoreSlim _gate = new(1);
     private TaskCompletionSource? _changed;
-    private readonly IReadOnlySet<string>? _allowedDatabases;
+    private readonly HashSet<string>? _allowedDatabases;
     private readonly int _capacity;
     private long _clock;
     private bool _disposed;
     public string[] TargetNames { get; }
     public string DefaultTarget { get; }
+    /// <summary>Database lock in configured order, or null when no lock is configured.</summary>
     public string[]? AllowedDatabaseNames { get; }
 
     public DatabaseRegistry(ServerOptions options)
     {
         TargetNames = options.Targets.Keys.Order(StringComparer.Ordinal).ToArray();
         DefaultTarget = options.Targets.ContainsKey("primary") ? "primary" : TargetNames[0];
-        _allowedDatabases = options.AllowedDatabases;
         AllowedDatabaseNames = options.AllowedDatabases?.ToArray();
+        _allowedDatabases = AllowedDatabaseNames is null ? null : new(AllowedDatabaseNames, StringComparer.Ordinal);
         _capacity = 256 / options.PoolSize;
         foreach (var pair in options.Targets)
         {
@@ -44,11 +45,29 @@ public sealed class DatabaseRegistry : IAsyncDisposable
         }
     }
 
-    public string GetBootstrapDatabase(string target)
+    internal static bool IsDatabaseName(string name) =>
+        name.Length > 0 && !name.Contains('\0') && Encoding.UTF8.GetByteCount(name) <= 63;
+
+    internal bool Allows(string database) => _allowedDatabases is null || _allowedDatabases.Contains(database);
+
+    /// <summary>
+    /// Database a profile connects to for live listing, validation and lock checks: its bootstrap database,
+    /// or the first locked database when the bootstrap database is outside the lock.
+    /// </summary>
+    public string GetDiscoveryDatabase(string target)
     {
         if (!_profiles.TryGetValue(target, out var profile))
             throw new ToolException("invalid_target", "Specify an exact configured connection profile as target.");
-        return profile.Database;
+        return Allows(profile.Database) ? profile.Database : AllowedDatabaseNames![0];
+    }
+
+    /// <summary>One target per distinct login/server profile (bootstrap database excluded), in ordinal target order.</summary>
+    internal IEnumerable<(string Target, string Login)> LoginTargets()
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string target in TargetNames)
+            if (seen.Add(_profiles[target].ConnectionString))
+                yield return (target, _profiles[target].ConnectionString);
     }
 
     internal DatabaseSelection Resolve(string database, string? target)
@@ -65,15 +84,22 @@ public sealed class DatabaseRegistry : IAsyncDisposable
             database = profile.Database;
         else
             profile = _profiles[DefaultTarget];
-        if (database.Contains('\0') || Encoding.UTF8.GetByteCount(database) > 63)
+        if (!IsDatabaseName(database))
             throw new ToolException("invalid_target", "Specify a database name of 1..63 UTF-8 bytes without NUL, or a configured profile alias.");
-        if (_allowedDatabases is not null && !_allowedDatabases.Contains(database))
-            throw new ToolException("invalid_target", "The database is outside the configured explicit database allowlist.");
+        RequireAllowed(database);
         return new(profile.ConnectionString, database);
+    }
+
+    private void RequireAllowed(string database)
+    {
+        if (!Allows(database))
+            throw new ToolException("invalid_target", "The database is outside this server's configured database lock (POSTGRES_DATABASES).");
     }
 
     internal async ValueTask<SourceEntry> AcquireAsync(DatabaseSelection selection, CancellationToken ct)
     {
+        // Every data source is created below; re-check so no caller can open a pool outside the lock.
+        RequireAllowed(selection.Database);
         while (true)
         {
             Task changed;

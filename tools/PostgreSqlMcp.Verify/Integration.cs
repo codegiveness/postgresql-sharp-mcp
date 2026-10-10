@@ -52,6 +52,8 @@ internal static class Integration
         await VerifyConfigurationAsync(command, environment, targets, connection);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
+        // Last: hardening revokes PUBLIC CONNECT on every fixture database.
+        await DatabaseLockChecks.RunAsync(command, fixture);
         Console.WriteLine("ALL MCP INTEGRATION SCENARIOS PASSED");
     }
 
@@ -496,18 +498,6 @@ internal static class Integration
             && reports.Select(report => report["rows"]![0]![0].Text()).ToHashSet().SetEquals(new[] { "tenant_a", "tenant_b" }), "Preflight did not validate both configured targets.");
         var baseEnvironment = new Dictionary<string, string>(environment);
         baseEnvironment.Remove("POSTGRES_TARGETS");
-        baseEnvironment["POSTGRES_CONNECTION_STRING"] = connection + "not_the_selected_database";
-        baseEnvironment["POSTGRES_DATABASES"] = JsonSerializer.Serialize(new[] { "tenant_a", "tenant_b" });
-        await using (var client = await McpClient.StartAsync(command, baseEnvironment))
-        {
-            Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-                new[] { new[] { "tenant_b", "B_ONLY" } }, "Base connection allowlist did not select the requested database.");
-            Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Select(row => row["name"].Text())
-                .SequenceEqual(new[] { "tenant_a", "tenant_b" }), "Optional allowlist did not filter live discovery.");
-            await client.FailsAsync("execute_sql", new { database = "postgres", sql = "SELECT 1" }, "invalid_target");
-            await client.FailsAsync("execute_sql", new { database = "postgres", target = "tenant_a", sql = "SELECT 1" }, "invalid_target");
-        }
-        baseEnvironment.Remove("POSTGRES_DATABASES");
         baseEnvironment["POSTGRES_CONNECTION_STRING"] = connection[..^"Database=".Length];
         await using (var client = await McpClient.StartAsync(command, baseEnvironment))
         {
@@ -548,6 +538,6 @@ internal static class Integration
             Check.That(bad.Output.Length == 0, "Invalid resource configuration contaminated stdout.");
             Check.Confidential(bad.Error, "reader-disposable");
         }
-        Console.WriteLine("PASS preflight, explicit allowlist, unreadable targets, unknown options and invalid configuration");
+        Console.WriteLine("PASS preflight, unreadable targets, unknown options and invalid configuration");
     }
 }
