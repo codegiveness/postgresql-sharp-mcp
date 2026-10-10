@@ -52,6 +52,7 @@ internal static class Integration
         await VerifyConfigurationAsync(command, environment, targets, connection);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
+        await VerifyCancellationAsync(command, environment, fixture);
         // Last: hardening revokes PUBLIC CONNECT on every fixture database.
         await DatabaseLockChecks.RunAsync(command, fixture);
         Console.WriteLine("ALL MCP INTEGRATION SCENARIOS PASSED");
@@ -483,6 +484,38 @@ internal static class Integration
         }
         Check.That(await fixture.RuntimeBackendCountAsync() == 0, "Runtime disposal retained physical-database backends.");
         Console.WriteLine("PASS environment-only bounded idle churn, failed-name recovery, busy-pool capacity, original-deadline cancellation and deterministic disposal");
+    }
+
+    private static async Task VerifyCancellationAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture)
+    {
+        // The query timeout and sleep far exceed every bound below, so only cancellation can stop the backend,
+        // and a timeout error cannot be mistaken for the (deliberately absent) response to the cancelled request.
+        var cancellationEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_QUERY_TIMEOUT"] = "60" };
+        await using var client = await McpClient.StartAsync(command, cancellationEnvironment);
+        Check.That(await fixture.RuntimeBackendCountAsync(activeOnly: true) == 0, "Cancellation scenario started with an active runtime backend.");
+        InFlightRequest request = await client.StartRequestAsync("tools/call", new { name = "execute_sql", arguments = new { database = "a", sql = "SELECT pg_sleep(50)::text" } });
+        async Task<bool> WaitForActiveBackendsAsync(int expected, TimeSpan limit)
+        {
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (waited.Elapsed < limit)
+            {
+                if (await fixture.RuntimeBackendCountAsync(activeOnly: true) == expected) return true;
+                await Task.Delay(100);
+            }
+            return false;
+        }
+        Check.That(await WaitForActiveBackendsAsync(1, TimeSpan.FromSeconds(10)), "The long-running query never became active.");
+        await client.CancelAsync(request, "verifier cancellation");
+        Check.That(await WaitForActiveBackendsAsync(0, TimeSpan.FromSeconds(10)), "A cancelled MCP request left its PostgreSQL backend running.");
+        // MCP: receivers should not answer a cancelled request. The server's observed behavior is silence, not an error envelope.
+        Check.That(await Task.WhenAny(request.Response, Task.Delay(TimeSpan.FromSeconds(2))) != request.Response, "The server answered a cancelled MCP request.");
+        // More calls than POSTGRES_POOL_SIZE prove the cancelled call neither leaked its pooled connection nor poisoned the lease.
+        JsonNode[] followUps = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" })));
+        foreach (JsonNode followUp in followUps)
+            Check.Equal(followUp["rows"], new[] { new[] { "A_ONLY" } }, "A call after MCP cancellation returned unexpected data.");
+        Check.That(!request.Response.IsCompleted, "The cancelled MCP request was answered after later calls completed.");
+        client.Abandon(request);
+        Console.WriteLine("PASS MCP cancellation stops the PostgreSQL backend within 10 s of a 60 s timeout, sends no response and leaves the pool usable");
     }
 
     private static async Task VerifyConfigurationAsync(Command command, Dictionary<string, string> environment, Dictionary<string, string> targets, string connection)
