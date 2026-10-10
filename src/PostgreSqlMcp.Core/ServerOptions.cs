@@ -52,6 +52,7 @@ public sealed class ServerOptions
             throw new ToolException("configuration", "POSTGRES_REQUIRE_DATABASE_LOCK must be true or false.");
         var targets = new Dictionary<string, string>(StringComparer.Ordinal);
         List<string>? allowedDatabases = null;
+        int profileCount = 0;
         try
         {
             string? json = Env("TARGETS");
@@ -101,7 +102,9 @@ public sealed class ServerOptions
                 }
             }
             else throw new ToolException("configuration", "Set POSTGRES_CONNECTION_STRING, POSTGRES_TARGETS, or POSTGRES_TARGETS_FILE.");
-            if (targets.Count is < 1 or > 32) throw new ToolException("configuration", "Configure 1..32 database targets.");
+            // Lock-derived aliases of one connection string share a single login profile; only targets JSON/file defines several.
+            profileCount = json is null ? 1 : targets.Count;
+            if (profileCount is < 1 or > 32) throw new ToolException("configuration", "Configure 1..32 connection profiles in targets JSON/file.");
             foreach (var (alias, connectionString) in targets)
             {
                 if (string.IsNullOrWhiteSpace(alias) || alias.Length > 128 || alias.Any(char.IsControl))
@@ -123,7 +126,7 @@ public sealed class ServerOptions
         string mode = Value("--access-mode", "ACCESS_MODE") ?? "unrestricted";
         if (mode is not ("restricted" or "unrestricted")) throw new ToolException("configuration", "Access mode must be restricted or unrestricted.");
         int poolSize = Number("POOL_SIZE", 8, 1, 32);
-        if (poolSize * targets.Count > 256) throw new ToolException("configuration", "Targets × POSTGRES_POOL_SIZE must not exceed 256.");
+        if (poolSize * profileCount > 256) throw new ToolException("configuration", "Connection profiles × POSTGRES_POOL_SIZE must not exceed 256.");
         return new ServerOptions
         {
             Targets = new ReadOnlyDictionary<string, string>(targets), AllowedDatabases = allowedDatabases,

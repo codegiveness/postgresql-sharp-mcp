@@ -11,8 +11,13 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 {
     [McpServerTool(Name = "analyze_db_health", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Current-database health summary or focused vacuum, index, constraints, sequences, replication, or blocking evidence. Results are paged; no changes are made.")]
-    public Task<CallToolResult> AnalyzeDbHealth(CancellationToken ct, string database,
-        string section = "summary", string? schema = null, int? limit = null, int offset = 0, string? target = null) =>
+    public Task<CallToolResult> AnalyzeDbHealth(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description("summary (default), vacuum, index, constraints, sequences, replication, or blocking.")] string section = "summary",
+        [Description(ParameterText.SchemaFilter + " Applies to vacuum, index, constraints and sequences.")] string? schema = null,
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
+        [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string sql = section.ToLowerInvariant() switch
@@ -45,8 +50,12 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 
     [McpServerTool(Name = "get_top_queries", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Rank pg_stat_statements for the current database only. Requires an installed, preloaded extension; query text clipping is explicit.")]
-    public Task<CallToolResult> GetTopQueries(CancellationToken ct, string database,
-        string order_by = "total_time", int? limit = null, int offset = 0, string? target = null) =>
+    public Task<CallToolResult> GetTopQueries(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description("total_time (default), mean_time, calls, rows, or reads; descending.")] string order_by = "total_time",
+        [Description("Page size; default 10, at most max_rows.")] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
+        [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             string order = order_by.ToLowerInvariant() switch
@@ -93,8 +102,13 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 
     [McpServerTool(Name = "analyze_indexes", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Paged current-database index validity, usage, size and structurally duplicate evidence. Recommendations are contextual, never fabricated missing-index predictions.")]
-    public Task<CallToolResult> AnalyzeIndexes(CancellationToken ct, string database,
-        string? schema = null, string? table = null, int? limit = null, int offset = 0, string? target = null) =>
+    public Task<CallToolResult> AnalyzeIndexes(CancellationToken ct,
+        [Description(ParameterText.Database)] string database,
+        [Description(ParameterText.SchemaFilter)] string? schema = null,
+        [Description("Exact, case-sensitive table name; omitted means all tables.")] string? table = null,
+        [Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0,
+        [Description(ParameterText.Target)] string? target = null) =>
         ToolReply.Run(database, async () =>
         {
             QueryPage page = await executor.QueryAsync(database, IndexSql, Filters(schema, table), limit, offset, ct: ct, target: target);
