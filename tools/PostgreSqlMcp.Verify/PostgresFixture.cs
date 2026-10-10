@@ -9,13 +9,43 @@ internal sealed class PostgresFixture : IAsyncDisposable
     private bool attempted;
     public int Port { get; private set; }
     public const string PunctuationDatabase = "tenant ' ; \" = punctuation";
+    public const int DefaultMajor = 17;
+
+    // Manifest-list digests of the official postgres:<major>-bookworm tags, read from the Docker Hub registry API on 2026-10-10.
+    // Dependabot does not track them: refresh deliberately (see CONTRIBUTING.md) and review the resulting image change.
+    private static readonly Dictionary<int, string> ImageDigests = new()
+    {
+        [13] = "sha256:f0cffcc050a9f1f3c78a9968e221badc1cdd02e2ae15b1de9b12bee1ba5ea2db",
+        [14] = "sha256:5a05f61a534e50e679d27fb45953afec7821f2ffc2aa6c738b94515ca0891ac2",
+        [15] = "sha256:d4a8e1f88f475ee3e0137fa89d21ebc59f6c6ab16bf369ee92907607cc3455ae",
+        [16] = "sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4",
+        [17] = "sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826",
+        [18] = "sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
+    };
+
+    // Exact pgdg bookworm package version, the same for majors 13-18 on amd64 and arm64 when it was read on 2026-10-10. The pgdg
+    // index keeps only recent versions, so fixture start fails loudly once this one is withdrawn; bump it with the image digests.
+    private const string HypoPgVersion = "1.4.3-1.pgdg12+2";
+
+    // Resolved per use (not in a static initializer) so an invalid value is reported as a verification failure.
+    public static int Major
+    {
+        get
+        {
+            string? value = Environment.GetEnvironmentVariable("POSTGRES_FIXTURE_MAJOR");
+            if (string.IsNullOrEmpty(value)) return DefaultMajor;
+            Check.That(int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int major) && ImageDigests.ContainsKey(major),
+                $"POSTGRES_FIXTURE_MAJOR must be one of {string.Join(", ", ImageDigests.Keys.Order())} (default {DefaultMajor}).");
+            return major;
+        }
+    }
 
     public async Task StartAsync()
     {
         // This verifier never attaches to an existing container or operator database.
         attempted = true;
         await Processes.RunAsync(new("docker", "run", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=mcp-disposable-only",
-            "-p", "127.0.0.1::5432", "postgres:17-bookworm", "-c", "shared_preload_libraries=pg_stat_statements"), timeout: 180);
+            "-p", "127.0.0.1::5432", $"postgres:{Major}-bookworm@{ImageDigests[Major]}", "-c", "shared_preload_libraries=pg_stat_statements"), timeout: 180);
         started = true;
         bool ready = false;
         for (int attempt = 0; attempt < 60; attempt++)
@@ -26,7 +56,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
         }
         Check.That(ready, "Disposable PostgreSQL fixture did not become ready.");
         await Processes.RunAsync(new("docker", "exec", name, "apt-get", "update", "-qq"), timeout: 180);
-        await Processes.RunAsync(new("docker", "exec", name, "apt-get", "install", "-y", "-qq", "postgresql-17-hypopg"), timeout: 180);
+        await Processes.RunAsync(new("docker", "exec", name, "apt-get", "install", "-y", "-qq", $"postgresql-{Major}-hypopg={HypoPgVersion}"), timeout: 180);
         string endpoint = (await Processes.RunAsync(new("docker", "port", name, "5432/tcp"))).Output.Trim();
         Port = int.Parse(endpoint[(endpoint.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
         await SeedAsync();

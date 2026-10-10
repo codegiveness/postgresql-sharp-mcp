@@ -205,10 +205,13 @@ internal static class DatabaseLockChecks
 
     private static string[] ListedNames(JsonNode listed) => Check.Rows(listed["databases"]!).Select(row => row["name"].Text()).ToArray();
 
+    // pg_stat_database.sessions exists from PostgreSQL 14. PostgreSQL 13 has no session counter, so committed plus rolled-back
+    // transactions stand in: any session the server used to check or query the database would have run at least one.
     private static async Task<long> ProtectedSessionsAsync(PostgresFixture fixture)
     {
+        string counter = PostgresFixture.Major >= 14 ? "sessions" : "xact_commit + xact_rollback";
         ProcessResult result = await fixture.SqlAsync("postgres",
-            "SELECT 'sessions=' || sessions FROM pg_catalog.pg_stat_database WHERE datname = 'lock_protected';");
+            $"SELECT 'sessions=' || ({counter}) FROM pg_catalog.pg_stat_database WHERE datname = 'lock_protected';");
         return long.Parse(result.Output.Split("sessions=")[1].Split('\n')[0].Trim(), System.Globalization.CultureInfo.InvariantCulture);
     }
 }

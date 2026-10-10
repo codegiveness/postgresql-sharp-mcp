@@ -52,6 +52,7 @@ internal static class Integration
         await VerifyConfigurationAsync(command, environment, targets, connection);
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
+        await VerifyStatementsExtensionVersionsAsync(command, environment, fixture, connection);
         // Last: hardening revokes PUBLIC CONNECT on every fixture database.
         await DatabaseLockChecks.RunAsync(command, fixture);
         Console.WriteLine("ALL MCP INTEGRATION SCENARIOS PASSED");
@@ -257,6 +258,9 @@ internal static class Integration
         var workloadRows = Check.Rows(workload["result"]!).ToArray();
         Check.That(workloadRows.Any(row => (row["query_text"]?.Text() ?? "").Contains("a_timed_workload_marker", StringComparison.Ordinal)), "Timed local workload probe absent from ranking.");
         Check.That(workloadRows.All(row => !(row["query_text"]?.Text() ?? "").Contains("b_timed_workload_marker", StringComparison.Ordinal)), "Workload evidence crossed database boundaries.");
+        // The fixture installs the server's default extension version: toplevel exists from PostgreSQL 14 (1.9) and is null before.
+        Check.That(workloadRows.All(row => row.ContainsKey("toplevel") && (row["toplevel"] is null) == (PostgresFixture.Major < 14)),
+            "toplevel availability did not follow the installed pg_stat_statements version.");
         foreach (string order in new[] { "mean_time", "calls", "rows", "reads" })
         {
             JsonNode ordered = await client.OkAsync("get_top_queries", new { database = "a", order_by = order, limit = 2 });
@@ -440,6 +444,35 @@ internal static class Integration
             "Explicit profile index analysis lost database evidence.");
         JsonNode health = await client.OkAsync("analyze_db_health", new { database = "tenant_b", target = "primary", section = "summary" });
         Check.That(Check.Rows(health["result"]!).Single()["database_name"].Text() == "tenant_b", "Explicit profile health evidence crossed databases.");
+    }
+
+    // An upgraded cluster keeps its old extension version until ALTER EXTENSION UPDATE: the tool must adapt or say what to do.
+    private static async Task VerifyStatementsExtensionVersionsAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture, string connection)
+    {
+        var singleProfile = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a" };
+        singleProfile.Remove("POSTGRES_TARGETS");
+        foreach (string database in new[] { "stats_ext_v18", "stats_ext_v17" }) await fixture.CreateDatabaseAsync(database);
+        // 1.8 is the oldest supported layout (PostgreSQL 13) and has no toplevel; 1.7 predates total_exec_time. Both install on 13-18.
+        await fixture.SqlAsync("stats_ext_v18", "CREATE EXTENSION pg_stat_statements VERSION '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v18_marker;");
+        await fixture.SqlAsync("stats_ext_v17", "CREATE EXTENSION pg_stat_statements VERSION '1.7'; SELECT pg_sleep(0.02) AS stats_ext_v17_marker;");
+        await using var client = await McpClient.StartAsync(command, singleProfile);
+        foreach (string order in new[] { "total_time", "mean_time", "calls", "rows", "reads" })
+        {
+            JsonNode ranked = await client.OkAsync("get_top_queries", new { database = "stats_ext_v18", order_by = order, limit = 5 });
+            var rows = Check.Rows(ranked["result"]!).ToArray();
+            Check.That(rows.Length > 0 && rows.All(row => row.ContainsKey("toplevel") && row["toplevel"] is null),
+                "Extension 1.8 must return a consistently null toplevel column.");
+            Check.That(ranked["notes"].Text().Contains("toplevel is null", StringComparison.Ordinal), "Missing toplevel was not explained.");
+        }
+        Check.That(Check.Rows((await client.OkAsync("get_top_queries", new { database = "stats_ext_v18", limit = 5 }))["result"]!)
+            .Any(row => (row["query_text"]?.Text() ?? "").Contains("stats_ext_v18_marker", StringComparison.Ordinal)), "Extension 1.8 ranking lost the workload probe.");
+        JsonNode outdated = await client.FailsAsync("get_top_queries", new { database = "stats_ext_v17" }, "extension_outdated");
+        string message = outdated["error"]!["message"].Text();
+        Check.That(message.Contains("ALTER EXTENSION pg_stat_statements UPDATE", StringComparison.Ordinal) && message.Contains("1.7", StringComparison.Ordinal)
+            && outdated["error"]!["sql_state"] is null, "Outdated-extension error was not specific and actionable.");
+        await fixture.SqlAsync("stats_ext_v17", "ALTER EXTENSION pg_stat_statements UPDATE TO '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v17_updated_marker;");
+        await client.OkAsync("get_top_queries", new { database = "stats_ext_v17", limit = 5 });
+        Console.WriteLine("PASS pg_stat_statements 1.8 without toplevel, outdated 1.7 guidance and recovery after ALTER EXTENSION UPDATE");
     }
 
     private static async Task VerifyPoolCapacityAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture, string connection)
