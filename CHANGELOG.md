@@ -11,6 +11,7 @@
 - Secret scanning: allow two more exact disposable values in `tools/PostgreSqlMcp.Verify/Integration.cs`, the interpolated `Password={password}` role constant and the `sensitive-tls-marker` diagnostic marker used by the privilege/TLS warning scenarios. Other values in that file, and these values in any other file, still fail.
 - Release: publish the release attestation's Sigstore bundle (SLSA v1 provenance covering every archive, package, SBOM and `SHA256SUMS`) as the `provenance.sigstore.json` GitHub Release asset, so assets can be verified with `gh attestation verify --bundle`. The release tool refuses to publish if the bundle is not exactly one SLSA provenance statement whose subjects match the uploaded files' SHA-256 digests. Takes effect at the next dispatched release; v0.4.0 and earlier are unchanged.
 - Repository settings: `main` protection moved from classic branch protection to an equivalent ruleset (PRs with zero approvals, stale-approval dismissal, squash-only merging, eight up-to-date required checks, resolved conversations, no force push or deletion, no bypass actors). OpenSSF Scorecard's default token can read rulesets, so Branch-Protection is measured without storing an administration-read token.
+- Security posture: record the Scorecard reports of 2026-10-10 (7.1 at `b42a95d` with Branch-Protection unmeasured; 6.9 at `8cd3166` with Branch-Protection measured at 4), what each below-10 check measures in Scorecard v5.5.0, and what would change it. Record the owner-saved Best Practices passing level (entry 15155).
 
 ## 0.4.0
 
