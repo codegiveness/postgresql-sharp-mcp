@@ -553,7 +553,7 @@ internal static class Integration
         var singleProfile = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a" };
         singleProfile.Remove("POSTGRES_TARGETS");
         foreach (string database in new[] { "stats_ext_v18", "stats_ext_v17" }) await fixture.CreateDatabaseAsync(database);
-        // 1.8 is the oldest supported layout (PostgreSQL 13) and has no toplevel; 1.7 predates total_exec_time. Both install on 13-18.
+        // 1.8 is the oldest supported layout (PostgreSQL 13) and has no toplevel; 1.7 predates total_exec_time. Both install on 13-19.
         await fixture.SqlAsync("stats_ext_v18", "CREATE EXTENSION pg_stat_statements VERSION '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v18_marker;");
         await fixture.SqlAsync("stats_ext_v17", "CREATE EXTENSION pg_stat_statements VERSION '1.7'; SELECT pg_sleep(0.02) AS stats_ext_v17_marker;");
         await using var client = await McpClient.StartAsync(command, singleProfile);

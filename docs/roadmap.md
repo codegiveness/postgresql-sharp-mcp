@@ -8,7 +8,7 @@ This is the direction for the twelve months from 2026-10-11 to 2027-10-11, so th
 
 ### Keep the supported surface current
 
-- Keep working with the PostgreSQL majors the integration fixture covers (13–18, see [supported versions](../README.md#supported-postgresql-versions)) and add newly released majors to the CI matrix when the fixture can pull them by digest.
+- Keep working with the PostgreSQL majors the integration fixture covers (13–18, plus the 19 beta as a non-required CI job; see [supported versions](../README.md#supported-postgresql-versions)) and add newly released majors to the CI matrix when the fixture can pull them by digest.
 - Stay on a supported .NET 10 SDK and runtime. Dependabot proposes SDK, NuGet, Docker and Actions updates weekly; each is reviewed against release notes and the verifier before merging.
 - Track the C# MCP SDK and Npgsql releases, and the MCP protocol revisions that the SDK implements, without changing existing tool names, parameters or environment variables in compatible releases.
 - Release compatible fixes as patch versions and reserve minor versions for new or incompatible 0.x contracts ([versioning](../CONTRIBUTING.md#automation-and-releases)). Breaking changes are listed under upgrade notes in the [CHANGELOG](../CHANGELOG.md).

@@ -14,20 +14,24 @@ internal sealed class PostgresFixture : IAsyncDisposable
     public const string PunctuationDatabase = "tenant ' ; \" = punctuation";
     public const int DefaultMajor = 17;
 
-    // Manifest-list digests of the official postgres:<major>-bookworm tags, read from the Docker Hub registry API on 2026-10-10.
-    // Dependabot does not track them: refresh deliberately (see CONTRIBUTING.md) and review the resulting image change.
-    private static readonly Dictionary<int, string> ImageDigests = new()
+    // Manifest-list digests of the official postgres bookworm tags, read from the Docker Hub registry API on 2026-10-11. The tag is
+    // <major>-bookworm for released majors. PostgreSQL 19 is still a pre-release, so its tag names the beta explicitly; move it to
+    // 19-bookworm once the final release is published. Dependabot does not track them: refresh deliberately (see CONTRIBUTING.md)
+    // and review the resulting image change.
+    private static readonly Dictionary<int, (string Tag, string Digest)> Images = new()
     {
-        [13] = "sha256:f0cffcc050a9f1f3c78a9968e221badc1cdd02e2ae15b1de9b12bee1ba5ea2db",
-        [14] = "sha256:5a05f61a534e50e679d27fb45953afec7821f2ffc2aa6c738b94515ca0891ac2",
-        [15] = "sha256:d4a8e1f88f475ee3e0137fa89d21ebc59f6c6ab16bf369ee92907607cc3455ae",
-        [16] = "sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4",
-        [17] = "sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826",
-        [18] = "sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
+        [13] = ("13-bookworm", "sha256:f0cffcc050a9f1f3c78a9968e221badc1cdd02e2ae15b1de9b12bee1ba5ea2db"),
+        [14] = ("14-bookworm", "sha256:5a05f61a534e50e679d27fb45953afec7821f2ffc2aa6c738b94515ca0891ac2"),
+        [15] = ("15-bookworm", "sha256:d4a8e1f88f475ee3e0137fa89d21ebc59f6c6ab16bf369ee92907607cc3455ae"),
+        [16] = ("16-bookworm", "sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4"),
+        [17] = ("17-bookworm", "sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826"),
+        [18] = ("18-bookworm", "sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"),
+        [19] = ("19beta4-bookworm", "sha256:4c618d9a30e0b88078b9371a0499d7055da9ab7f5afe386a460758eac9857f06")
     };
 
-    // Exact pgdg bookworm package version, the same for majors 13-18 on amd64 and arm64 when it was read on 2026-10-10. The pgdg
-    // index keeps only recent versions, so fixture start fails loudly once this one is withdrawn; bump it with the image digests.
+    // Exact pgdg bookworm package version, the same for majors 13-18 on amd64 and arm64 when it was read on 2026-10-10 and for 19
+    // on amd64 on 2026-10-11 (19 comes from the pgdg "19" beta component the image already enables). The pgdg index keeps only
+    // recent versions, so fixture start fails loudly once this one is withdrawn; bump it with the image digests.
     private const string HypoPgVersion = "1.4.3-1.pgdg12+2";
 
     // Resolved per use (not in a static initializer) so an invalid value is reported as a verification failure.
@@ -37,14 +41,14 @@ internal sealed class PostgresFixture : IAsyncDisposable
         {
             string? value = Environment.GetEnvironmentVariable("POSTGRES_FIXTURE_MAJOR");
             if (string.IsNullOrEmpty(value)) return DefaultMajor;
-            Check.That(int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int major) && ImageDigests.ContainsKey(major),
-                $"POSTGRES_FIXTURE_MAJOR must be one of {string.Join(", ", ImageDigests.Keys.Order())} (default {DefaultMajor}).");
+            Check.That(int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int major) && Images.ContainsKey(major),
+                $"POSTGRES_FIXTURE_MAJOR must be one of {string.Join(", ", Images.Keys.Order())} (default {DefaultMajor}).");
             return major;
         }
     }
 
     /// <summary>The digest-pinned official image for <see cref="Major"/>.</summary>
-    public static string Image => $"postgres:{Major}-bookworm@{ImageDigests[Major]}";
+    public static string Image => $"postgres:{Images[Major].Tag}@{Images[Major].Digest}";
 
     public async Task StartAsync()
     {
@@ -61,6 +65,10 @@ internal sealed class PostgresFixture : IAsyncDisposable
             await Task.Delay(TimeSpan.FromSeconds(1));
         }
         Check.That(ready, "Disposable PostgreSQL fixture did not become ready.");
+        // A mislabeled tag/digest pair would otherwise silently verify another major.
+        string versionNumber = (await Processes.RunAsync(new("docker", "exec", name, "psql", "-X", "-At", "-U", "postgres", "-c", "SHOW server_version_num"))).Output.Trim();
+        Check.That(int.TryParse(versionNumber, NumberStyles.None, CultureInfo.InvariantCulture, out int serverVersion) && serverVersion / 10000 == Major,
+            $"Fixture image for PostgreSQL {Major} reports server_version_num {versionNumber}.");
         await Processes.RunAsync(new("docker", "exec", name, "apt-get", "update", "-qq"), timeout: 180);
         await Processes.RunAsync(new("docker", "exec", name, "apt-get", "install", "-y", "-qq", $"postgresql-{Major}-hypopg={HypoPgVersion}"), timeout: 180);
         string endpoint = (await Processes.RunAsync(new("docker", "port", name, "5432/tcp"))).Output.Trim();

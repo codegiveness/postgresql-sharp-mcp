@@ -197,7 +197,7 @@ jobs:
           dotnet-version: '10.0.x'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24.15.0'
+          node-version: '24.21.0'
       - name: Install reviewed npm CLI with staged-publishing support
         # Exact registry tarball for npm 12.2.0; NPM_SHA512 is the hex form of its
         # published dist.integrity. No npm install or lifecycle scripts run.

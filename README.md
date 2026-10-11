@@ -464,6 +464,8 @@ To protect databases that must never be touched, run one server instance per Pos
 
 **PostgreSQL 13 or newer** is supported. The integration verifier runs the MCP scenarios against official Docker images of majors 13 through 18 in CI. PostgreSQL 13 reached community end of life in November 2025, so the minimum can rise in a later release. Older servers are untested and unsupported; some catalog queries need 13 (`regcollation`) and there is no compatibility layer below it.
 
+**PostgreSQL 19 is tested as a pre-release.** As of 2026-10-11 the PostgreSQL project had published [19 Beta 4](https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/) but no release candidate or final release, and its supported-versions list ends at 18. CI runs the same integration scenarios against the official `postgres:19beta4-bookworm` image, an informational `Integration (PostgreSQL 19)` job that is not a required check. Beta behavior can still change before the final release, so 19 is not a support commitment until the fixture moves to the released image and passes.
+
 | Area | Requirement and behavior |
 |---|---|
 | All tools | PostgreSQL 13+ |
@@ -624,7 +626,7 @@ The complete badge set, grouped by area. [Development and licensing](#developmen
 
 ## Development and licensing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture defaults to PostgreSQL 17 and CI also runs 13–16 and 18; this is a verification target, not a guarantee for every platform, hosting provider or MCP client.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, container usage, artifact installation, verification and contribution guidelines. The integration fixture defaults to PostgreSQL 17 and CI also runs 13–16, 18 and the 19 beta; this is a verification target, not a guarantee for every platform, hosting provider or MCP client.
 
 The server, npm installer, packaging, verification and release automation are C#/.NET. Workflow badges and [Scorecard](https://scorecard.dev/viewer/?uri=github.com/codegiveness/postgresql-sharp-mcp) report checks and practices, not certifications. Feature, platform and practice badges link to the documentation or configuration behind them; they describe implemented capabilities, not guarantees. [Best Practices](https://www.bestpractices.dev/en/projects/15155) is the saved owner self-assessment and may be in progress. See [Security posture](docs/security-posture.md) for [supply-chain evidence](docs/security-posture.md#supply-chain-evidence), SBOMs and limits, and [SECURITY.md](SECURITY.md) for reporting.
 
