@@ -48,6 +48,8 @@ public sealed class DatabaseTools
                 target = profile, databases,
                 access_mode = _options.Unrestricted ? "unrestricted" : "restricted",
                 database_lock = _registry.AllowedDatabaseNames is not null,
+                // Omitted (null) without a lock; advisory means PostgreSQL grants were not required to confine the login.
+                database_lock_mode = _registry.AllowedDatabaseNames is null ? null : _options.StrictDatabaseLock ? "strict" : "advisory",
                 limits = new { max_rows = _options.MaxRows, max_result_bytes = _options.MaxResultBytes,
                     max_cell_chars = _options.MaxCellChars, query_timeout_seconds = _options.QueryTimeout }
             };

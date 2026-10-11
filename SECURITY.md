@@ -22,7 +22,7 @@ Read-only transactions do not make arbitrary SQL harmless. Queries can execute f
 
 ## Database lock hardening
 
-Run one server instance per PostgreSQL server and give each instance a **database lock**: `POSTGRES_DATABASES` (or `--databases`) as a JSON array of exact, case-sensitive physical database names. The lock is a separate setting on top of either connection mode; connection-string and targets JSON/file formats are unchanged.
+Run one server instance per PostgreSQL server and give each instance a **database lock**: `POSTGRES_DATABASES` (or `--databases`) as a JSON array of exact, case-sensitive physical database names. The lock is a separate setting on top of either connection mode; connection-string and targets JSON/file formats are unchanged. The server's tools enforce the list in every case. Whether PostgreSQL itself must also confine the login is chosen with `POSTGRES_DATABASE_LOCK_MODE`: **advisory** (the default) warns about grants that let the login reach other databases, **strict** refuses to start. Only strict mode, together with the role hardening below, makes PostgreSQL enforce the list.
 
 ### What the server enforces
 
@@ -32,9 +32,31 @@ Run one server instance per PostgreSQL server and give each instance a **databas
 - Rejections return `invalid_target` with a message naming the database lock, before any connection is attempted.
 - `POSTGRES_REQUIRE_DATABASE_LOCK=true` (or `--require-database-lock`) makes a missing lock a startup error. It is off by default; without a lock, behavior is unchanged.
 
+### Lock modes
+
+`POSTGRES_DATABASE_LOCK_MODE` (or `--database-lock-mode`; the CLI value overrides the environment) is `advisory` (default) or `strict`. Any other value is a startup error (`POSTGRES_DATABASE_LOCK_MODE/--database-lock-mode must be advisory or strict.`), as is `strict` without a configured lock (`POSTGRES_DATABASE_LOCK_MODE/--database-lock-mode is strict, but no POSTGRES_DATABASES/--databases database lock is configured.`). `POSTGRES_REQUIRE_DATABASE_LOCK` is independent and only requires that a lock is configured.
+
+- **advisory:** the PostgreSQL grant check below still runs at startup and in `--validate`. Each finding prints as `[warning] database lock (advisory): <finding>` (at most 32, then `... N more findings.`), followed by one line saying that PostgreSQL does not confine the configured login to `POSTGRES_DATABASES` (or that the check could not confirm it), that tools still reject databases outside the list, and how to move to strict mode. Startup continues and `--validate` exits 0 when connections succeed. A check that cannot connect is also only a warning: the server starts and tool calls report the connection error.
+- **strict:** any finding, or a check that cannot complete, refuses startup (`[startup] Refusing to start: the PostgreSQL check for the configured database lock (POSTGRES_DATABASES) failed and POSTGRES_DATABASE_LOCK_MODE is strict.` plus the findings, exit code 1; `--validate` exits 1).
+
+A clean check in either mode prints `[startup] Database lock verified: PostgreSQL grants confine every configured login to POSTGRES_DATABASES.` The mode is reported to clients: `list_databases` returns `database_lock_mode` next to `database_lock` (omitted when there is no lock), and the `initialize` instructions and the `execute_sql`/`list_databases` descriptions state whether grants were verified (`strict`) or not required (`advisory`).
+
+### What advisory mode does and does not protect against
+
+In advisory mode the server's own enforcement still applies. It **protects against** tool-level selection of a database outside the list: a call that names one returns `invalid_target` before any connection is attempted, `list_databases` lists only the locked names, and the server itself never opens a session on an out-of-lock database. That covers accidental or agent-chosen use of the wrong database through the tools.
+
+It does **not protect against** SQL that runs inside an allowed database under a login whose PostgreSQL privileges reach further. The server cannot parse or filter SQL, so PostgreSQL grants are the only barrier, for example:
+
+- A superuser, or a login granted `EXECUTE` on it, can call `pg_read_binary_file('base/<oid>/<relfilenode>')` and read the data files of other databases; members of `pg_read_server_files` can read server files with `COPY ... FROM` run from a function.
+- A superuser, or a login that owns another database, can run `ALTER DATABASE <other> ...` (rename it, change its owner or settings) from a locked database. `DROP DATABASE <other>` cannot run inside the transaction the server wraps around each call, but a superuser can issue it on a separate connection through `dblink_exec`. `CREATEDB` and `CREATEROLE` let the login create databases or grant itself roles that reach further.
+- A superuser or a member of `pg_execute_server_program` can run `COPY ... TO PROGRAM '<shell command>'` and act as the PostgreSQL operating-system user. The SQL guard refuses a statement that starts with `COPY`, but the same command runs from a function the login creates (for example a PL/pgSQL `EXECUTE`), so the guard is not a barrier.
+- With `dblink` or `postgres_fdw` installed (a superuser can install them with `CREATE EXTENSION` when the server has the packages), or a foreign server defined, SQL can open connections to other databases.
+
+Advisory mode lists such findings as warnings but does not stop them. Use strict mode with the role hardening below when PostgreSQL itself must enforce the list.
+
 ### What startup verifies in PostgreSQL
 
-When a lock is configured, normal startup and `--validate` connect only through locked databases, once per distinct login/server profile, and refuse to start (exit code 1, findings on stderr) if any of these hold. Messages name profiles, roles and databases, never connection strings or credentials.
+When a lock is configured, normal startup and `--validate` connect only through locked databases, once per distinct login/server profile, and check each of the following. In strict mode a hit refuses startup (exit code 1, findings on stderr); in advisory mode each hit is a warning (see [Lock modes](#lock-modes)). Messages name profiles, roles and databases, never connection strings or credentials.
 
 | Finding | Why it fails |
 |---|---|
@@ -49,11 +71,11 @@ When a lock is configured, normal startup and `--validate` connect only through 
 
 Deliberately not refused: `REPLICATION` (the server never opens replication-protocol connections and logical decoding SQL functions decode only the current database), `BYPASSRLS` (affects rows only inside locked databases), and monitoring roles such as `pg_read_all_stats` (they expose names and activity, see below, not data). Review them anyway.
 
-The check is a startup snapshot. Grants, role attributes, extensions or ownership changed after startup are not re-verified until the next start or `--validate`; the in-process lock still rejects other databases. Because CONNECT is evaluated from grants, a role that is confined only by `pg_hba.conf` rules is refused: revoke the grants too. Unreachable or unauthenticated profiles also refuse startup, because the lock cannot be verified.
+The check is a startup snapshot. Grants, role attributes, extensions or ownership changed after startup are not re-verified until the next start or `--validate`; the in-process lock still rejects other databases. Because CONNECT is evaluated from grants, a role that is confined only by `pg_hba.conf` rules is reported: revoke the grants too. Unreachable or unauthenticated profiles refuse startup in strict mode, because the lock cannot be verified; in advisory mode they are only a warning and tool calls report the connection error.
 
 ### Hardening the role
 
-Run as a superuser or the database owners, once per protected and locked database (replace placeholders):
+Follow this guide so that PostgreSQL itself enforces the lock and `POSTGRES_DATABASE_LOCK_MODE=strict` passes. Run as a superuser or the database owners, once per protected and locked database (replace placeholders):
 
 ```sql
 -- Remove the default PUBLIC CONNECT from every database the MCP role must not reach,
@@ -100,6 +122,7 @@ Each instance gets its own credentials source and lock. Keep credentials in each
       "env": {
         "POSTGRES_TARGETS_FILE": "/home/<user>/postgresql-mcp/server-a-targets.json",
         "POSTGRES_DATABASES": "[\"<server_a_db_1>\",\"<server_a_db_2>\"]",
+        "POSTGRES_DATABASE_LOCK_MODE": "strict",
         "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
       }
     },
@@ -109,6 +132,7 @@ Each instance gets its own credentials source and lock. Keep credentials in each
       "env": {
         "POSTGRES_TARGETS_FILE": "/home/<user>/postgresql-mcp/server-b-targets.json",
         "POSTGRES_DATABASES": "[\"<server_b_db>\"]",
+        "POSTGRES_DATABASE_LOCK_MODE": "strict",
         "POSTGRES_REQUIRE_DATABASE_LOCK": "true"
       }
     }
@@ -116,7 +140,7 @@ Each instance gets its own credentials source and lock. Keep credentials in each
 }
 ```
 
-Each targets file stays in its existing format, for example `{"primary":"Host=<server_a_host>;Port=5432;Username=<mcp_role>;Password=<password>;Database=<server_a_db_1>;SSL Mode=VerifyFull"}`. Run the same command with `--validate` and the same environment before starting the client; it exits non-zero with the findings above if PostgreSQL does not enforce the lock.
+Each targets file stays in its existing format, for example `{"primary":"Host=<server_a_host>;Port=5432;Username=<mcp_role>;Password=<password>;Database=<server_a_db_1>;SSL Mode=VerifyFull"}` (`SSL Mode=VerifyFull` is the hardened TLS choice described under [Connection and resource settings](#connection-and-resource-settings), not a requirement). Run the same command with `--validate` and the same environment before starting the client; in strict mode it exits non-zero with the findings above if PostgreSQL does not enforce the lock. In advisory mode (the default when `POSTGRES_DATABASE_LOCK_MODE` is omitted) it prints them as warnings and exits 0.
 
 ## Credentials and diagnostics
 
@@ -136,9 +160,11 @@ These protections are not content redaction for successful results. Queries, pla
 
 ## Connection and resource settings
 
-**TLS is verified by default.** A connection string (the base `POSTGRES_CONNECTION_STRING`/`--connection-string` or any targets JSON/file profile) that does not set `SSL Mode` is rewritten at startup, before any connection exists: to `SSL Mode=VerifyFull` when its host is not loopback, so the server certificate chain and host name are verified during the TLS handshake and no credential, not even the user name, is sent to an unverified server; to `SSL Mode=Disable` when every host is `localhost`, in `127.0.0.0/8`, `::1` or a Unix-domain socket, so no TLS without verification is ever used (a `Root Certificate` on such a profile selects `VerifyFull` instead). The operator supplies trust material (`Root Certificate=<CA file>`, or the system store for public CAs). If verification fails, no connection is made and there is no fallback to plaintext or to unverified TLS: the tool or `--validate` reports the fixed errors `tls_verification_failed` (untrusted CA or host name not in the certificate) or `tls_unavailable` (the server offers no TLS), naming only the profile and the remedy. The message and the diagnostics never contain the connection string, credentials or provider text.
+**TLS is encrypted when the server offers it, and not verified by default.** A connection string (the base `POSTGRES_CONNECTION_STRING`/`--connection-string` or any targets JSON/file profile) that does not set `SSL Mode` is given `SSL Mode=Prefer` at startup, before any connection exists, for every host, loopback included. `Prefer` uses TLS when the server offers it and otherwise continues in plaintext, and it **never verifies** the server certificate or host name. This lets a plain connection string work against any server, but on a network you do not control an attacker on the path can force plaintext, read the traffic, or impersonate the server and capture the login credentials. This is acceptable on a trusted network or for local development. Startup and `--validate` therefore print a non-blocking `[warning]` for each profile whose host is not loopback or a Unix-domain socket and whose mode is not `VerifyCA`/`VerifyFull` (the `Prefer` default included): `[warning] profile <alias>: SSL Mode=Prefer to a non-local host encrypts only if the server offers TLS and never verifies the server certificate, so someone on the network path could read the traffic or impersonate the server. This is fine on a trusted network; to harden, set SSL Mode=VerifyFull in the connection string (add Root Certificate=<CA file> for a private CA).` The wording is adapted for `Disable` (does not encrypt the connection), `Require` (encrypts without verifying the server certificate) and `Allow` (encrypts only if the server requires TLS and never verifies the server certificate).
 
-An explicit `SSL Mode`, any value, is the operator's opt-out and is honored unchanged, so `Prefer`, `Allow`, `Require` or `Disable` can still be chosen deliberately. Those encrypt without verifying the server (or not at all), so an on-path attacker can impersonate it and capture the login; startup and `--validate` therefore print a non-blocking `[warning]` for each profile that reaches a non-loopback host without `VerifyCA` or `VerifyFull`. Because the default changed from Npgsql's `Prefer` (see the [upgrade note](README.md#upgrading-an-existing-installation)), existing remote profiles with a private CA need `Root Certificate`, and remote servers without TLS need an explicit `SSL Mode=Disable`. TLS protocol versions and cipher suites are negotiated by .NET and the PostgreSQL server. Use network controls to restrict database reachability.
+**To verify the server, opt in with `SSL Mode=VerifyFull`** (or `VerifyCA`) in the connection string, plus `Root Certificate=<CA file>` for a private or provider CA (the system store is used for public CAs). A connection string with `Root Certificate` but no `SSL Mode` also gets `VerifyFull`, because Npgsql's `Prefer` would ignore the CA file. The certificate chain and host name are then verified during the TLS handshake, no credential, not even the user name, is sent to an unverified server, and there is no fallback to plaintext or to unverified TLS. If verification fails, no connection is made: the tool or `--validate` reports the fixed errors `tls_verification_failed` (untrusted CA or host name not in the certificate) or `tls_unavailable` (the server offers no TLS; also reported with `SSL Mode=Require`), naming only the profile and the remedy, never the connection string, credentials or provider text. These errors occur only with a verifying mode (or `Require` for `tls_unavailable`). TLS is configured only through the connection string's `SSL Mode`; there is no separate server setting, so targets profiles can differ.
+
+An explicit `SSL Mode`, any value, is honored unchanged. 0.6.0 instead defaulted to `VerifyFull` for non-loopback hosts and `Disable` for loopback, and 0.7.0 relaxed that default (see the [upgrade note](README.md#upgrading-an-existing-installation)); existing profiles that relied on the 0.6.0 default keep verification by setting `SSL Mode=VerifyFull` explicitly (profiles that already set `Root Certificate` keep it automatically). TLS protocol versions and cipher suites are negotiated by .NET and the PostgreSQL server. Use network controls to restrict database reachability.
 
 The server owns pool bounds, reset-on-close, transaction enlistment, multiplexing, application name, command timeouts, and logging safety settings. Configuration with `No Reset On Close=true` or multiplexing is rejected. Operation deadlines include queue and connection-pool wait; transactions also set statement and lock timeouts. Result row, byte, cell, and column limits bound responses. These are resource controls, not a guarantee against expensive queries, external side effects, or denial of service. Apply PostgreSQL and operating-system resource controls where needed.
 

@@ -51,6 +51,8 @@ internal static class DatabaseLockChecks
         connectionMode["POSTGRES_CONNECTION_STRING"] = connection + "postgres";
         connectionMode["POSTGRES_DATABASES"] = LockList;
         connectionMode["POSTGRES_REQUIRE_DATABASE_LOCK"] = "true";
+        // The existing refusal scenarios exercise strict mode; advisory (the default) is covered by removing this.
+        connectionMode["POSTGRES_DATABASE_LOCK_MODE"] = "strict";
         var targetsMode = Processes.CleanEnvironment();
         targetsMode["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new Dictionary<string, string>
         {
@@ -59,16 +61,19 @@ internal static class DatabaseLockChecks
         });
         targetsMode["POSTGRES_DATABASES"] = LockList;
         targetsMode["POSTGRES_REQUIRE_DATABASE_LOCK"] = "true";
+        targetsMode["POSTGRES_DATABASE_LOCK_MODE"] = "strict";
 
         await VerifyRequireSwitchAsync(command, connectionMode, targetsMode);
+        await VerifyLockModeSettingAsync(command, connectionMode);
         await VerifyConnectionModeAsync(command, connectionMode);
         await VerifyLargeLockAsync(command, connectionMode);
         await VerifyTargetsModeAsync(command, targetsMode);
         await VerifyValidateAsync(command, connectionMode, targetsMode);
         await VerifyRefusalsAsync(command, fixture, connectionMode, targetsMode);
+        await VerifyAdvisorySessionAsync(command, fixture, connectionMode);
         // pg_stat_database.sessions counts every session established, including ones already closed.
         Check.That(await ProtectedSessionsAsync(fixture) == protectedSessions, "The server opened a session on a database outside the lock.");
-        Console.WriteLine("PASS database lock in connection-string and targets modes, strict switch, PostgreSQL grant verification and startup refusals");
+        Console.WriteLine("PASS database lock in connection-string and targets modes, strict switch, advisory and strict lock modes, PostgreSQL grant verification and startup refusals");
     }
 
     private static async Task VerifyRequireSwitchAsync(Command command, Dictionary<string, string> connectionMode, Dictionary<string, string> targetsMode)
@@ -86,18 +91,33 @@ internal static class DatabaseLockChecks
         await ExpectRefusalAsync(command, invalid, "must be true or false");
     }
 
+    private static async Task VerifyLockModeSettingAsync(Command command, Dictionary<string, string> connectionMode)
+    {
+        foreach (string invalid in new[] { "Strict", "off", "enforce" })
+            await ExpectRefusalAsync(command, new Dictionary<string, string>(connectionMode) { ["POSTGRES_DATABASE_LOCK_MODE"] = invalid }, "must be advisory or strict");
+        await ExpectRefusalAsync(command.With("--database-lock-mode", "none"), Advisory(connectionMode), "must be advisory or strict");
+        // Strict has nothing to check without a lock: refused instead of silently meaning nothing.
+        var unlocked = new Dictionary<string, string>(connectionMode);
+        unlocked.Remove("POSTGRES_DATABASES");
+        unlocked.Remove("POSTGRES_REQUIRE_DATABASE_LOCK");
+        await ExpectRefusalAsync(command, unlocked, "is strict, but no POSTGRES_DATABASES");
+        await ExpectRefusalAsync(command.With("--validate", "--database-lock-mode", "strict"), Advisory(unlocked), "is strict, but no POSTGRES_DATABASES");
+    }
+
     private static async Task VerifyConnectionModeAsync(Command command, Dictionary<string, string> environment)
     {
         await using var client = await McpClient.StartAsync(command, environment);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
             new[] { new[] { "lock_b", "LOCK_B" } }, "Connection-string lock did not select an allowed database.");
         JsonNode listed = await client.OkAsync("list_databases");
-        Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag(),
-            "Connection-string list_databases exposed databases outside the lock or did not report the lock.");
+        Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag() && listed["database_lock_mode"].Text() == "strict",
+            "Connection-string list_databases exposed databases outside the lock or did not report the strict lock.");
         Check.That((await client.ToolAsync("list_databases"))["description"].Text().Contains("database lock", StringComparison.Ordinal)
             && (await client.ToolAsync("execute_sql"))["description"].Text().Contains("Database lock", StringComparison.Ordinal)
-            && client.Initialization["instructions"].Text().Contains("Database lock:", StringComparison.Ordinal),
-            "Tool descriptions or server instructions did not disclose the database lock.");
+            && (await client.ToolAsync("execute_sql"))["description"].Text().Contains("Lock mode strict", StringComparison.Ordinal)
+            && client.Initialization["instructions"].Text().Contains("Database lock:", StringComparison.Ordinal)
+            && client.Initialization["instructions"].Text().Contains("Lock mode strict", StringComparison.Ordinal),
+            "Tool descriptions or server instructions did not disclose the strict database lock.");
         foreach (string outside in new[] { "lock_protected", "postgres", "template1" })
         {
             await ExpectLockRejectionAsync(client, new { database = outside });
@@ -191,6 +211,7 @@ internal static class DatabaseLockChecks
                 {
                     await ExpectRefusalAsync(command, mode, expected);
                     await ExpectRefusalAsync(command.With("--validate"), mode, expected);
+                    await ExpectAdvisoryAsync(command.With("--validate"), Advisory(mode), expected);
                 }
             }
             finally { await fixture.SqlAsync("postgres", restore); }
@@ -237,6 +258,56 @@ internal static class DatabaseLockChecks
         Check.That(refused.Output.Length == 0, "Startup refusal contaminated stdout.");
         Check.That(refused.Error.Contains(expected, StringComparison.Ordinal), $"Startup refusal did not explain: {expected}.");
         Check.Confidential(refused.Error, Password, "Host=", "Username=");
+    }
+
+    // Advisory mode: the same findings are warnings and the command succeeds.
+    private static async Task ExpectAdvisoryAsync(Command command, Dictionary<string, string> environment, string expected)
+    {
+        ProcessResult result = await Processes.RunAsync(command, environment);
+        Check.That(result.Output.Length == 0, "Advisory lock warnings contaminated stdout.");
+        string[] lines = result.Error.Split('\n');
+        Check.That(lines.Any(line => line.StartsWith("[warning] database lock (advisory): target ", StringComparison.Ordinal) && line.Contains(expected, StringComparison.Ordinal))
+            && lines.Any(line => line.StartsWith("[warning] database lock (advisory): PostgreSQL does not confine", StringComparison.Ordinal))
+            && !result.Error.Contains("Refusing to start", StringComparison.Ordinal),
+            $"Advisory lock mode did not report as a warning: {expected}.");
+        Check.Confidential(result.Error, Password, "Host=", "Username=");
+    }
+
+    // A superuser login fails the grant check: advisory still serves, enforces the lock in-process and reports the mode honestly.
+    private static async Task VerifyAdvisorySessionAsync(Command command, PostgresFixture fixture, Dictionary<string, string> connectionMode)
+    {
+        await fixture.SqlAsync("postgres", "ALTER ROLE mcp_locked SUPERUSER;");
+        try
+        {
+            // A CLI value overrides the strict environment setting.
+            await ExpectAdvisoryAsync(command.With("--validate", "--database-lock-mode", "advisory"), connectionMode, "is a superuser");
+            await using var client = await McpClient.StartAsync(command, Advisory(connectionMode));
+            JsonNode listed = await client.OkAsync("list_databases");
+            Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag() && listed["database_lock_mode"].Text() == "advisory",
+                "Advisory list_databases exposed databases outside the lock or did not report the advisory mode.");
+            string instructions = client.Initialization["instructions"].Text();
+            string description = (await client.ToolAsync("execute_sql"))["description"].Text();
+            Check.That(instructions.Contains("Lock mode advisory", StringComparison.Ordinal) && description.Contains("Lock mode advisory", StringComparison.Ordinal)
+                && (await client.ToolAsync("list_databases"))["description"].Text().Contains("Lock mode advisory", StringComparison.Ordinal)
+                && !(instructions + description).Contains("verified to confine", StringComparison.Ordinal),
+                "Advisory mode was not disclosed, or was described as PostgreSQL confinement.");
+            Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
+                new[] { new[] { "lock_b", "LOCK_B" } }, "Advisory lock did not select an allowed database.");
+            foreach (string outside in new[] { "lock_protected", "postgres" })
+                await ExpectLockRejectionAsync(client, new { database = outside });
+            await client.StopAsync();
+            Check.That(client.StandardError.Contains("[warning] database lock (advisory): target ", StringComparison.Ordinal),
+                "Advisory startup did not print the grant findings as warnings.");
+            Check.Confidential(client.StandardError, Password);
+        }
+        finally { await fixture.SqlAsync("postgres", "ALTER ROLE mcp_locked NOSUPERUSER;"); }
+    }
+
+    private static Dictionary<string, string> Advisory(Dictionary<string, string> mode)
+    {
+        var advisory = new Dictionary<string, string>(mode);
+        advisory.Remove("POSTGRES_DATABASE_LOCK_MODE");
+        return advisory;
     }
 
     private static async Task ExpectLockRejectionAsync(McpClient client, object selection)

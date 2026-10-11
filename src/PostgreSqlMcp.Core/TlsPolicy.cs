@@ -8,10 +8,11 @@ using Npgsql;
 namespace PostgreSqlMcp.Core;
 
 /// <summary>
-/// Default TLS behavior of connection profiles. Npgsql's own default, <c>SSL Mode=Prefer</c>, uses TLS without verifying the
-/// server and silently falls back to plaintext, so the server never lets it apply by omission: a profile that does not set
-/// <c>SSL Mode</c> is verified (non-local hosts) or does not use TLS at all (local hosts). An explicit <c>SSL Mode</c> is the
-/// operator's decision and is kept unchanged.
+/// Default TLS behavior of connection profiles. A profile that does not set <c>SSL Mode</c> gets <c>SSL Mode=Prefer</c>, so a
+/// first run works against a server with or without TLS: TLS is used when the server offers it, without verifying the server
+/// certificate, and plaintext otherwise. A <c>Root Certificate</c> without <c>SSL Mode</c> selects <c>VerifyFull</c>, because
+/// supplying a CA only makes sense for verification. <see cref="SecurityWarnings.Tls"/> advises verification for non-local
+/// hosts. An explicit <c>SSL Mode</c> is kept unchanged.
 /// </summary>
 internal static class TlsPolicy
 {
@@ -22,11 +23,9 @@ internal static class TlsPolicy
     {
         // ContainsKey reports every valid keyword; Keys lists only those present in the string, under canonical names.
         if (builder.Keys.Cast<string>().Contains(SslModeKeyword, StringComparer.Ordinal)) return;
-        // Over loopback or a Unix socket an on-path attacker is not in play, so unverified TLS buys nothing and would still be
-        // "TLS without verification": no TLS is used instead. A Root Certificate means the operator expects verified TLS.
-        builder.SslMode = IsLocalHost(builder.Host) && string.IsNullOrEmpty(builder.RootCertificate)
-            ? SslMode.Disable
-            : SslMode.VerifyFull;
+        // Set explicitly rather than relying on Npgsql's default, so the effective mode is visible to warnings and pools.
+        // Npgsql's Prefer ignores Root Certificate, so a CA alone would otherwise silently verify nothing.
+        builder.SslMode = string.IsNullOrEmpty(builder.RootCertificate) ? SslMode.Prefer : SslMode.VerifyFull;
     }
 
     /// <summary>True when every entry of a (possibly multi-host) <c>Host</c> value is loopback or a Unix-domain socket.</summary>

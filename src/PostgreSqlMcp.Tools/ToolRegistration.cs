@@ -32,7 +32,7 @@ public static class ToolRegistration
             : "Access mode: restricted. All SQL runs in READ ONLY transactions; writes are refused. ") +
         (options.AllowedDatabases is null
             ? "No database lock: any database the login can CONNECT to may be selected. "
-            : "Database lock: only the databases returned by list_databases can be selected; others are rejected. ") +
+            : "Database lock: only the databases returned by list_databases can be selected; others are rejected. " + LockModeText(options)) +
         $"Results are bounded to {options.MaxRows} rows and {options.MaxResultBytes} bytes per call; statements time out after {options.QueryTimeout}s. " +
         "PostgreSQL privileges and row-level security decide what is visible and allowed.";
 
@@ -56,6 +56,12 @@ public static class ToolRegistration
         }
     }
 
+    // Strict: startup refused unless PostgreSQL grants confined every login. Advisory: grant findings were only warnings,
+    // so nothing here may claim PostgreSQL confines the login.
+    private static string LockModeText(ServerOptions options) => options.StrictDatabaseLock
+        ? "Lock mode strict: at startup, PostgreSQL grants were verified to confine the login to these databases. "
+        : "Lock mode advisory: PostgreSQL grants were not required to confine the login, so SQL may still reach other databases where the login's privileges allow. ";
+
     private static string? Describe(string tool, string? description, ServerOptions options)
     {
         bool locked = options.AllowedDatabases is not null;
@@ -64,9 +70,9 @@ public static class ToolRegistration
             "execute_sql" => description + (options.Unrestricted
                 ? " Runs in a READ ONLY transaction that is rolled back unless read_only=false; this server allows writes, so read_only=false commits DML/DDL in one transaction. Never replay a truncated write."
                 : " This server is in restricted access mode: every statement runs in a READ ONLY transaction and read_only=false is refused.")
-                + (locked ? " Database lock: only databases returned by list_databases can be selected." : ""),
+                + (locked ? " Database lock: only databases returned by list_databases can be selected. " + LockModeText(options).TrimEnd() : ""),
             "list_databases" when locked =>
-                "List the databases allowed by this server's database lock that the login can CONNECT to, from the live catalog, with paging and is_current. Optional target selects a configured connection profile. Databases outside the lock are never listed and are rejected by every tool; allowing another requires an operator configuration change.",
+                "List the databases allowed by this server's database lock that the login can CONNECT to, from the live catalog, with paging and is_current. Optional target selects a configured connection profile. Databases outside the lock are never listed and are rejected by every tool; allowing another requires an operator configuration change. " + LockModeText(options).TrimEnd(),
             _ => description
         };
     }

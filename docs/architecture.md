@@ -2,7 +2,7 @@
 
 postgresql-sharp-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server written in C#/.NET 10. An MCP client (an AI assistant or coding agent) starts it as a local child process and talks to it over **stdio**. The server turns nine tool calls into bounded PostgreSQL queries and returns structured JSON. This document describes the high-level design; [SECURITY.md](../SECURITY.md) states the guarantees and limits and [docs/assurance-case.md](assurance-case.md) argues why they hold. Names below are source files; read the code for details.
 
-Checked against the source of release 0.5.0 (commit `64c55c7`) on 2026-10-11.
+Checked against the source of release 0.5.0 (commit `64c55c7`) on 2026-10-11. The TLS and database-lock descriptions below reflect the 0.7.0 defaults (Prefer TLS, advisory database lock) and have not yet been rechecked against a tagged release.
 
 ## Context
 
@@ -11,7 +11,7 @@ Checked against the source of release 0.5.0 (commit `64c55c7`) on 2026-10-11.
         |  JSON-RPC over stdin/stdout
         v
  postgresql-sharp-mcp (one process)  -- diagnostics on stderr only
-        |  Npgsql (PostgreSQL wire protocol; TLS verified by default, explicit SSL Mode kept)
+        |  Npgsql (PostgreSQL wire protocol; TLS when offered but unverified by default, VerifyFull opt-in, explicit SSL Mode kept)
         v
  PostgreSQL server(s): the authorization boundary
 ```
@@ -41,13 +41,13 @@ Three projects keep one dependency direction, `Core <- Tools <- App`:
 | `SqlParameters.cs` | Binds up to 256 JSON scalars to `$1..$n` as text of unknown type. Values are never interpolated into SQL. |
 | `ToolReply.cs` | The result envelope and error mapping. Errors keep the SQLSTATE and a fixed summary; PostgreSQL text is forwarded only where it provably comes from the caller's own statement. Caps the serialized result size. |
 | `QueryPage.cs` | Result records: columns, rows, truncation, `next_offset`. |
-| `DatabaseLockCheck.cs` | At startup and in `--validate`, proves in PostgreSQL that a locked login cannot reach other databases (superuser, server-file roles, `CREATEROLE`/`CREATEDB`, owned or connectable databases, `dblink`/`postgres_fdw`, server-file function grants). |
-| `SecurityWarnings.cs` | Non-blocking stderr warnings: non-loopback hosts without certificate verification, and privileged role capabilities. |
-| `TlsPolicy.cs` | Applies the TLS default to every profile that omits `SSL Mode` (`VerifyFull` for non-loopback hosts, `Disable` for loopback and Unix sockets; explicit values are kept) and maps TLS handshake failures to fixed `tls_verification_failed`/`tls_unavailable` errors. |
+| `DatabaseLockCheck.cs` | At startup and in `--validate`, checks in PostgreSQL whether a locked login can reach other databases (superuser, server-file roles, `CREATEROLE`/`CREATEDB`, owned or connectable databases, `dblink`/`postgres_fdw`, server-file function grants). In `strict` lock mode (`POSTGRES_DATABASE_LOCK_MODE`) a finding or an unverifiable check refuses startup; in the default `advisory` mode findings are warnings and startup continues. |
+| `SecurityWarnings.cs` | Non-blocking stderr warnings: non-loopback hosts whose `SSL Mode` is not `VerifyCA`/`VerifyFull` (the `Prefer` default included), advisory database-lock findings, and privileged role capabilities. |
+| `TlsPolicy.cs` | Applies the TLS default to every profile that omits `SSL Mode` (`Prefer` for every host, loopback included, or `VerifyFull` when the profile sets `Root Certificate`; explicit values are kept) and maps TLS handshake failures under the verifying modes to fixed `tls_verification_failed`/`tls_unavailable` errors. |
 
 ### Tools
 
-`ToolRegistration.cs` registers the public methods of four classes and sets the MCP annotations (read-only/destructive) and mode-dependent descriptions and server instructions from the configured access mode and lock.
+`ToolRegistration.cs` registers the public methods of four classes and sets the MCP annotations (read-only/destructive) and mode-dependent descriptions and server instructions from the configured access mode, database lock and lock mode.
 
 | Class | Tools |
 |---|---|
@@ -58,7 +58,7 @@ Three projects keep one dependency direction, `Core <- Tools <- App`:
 
 ### App
 
-`Program.cs` prints `--help`/`--version`, parses options, optionally runs `--validate` (a read-only connectivity query plus the privilege/TLS warnings and the lock check), and otherwise runs the lock check, registers the services and starts the MCP SDK on stdio. Configuration errors exit with a fixed message on stderr.
+`Program.cs` prints `--help`/`--version`, parses options, optionally runs `--validate` (a read-only connectivity query plus the privilege/TLS warnings and the lock check; advisory lock findings are warnings, strict findings fail it), and otherwise runs the lock check, registers the services and starts the MCP SDK on stdio. Configuration errors exit with a fixed message on stderr.
 
 ## Request flow
 
@@ -74,7 +74,7 @@ Each call independently resolves its database. There is no shared current databa
 
 ## Configuration and credentials
 
-A base connection string from the environment creates the `primary` profile; optional targets JSON/file defines up to 32 independent profiles; an optional database lock (`POSTGRES_DATABASES`) restricts which physical databases may ever be opened. Combining a base connection string with targets is rejected rather than silently preferring one. Credentials come from the environment, an owner-protected file or the command line, never from tool arguments, and can be replaced without recompiling. See the [README configuration reference](../README.md#configuration-reference).
+A base connection string from the environment creates the `primary` profile; optional targets JSON/file defines up to 32 independent profiles; an optional database lock (`POSTGRES_DATABASES`) restricts which physical databases the server may ever open, enforced in C# on every path. `POSTGRES_DATABASE_LOCK_MODE=strict` additionally requires PostgreSQL grants to confine the login; the default `advisory` mode does not. Combining a base connection string with targets is rejected rather than silently preferring one. Credentials come from the environment, an owner-protected file or the command line, never from tool arguments, and can be replaced without recompiling. See the [README configuration reference](../README.md#configuration-reference).
 
 ## Build, packaging and verification
 
@@ -89,5 +89,5 @@ A base connection string from the environment creates the `primary` profile; opt
 | PostgreSQL is the authority | The server sets read-only transactions and limits; roles, grants and RLS decide access |
 | Bounded resources | Row/byte/cell/column limits, per-call deadline, concurrency limit, pool and cache bounds |
 | No data in diagnostics | Fixed error summaries, no SDK/Npgsql logging, no parameter logging, stdout reserved |
-| Fail closed | Invalid configuration, conflicting credential sources, lock violations and unverifiable lock checks stop startup or the call |
+| Fail closed | Invalid configuration, conflicting credential sources and lock violations stop startup or the call; an explicit `VerifyCA`/`VerifyFull` TLS failure stops the connection; an unverifiable lock check stops startup in strict lock mode (advisory mode warns) |
 | Memory safety | Managed C#; no `unsafe` code or native interop in `src/` |
