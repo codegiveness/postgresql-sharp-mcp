@@ -263,17 +263,17 @@ Enter the username at the prompt rather than copying a sibling secret. GitHub OI
 
 #### Dispatch the exact existing release
 
-Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.4.0`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
+Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.5.0`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
 
 ```powershell
 # Default all: GitHub Release + npm staging + NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=all
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.5.0 -f target=all
 # npm staging only; no GitHub Release or NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=npm
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.5.0 -f target=npm
 # NuGet publication only; no GitHub Release or npm staging.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.5.0 -f target=nuget
 # GitHub Release only; no registry staging/publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.4.0 -f target=github
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.5.0 -f target=github
 ```
 
 `target` choices are `all`, `github`, `npm` and `nuget`, defaulting to `all`. Every target retains common preflight, package/installed-distribution verification and attestation. npm-only and NuGet-only jobs tolerate an intentionally skipped GitHub Release job **only for their dedicated target**; failed/canceled prerequisites cannot reach a publisher. In `all` mode both registry jobs require successful GitHub Release publication. The npm command stages the exact attested tarball using `npm stage publish`, never approves it or calls direct `npm publish`. Its successful summary means **staged, pending Windows 2FA approval**, not published.
@@ -284,21 +284,21 @@ For a failed current main-dispatched workflow, `gh run rerun <run-id> --failed -
 
 After the npm staging job succeeds, review each stage ID and intended `latest` tag. The job stages the five platform packages before the main package. Approve them in the same order, **platform packages first**, so the public main package never points at unpublished optional dependencies. Every public npm publication requires the maintainer's Windows 2FA approval. A successful dispatch, login, OIDC exchange or staging response is not approval.
 
-Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.4.0.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.4.0.tgz`:
+Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.5.0.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.5.0.tgz`:
 
 ```powershell
 $Package = '@codegiveness/postgresql-sharp-mcp-win32-x64'
-$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.4.0.tgz'
+$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.5.0.tgz'
 npm.cmd stage list $Package --registry https://registry.npmjs.org/
-$StageId = Read-Host "Stage ID for $Package 0.4.0"
+$StageId = Read-Host "Stage ID for $Package 0.5.0"
 npm.cmd stage view $StageId --registry https://registry.npmjs.org/
 npm.cmd stage download $StageId --registry https://registry.npmjs.org/
 ```
 
-Confirm the stage is **`$Package@0.4.0`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.4.0 GitHub release:
+Confirm the stage is **`$Package@0.5.0`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.5.0 GitHub release:
 
 ```powershell
-gh release download v0.4.0 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
+gh release download v0.5.0 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
 gh attestation verify ./release-verification/$Tarball --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
 Get-FileHash ./release-verification/$Tarball -Algorithm SHA256
 $StagedTarball = Read-Host 'Path printed by npm stage download'
@@ -311,14 +311,14 @@ Only after that review, approve the exact stage:
 
 ```powershell
 npm.cmd stage approve $StageId --registry https://registry.npmjs.org/
-npm.cmd view "$Package@0.4.0" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
+npm.cmd view "$Package@0.5.0" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
 npm.cmd view $Package dist-tags --registry https://registry.npmjs.org/
 ```
 
 After approving the main package last, check the public installation:
 
 ```powershell
-npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.4.0 '@codegiveness/postgresql-sharp-mcp@0.4.0' --version
+npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.5.0 '@codegiveness/postgresql-sharp-mcp@0.5.0' --version
 ```
 
 Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/$Tarball --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
