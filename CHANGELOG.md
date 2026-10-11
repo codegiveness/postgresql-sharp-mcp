@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- OpenSSF Best Practices: re-evaluate the proposed TLS answers in `.bestpractices.json` for the 0.7.0 `SSL Mode=Prefer` default. `crypto_certificate_verification` and `crypto_verification_private` (Silver MUST) and `crypto_used_network` (Silver SHOULD, Gold MUST) change from Met to Unmet, each with the reason and what would change it. The TLS wording in four other crypto answers now describes `Prefer`, the secure-design answer describes the advisory database-lock check, and the release-notes answer covers every release through 0.7.0. [docs/security-posture.md](docs/security-posture.md) records the new counts and closes owner checklist item 11. Nothing is saved on bestpractices.dev until the owner reviews it.
+
 ## 0.7.0
 
 **Upgrade note (security-relevant behavior changes): two 0.6.0 defaults are loosened so that a plain connection string works.** An omitted `SSL Mode` now means `Prefer` (TLS when the server offers it, certificate never verified, plaintext otherwise) instead of `VerifyFull`, and the database lock's PostgreSQL grant check is now advisory instead of refusing startup. An attacker on the network path can read or impersonate an unverified connection, and in advisory mode PostgreSQL does not confine the login to `POSTGRES_DATABASES`, so SQL can still reach other databases where the login's privileges allow. **To restore the 0.6.0 behavior,** put `SSL Mode=VerifyFull` in the connection string (plus `Root Certificate=<CA file>` for a private CA) and set `POSTGRES_DATABASE_LOCK_MODE=strict`. Run `--validate` before reconnecting; see the [README upgrade note](README.md#upgrading-an-existing-installation).
