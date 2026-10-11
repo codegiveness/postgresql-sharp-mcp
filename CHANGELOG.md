@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Documentation, policy and tooling only; no runtime behavior change.
+
+- Add [GOVERNANCE.md](GOVERNANCE.md) (decision-making, roles and what happens if the sole maintainer is unavailable; it states that `access_continuity` is not met), [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md) and [docs/assurance-case.md](docs/assurance-case.md) (requirements, threat model, trust boundaries, secure-design principles, common weaknesses and residual risks; the review record is pending the maintainer).
+- CONTRIBUTING: add coding standards, code-review standards and small-task guidance. Add an `.editorconfig` and a CI step (`dotnet format style --verify-no-changes --severity warn`) that enforces the C# style rules. Source files gain SPDX copyright and license headers, and unused `using` directives are removed.
+- SECURITY: document how vulnerability reports are handled.
+- Propose Silver and Gold Best Practices answers in `.bestpractices.json`, and record the live Scorecard figures, the reference project's figures, the criteria that remain unmet and an owner checklist in [docs/security-posture.md](docs/security-posture.md). Nothing is saved on bestpractices.dev until the owner reviews it.
+
 ## 0.5.0
 
 Upgrade notes: a locked configuration whose login can execute server-file functions is now refused at startup, and npm installs that omit optional dependencies now fail (both below). Existing tool names, parameters, environment variables, CLI flags and the targets-file format remain compatible; additions such as the `parameters` input of `execute_sql`/`explain_query` are optional.

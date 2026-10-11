@@ -192,6 +192,31 @@ docker run --rm -i \
 
 The database hostname must be reachable from the container; `localhost` refers to the container itself. Retain certificate validation for remote connections and mount any required CA material at the connection string's container path. For the optional credentials file, ensure the non-root runtime user can read it using a suitable group/UID or secret mount, not world-readable permissions. `-i` keeps stdin available for MCP stdio. Both routes use one bootstrap profile to select live physical databases without per-database JSON edits.
 
+## Coding standards
+
+All maintained code is C# on .NET 10 with the SDK-default language version. The style guides are Microsoft's [C# coding conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions) and the [.NET naming guidelines](https://learn.microsoft.com/dotnet/standard/design-guidelines/naming-guidelines). Contributions must comply with them and with the repository rules below.
+
+**Enforced automatically.** The CI `verify` job fails a pull request that violates any of these, and the `main` ruleset requires that job:
+
+- The compiler: nullable reference types are on and every warning, including use of an obsolete API, is an error ([`Directory.Build.props`](Directory.Build.props)).
+- The C# rules in [`.editorconfig`](.editorconfig), checked by `dotnet format style`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
+
+```bash
+dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
+dotnet format style postgresql-sharp-mcp.slnx --no-restore   # applies the fixable ones
+```
+
+The same file sets UTF-8, LF line endings, four-space indentation (two for YAML, JSON, project files and Markdown), a final newline and no trailing whitespace for editors that read EditorConfig. The repository currently satisfies those settings, but they are not part of the automated check.
+
+**Followed in review.** Match the surrounding file for layout and brace style, which the check does not prescribe. Comments explain why, not what. Keep the `Core <- Tools <- App` dependency direction, keep MCP stdout for JSON-RPC and diagnostics on stderr, and keep maintained automation in C#. Every `.cs` file starts with the two-line header below; add it to new files.
+
+```csharp
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+```
+
+**Exceptions** must be rare and justified. Use a narrowly scoped `#pragma warning disable` or `[SuppressMessage]`, or an `.editorconfig` severity entry, with a comment saying why; reviewers treat it like any other change. No exceptions exist today. Do not weaken the compiler settings or the check to make a build pass.
+
 ## Issues, pull requests and reviews
 
 [Git and GitHub workflow](docs/git-workflow.md) explains step by step how a change moves through this repository: branch names, worktrees, commit messages, issue and pull-request lifecycle, squash merging, Dependabot, tags and releases, and branch cleanup. The issue forms and pull-request template ask for the information below.
@@ -204,6 +229,29 @@ The database hostname must be reachable from the container; `localhost` refers t
 - **Conduct:** everyone taking part in issues, pull requests and discussions follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 Keep versions, affected help/docs and release notes consistent. Update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and bundled licenses when shipped dependencies change. Contributions are under the project's [MIT license](LICENSE); dependencies retain their own terms.
+
+### Code review standards
+
+Every change to `main` is reviewed before it merges, whoever wrote it. The repository enforces pull requests with passing required checks and resolved conversations. It does not enforce an independent approval: GitHub does not let an author approve their own pull request, so `main` requires zero approvals and the maintainer's own pull requests are self-reviewed ([why](docs/git-workflow.md#6-review)). Anyone may review and comment on any pull request, and an independent review is welcome and recorded in the pull request.
+
+**How review is conducted.** The reviewer reads the whole diff in **Files changed**, not only the description, and checks each claim under **Evidence** against the CI logs or by rerunning it. Pull requests written by AI agents carry the `agent-authored` label and are reviewed as a contribution from a capable stranger ([git workflow](docs/git-workflow.md#6-review)).
+
+**What must be checked.**
+
+- Every hunk traces to the stated problem; nothing unrequested is included.
+- Behavior, compatibility and security impact are stated and match the diff, including defaults, permissions, the read-only boundary and output formats.
+- Major new functionality or a bug fix has consumer-visible regression coverage in the verifier ([Verify behavior](#verify-behavior)), and the stated commands and scenarios actually ran.
+- Docs, `--help`, `CHANGELOG.md` and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) are updated where affected.
+- No credentials, real connection strings, customer SQL or database results appear anywhere in the change or its description.
+- Workflow changes are reviewed line by line: permissions, triggers, full-SHA action pins with version comments, and what runs with secrets or write tokens.
+- Dependency updates have their release notes and advisory impact read, and locked restore still passes.
+- The [coding standards](#coding-standards) hold.
+
+**What makes a change acceptable.** All required checks pass (build and integration, installation on Linux/Windows/macOS, dependency audit, CodeQL gate, secret and container scanning, fuzzing), conversations are resolved, the title follows the [commit format](docs/git-workflow.md#commits), and the reviewer has no unanswered finding about correctness, security or maintainability. The maintainer decides when those conditions hold and merges with Squash and merge.
+
+### Small tasks for new contributors
+
+Issues suited to a first contribution carry the [`good first issue`](https://github.com/codegiveness/postgresql-sharp-mcp/labels/good%20first%20issue) label, and larger tasks where help is wanted carry [`help wanted`](https://github.com/codegiveness/postgresql-sharp-mcp/labels/help%20wanted). A small task can be a documentation fix, a missing verifier scenario or a contained code change. If none is open, say what you would like to work on in [Discussions Q&A](https://github.com/codegiveness/postgresql-sharp-mcp/discussions/categories/q-a) before starting.
 
 ## Automation and releases
 

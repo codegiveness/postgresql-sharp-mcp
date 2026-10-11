@@ -147,3 +147,18 @@ Pools are keyed by normalized connection settings, including credentials/TLS and
 Do not post credentials, private data, or an exploit against an operational database in a public issue. Private vulnerability reporting is enabled for this repository: open [Security and quality](https://github.com/codegiveness/postgresql-sharp-mcp/security), then **Report a vulnerability**, following [GitHub's private-report instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-privately). No particular response time is guaranteed. If the private route becomes unavailable, open a minimal public issue asking the maintainer for a confidential contact route, without sensitive details.
 
 A useful report includes the affected version or commit, operating system and PostgreSQL version, configuration with secrets removed, the security boundary crossed, and a minimal reproduction using disposable data. Do not test systems without authorization. This document describes implementation protections and limitations; it is not an independent security audit or certification.
+
+## How reports are handled
+
+The maintainer is the only person who sees a private report. This is the process, in order; no step has a guaranteed duration.
+
+1. **Receipt and triage.** The maintainer reads the private report, tries to reproduce it with disposable data and decides whether it crosses a boundary this document promises ([trust boundary](#trust-boundary), [PostgreSQL permissions are the authority](#postgresql-permissions-are-the-authority), [database lock](#database-lock-hardening)). Behavior that is already documented as a limitation, such as the SQL guard not being an authorization parser, is answered with that documentation and may become a documentation fix. The maintainer asks the reporter for missing details in the private thread.
+2. **Fix.** A confirmed vulnerability is fixed privately when public discussion would help exploitation before a release exists, otherwise through the normal pull-request path. The fix includes a regression scenario in the verifier ([CONTRIBUTING.md](CONTRIBUTING.md#verify-behavior)). A vulnerability in a dependency is fixed by updating or replacing it, as Dependabot alerts, the dependency audit and the container scan surface it.
+3. **Release.** The fix ships in a new patch release from `main` through the [release procedure](docs/git-workflow.md#tags-and-releases); older releases are not patched, so affected users upgrade ([upgrade guidance](README.md#upgrading-an-existing-installation)). The CHANGELOG entry and GitHub Release notes name each fixed vulnerability.
+4. **Disclosure and credit.** After a fixed release exists, the maintainer publishes a GitHub security advisory (requesting a CVE through GitHub when severity warrants one) and credits the reporter in the advisory and the CHANGELOG unless the reporter asks to stay anonymous. The reporter may propose a disclosure date; the maintainer decides it with the fix's availability in mind.
+
+Security fixes are the only changes that may be developed outside a public pull request before release. Everything else follows [docs/git-workflow.md](docs/git-workflow.md).
+
+## Security requirements and assurance case
+
+[docs/assurance-case.md](docs/assurance-case.md) lists the security requirements this software is meant to meet, the threat model and trust boundaries, and the argument, with evidence, that secure design principles were applied and common weaknesses are countered. It also records the residual risks and the gaps found while writing it. [docs/architecture.md](docs/architecture.md) describes the components those arguments refer to.
