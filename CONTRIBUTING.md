@@ -320,7 +320,6 @@ After approving the main package last, check the public installation:
 ```powershell
 npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.5.0 '@codegiveness/postgresql-sharp-mcp@0.5.0' --version
 ```
-
 Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/$Tarball --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
 
 #### Recorded publication evidence
