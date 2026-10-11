@@ -38,7 +38,7 @@ There is no quota and no automatic promotion. The maintainer may invite a contri
 
 ## Continuity if the maintainer is unavailable
 
-**Status on 2026-10-11: the access-continuity requirement is not met, and the bus factor is 1.** No second person has the access needed to continue the project. This section records what that means so that users can judge the risk, and what exactly would change it.
+**Status on 2026-10-11: the access-continuity requirement is not met, and the bus factor is 1.** Nobody else can currently use the access needed to continue the project. This section records what that means so that users can judge the risk, and what exactly would change it.
 
 ### What depends on the maintainer alone
 
@@ -64,14 +64,23 @@ These measures preserve users' ability to verify and fork. They do not let anyon
 
 ### What would change the status
 
-The requirement is met only when a second trusted person actually holds these permissions and could use them without the maintainer. Documentation alone does not meet it. Concretely:
+The OpenSSF criterion requires that issues can be created and closed, changes accepted and versions released within a week of confirmed loss of any one person. It names two ways to do that: someone else holds the necessary keys, passwords and legal rights, or, for a project run by one individual, the keys sit in a lockbox and a will grants the needed legal rights. Documentation alone meets neither. Either route below would change `access_continuity` to Met.
 
-1. A second person with **admin** on `codegiveness/postgresql-sharp-mcp` and 2FA on their GitHub account, able to merge, edit the ruleset, dispatch `release.yml` and manage the `release` environment.
-2. The same person added as a **maintainer of the six `@codegiveness/...` npm packages** (2FA required), able to approve staged versions, and able to edit the trusted-publisher configuration.
-3. The same person as **co-owner of the NuGet package** with their own trusted-publishing policy for `release.yml` and the `release` environment, and their own `NUGET_USERNAME`.
-4. A tested handover: the second person completes one real issue-to-release cycle (or a dry run of every step the maintainer can verify), and the maintainer records the date and result in this document.
+**Route 1: a second maintainer.** This also changes the bus factor.
 
-When all four hold, update this section and the OpenSSF Best Practices answers for `access_continuity` and `bus_factor` ([security posture](docs/security-posture.md#openssf-best-practices-enrollment)). Until then they stay Unmet.
+1. A second person has **admin** on `codegiveness/postgresql-sharp-mcp` and 2FA on their GitHub account. They can merge, edit the ruleset, dispatch `release.yml` and manage the `release` environment.
+2. The same person is a **maintainer of the six `@codegiveness/...` npm packages** (2FA required). They can approve staged versions and edit the trusted-publisher configuration.
+3. The same person is a **co-owner of the NuGet package**, with their own trusted-publishing policy for `release.yml` and the `release` environment, and their own `NUGET_USERNAME`.
+4. The handover is tested. The second person completes one real issue-to-release cycle, or a dry run of every step the maintainer can verify. The maintainer records the date and result in this document.
+
+**Route 2: lockbox and written authority, for a single maintainer.** This does not change the bus factor.
+
+1. A named trusted person has sealed access to the recovery material for the maintainer's GitHub, npm and NuGet accounts. That material includes the passwords and the 2FA recovery codes or a backup security key, and it must be enough to complete the [release procedure](CONTRIBUTING.md#independent-publisher-setup), including npm's 2FA approval. A password manager's emergency-access feature or a sealed physical copy both work. Credentials never go into this repository, an issue or a pull request.
+2. A will or signed letter gives that person the right to use the material to continue the project or hand it to a new maintainer, and says when they may do so.
+3. Optionally, GitHub's [account successor](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/maintaining-ownership-continuity-of-your-personal-accounts-repositories) is set as a backstop. It only lets the successor archive or transfer public repositories, after GitHub's waiting period, so it covers neither npm, NuGet, nor incapacity short of death. It does not replace step 1.
+4. The maintainer records in this document that the arrangement exists and when the material was last checked to be current. The trusted person's private details appear only if they agree. The check is repeated at least yearly and whenever a password, recovery code or 2FA device changes.
+
+When either route is complete, update this section and the OpenSSF Best Practices answer for `access_continuity`; route 1 also updates `bus_factor` ([security posture](docs/security-posture.md#openssf-best-practices-enrollment)). Until then both stay Unmet.
 
 ## Related documents
 

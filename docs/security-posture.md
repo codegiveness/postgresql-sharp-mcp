@@ -201,7 +201,7 @@ Silver still fails on five MUST criteria (`access_continuity`, `build_repeatable
 
 | Criterion or check | Level | Why it is unmet today | Exactly what would change it |
 |---|---|---|---|
-| `access_continuity` | Silver MUST | One account holds repository admin, npm and NuGet authority | A second person with admin, npm maintainer and NuGet ownership able to merge, release and publish within a week, and a recorded handover test ([GOVERNANCE.md](../GOVERNANCE.md#continuity-if-the-maintainer-is-unavailable)) |
+| `access_continuity` | Silver MUST | One account holds repository admin, npm and NuGet authority, and nobody else can use it | Either a second person with admin, npm maintainer and NuGet ownership who can merge, release and publish within a week, plus a recorded handover test; or, for a single maintainer as the criterion allows, a named trusted person holding sealed recovery material for the GitHub, npm and NuGet accounts with written authority to use it, recorded and checked yearly ([GOVERNANCE.md](../GOVERNANCE.md#what-would-change-the-status)) |
 | `bus_factor` | Silver SHOULD, Gold MUST | One human contributor (58 commits and Dependabot's 3 on 2026-10-11) | At least two people who can each maintain the project, which the same second maintainer provides |
 | `contributors_unassociated`; Scorecard Contributors | Gold MUST; check | No second contributor | At least two significant contributors not paid by the same organization; Scorecard also needs people from other organizations (three organizations scores 10) |
 | `two_person_review`; Scorecard Code-Review | Gold MUST; check | Every human change is authored by the maintainer and GitHub blocks self-approval; Scorecard found 0 of 27 changesets approved | A different human reviewing and approving at least half of proposed modifications, or the maintainer approving outside contributors' PRs. Bot or agent approvals do not count |
@@ -242,8 +242,9 @@ Nothing here has been done by the change that proposes it; each item changes a r
 5. **Label real small tasks.** Open or label two or three small issues `good first issue` (for example, add a direct `SqlGuard` verifier scenario, make constructor style consistent in `DatabaseTools`, or document the `ConfigureAwait` convention). This is what `small_tasks` asks for.
 6. **Decide the TLS default.** Whether non-loopback connections should require verified TLS unless the operator opts out is a product decision with an upgrade note; it is the change behind three Unmet crypto criteria.
 7. **Optional: sign release tags** with a signing key registered on GitHub, which would settle `version_tags_signed`.
-8. **Optional: recruit a second maintainer** and follow the continuity steps. This is the only path to `access_continuity`, `bus_factor`, `two_person_review`, Code-Review, Contributors and a higher Branch-Protection score. No artificial reviews or contributors are used.
-9. **Check the settings you own.** GitHub's secret-scanning generic patterns and validity checks were still reported disabled on 2026-10-11 ([enrollment](#openssf-best-practices-enrollment) and the 2026-10-02 note above); enabling them is a settings change for the owner.
+8. **Set up access continuity.** Route 2 in [GOVERNANCE.md](../GOVERNANCE.md#what-would-change-the-status) needs no second maintainer. Give a named trusted person sealed recovery material for the GitHub, npm and NuGet accounts and written authority to use it, then record the date in GOVERNANCE.md and change `access_continuity` to Met with that evidence. Never put the material in the repository. Optionally also set a GitHub account successor.
+9. **Optional: recruit a second maintainer** (route 1). This is the only path to `bus_factor`, `two_person_review`, Code-Review, Contributors and a higher Branch-Protection score. No artificial reviews or contributors are used.
+10. **Check the settings you own.** GitHub's secret-scanning generic patterns and validity checks were still reported disabled on 2026-10-11 ([enrollment](#openssf-best-practices-enrollment) and the 2026-10-02 note above); enabling them is a settings change for the owner.
 
 ## Sources
 
