@@ -1,7 +1,7 @@
 {
   "name": "@codegiveness/postgresql-sharp-mcp",
   "version": "0.4.0",
-  "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Bundles the .NET runtime; no .NET installation or runtime downloads required.",
+  "description": "Database-agnostic PostgreSQL MCP server with live discovery and bounded per-call selection. Installs one platform package with the .NET runtime bundled; no .NET installation or runtime downloads required.",
   "license": "MIT",
   "author": "codegiveness",
   "homepage": "https://github.com/codegiveness/postgresql-sharp-mcp#readme",
@@ -16,11 +16,17 @@
   "engines": {
     "node": ">=22"
   },
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"],
   "scripts": {
-    "postinstall": "node installer/run-script-os/index.js",
-    "postinstall:win32": "\"runtimes\\win-x64\\PostgreSqlMcp.NpmInstall.exe\"",
-    "postinstall:linux": "\"runtimes/linux-$(uname -m)/PostgreSqlMcp.NpmInstall\"",
-    "postinstall:darwin": "\"runtimes/osx-$(uname -m)/PostgreSqlMcp.NpmInstall\""
+    "postinstall": "postgresql-sharp-mcp-npm-install"
+  },
+  "optionalDependencies": {
+    "@codegiveness/postgresql-sharp-mcp-darwin-arm64": "0.4.0",
+    "@codegiveness/postgresql-sharp-mcp-darwin-x64": "0.4.0",
+    "@codegiveness/postgresql-sharp-mcp-linux-arm64": "0.4.0",
+    "@codegiveness/postgresql-sharp-mcp-linux-x64": "0.4.0",
+    "@codegiveness/postgresql-sharp-mcp-win32-x64": "0.4.0"
   },
   "publishConfig": {
     "access": "public",
@@ -28,8 +34,6 @@
   },
   "files": [
     "bin/postgresql-sharp-mcp.exe",
-    "runtimes/",
-    "installer/",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "LICENSES/*.txt",

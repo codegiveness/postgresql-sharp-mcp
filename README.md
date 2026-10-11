@@ -10,7 +10,7 @@
 
 SQL calls are read-only by default, but the server's default access mode permits explicitly requested writes. Use a least-privileged database login, never a superuser. Keep an existing explicit `restricted` setting; [access boundaries](#access-and-resource-boundaries) explain how to refuse writes entirely.
 
-**Fastest start:** Node.js 22+ and npm are enough, because the npm package bundles the .NET runtime. This downloads and runs version 0.4.0:
+**Fastest start:** Node.js 22+ and npm are enough, because npm installs the .NET runtime with the server. This downloads and runs version 0.4.0:
 
 ```sh
 npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --version
@@ -49,7 +49,7 @@ This guide targets **0.4.0**. Registry commands require the corresponding publis
 npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --version
 ```
 
-The package-specific `--allow-scripts` approves installation on npm 12. Do not use `--ignore-scripts` for automatic setup: a bundled upstream OS runner selects the self-contained C# installer, which installs the server and runtime for your OS/CPU. No runtime or binary is downloaded by the installer. The installed server command is native; it needs neither Node.js nor `dotnet` to run. Unix installation also uses the system `uname` command.
+The package-specific `--allow-scripts` approves installation on npm 12. Do not use `--ignore-scripts` for automatic setup. npm downloads only the platform package matching your OS/CPU (about 35–39 MB; the main package is under 1 MB). Its self-contained C# installer then installs the server and runtime. Starting with 0.5.0, npm no longer downloads all five platform runtimes. The installer downloads nothing itself. The installed server command is native; it needs neither Node.js nor `dotnet` to run.
 
 **.NET tool — install once, then run by name:**
 
@@ -329,6 +329,7 @@ Use your actual paths and keep validation stderr private. Reload the saved MCP c
 | Executable not found / spawn error | Use an absolute executable path including `.exe` on Windows, not an archive/folder; keep extracted files together. |
 | Wrong architecture / cannot execute binary | Match the archive to your OS and CPU. |
 | npm reports blocked install scripts / native command cannot execute | Use the full npx command above with package-specific `--allow-scripts`; if a previous install skipped scripts, use a fresh npm cache for the corrected command. |
+| npm install fails with `postgresql-sharp-mcp-npm-install: not found` (or "is not recognized") | npm did not install the platform package for this machine. Remove `--omit=optional`/`--no-optional` and any `omit=optional` npm setting. If a project `package-lock.json` was created on another OS, npm can omit this platform's package ([npm/cli#4828](https://github.com/npm/cli/issues/4828)); delete `node_modules` and the lockfile, then reinstall. Supported platforms are Windows x64, glibc Linux x64/arm64 and macOS x64/arm64; on Alpine/musl or other platforms, use the [.NET tool](#1-install-or-run) or a container. |
 | .NET runtime not found | npm 0.3.2 and earlier require .NET; upgrade to 0.3.3 or newer after publication or use a local fixed artifact. The .NET tool still requires .NET 10 and `DOTNET_ROOT` for custom runtime locations. npm 0.3.3 and newer and standalone archives bundle the runtime. |
 | Invalid configuration / missing credentials | Repeat the hidden prompt, clear stale credential sources from the shell/client entry, and start a new client from that shell. Raw PostgreSQL URLs are not accepted. For files, check the path, JSON escaping and accidental `.txt` extension. |
 | Connection refused, timeout or authentication error | Run `--validate`; check host, port, database, login/password, network/VPN and PostgreSQL access rules. Installing this app does not grant access. |

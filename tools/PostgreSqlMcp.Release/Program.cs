@@ -166,13 +166,16 @@ internal static class Release
     {
         string[] archives = Rids.Select(rid => Path.Combine(root, "artifacts/archives", "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"))).ToArray();
         string nuget = Path.Combine(root, "artifacts/packages", "codegiveness.postgresql-sharp-mcp." + metadata.Version + ".nupkg");
-        string npm = Path.Combine(root, "artifacts/packages", metadata.NpmName.Replace("@", "").Replace("/", "-") + "-" + metadata.Version + ".tgz");
+        // Platform packages first: the main package's optionalDependencies point at them.
+        string[] npm = NpmPackages(metadata.NpmName).Select(name => Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, metadata.Version))).ToArray();
         string sbom = Path.Combine(root, "artifacts/sbom/bom.json");
-        string[] files = [.. archives, nuget, npm, sbom];
+        string[] files = [.. archives, nuget, .. npm, sbom];
         if (files.Any(file => !File.Exists(file)))
-            throw new InvalidOperationException("Expected five archives, the current NuGet/npm packages and the application SBOM.");
+            throw new InvalidOperationException("Expected five archives, the current NuGet package, the npm package and its five platform packages, and the application SBOM.");
         return files;
     }
+
+    private static IEnumerable<string> NpmPackages(string main) => NpmPlatform.All.Select(platform => platform.PackageName(main)).Append(main);
 
     private static async Task PublishGitHubAsync(string root, string tag, (string Version, string NpmName) metadata)
     {
@@ -285,38 +288,48 @@ internal static class Release
             environment["NPM_ID_TOKEN"] = null;
             string[] configuration = ["--prefix", isolated, "--userconfig", Path.Combine(isolated, "user.npmrc"),
                 "--globalconfig", Path.Combine(isolated, "global.npmrc")];
-            var lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json",
-                "--registry", "https://registry.npmjs.org/", .. configuration], isolated, environment);
-            if (lookup.ExitCode == 0)
-            {
-                using var found = JsonDocument.Parse(lookup.Output);
-                // npm <= 11 prints a JSON string; npm 12 prints a one-element array for an exact version.
-                JsonElement reported = found.RootElement;
-                if (reported.ValueKind == JsonValueKind.Array && reported.GetArrayLength() == 1) reported = reported[0];
-                if (reported.ValueKind != JsonValueKind.String || reported.GetString() != version)
-                    throw new InvalidOperationException("Unexpected npm registry version response.");
-                await SummaryAsync($"npm {version} already exists; immutable version was not republished or staged.\n");
-                return;
-            }
-            bool absent = false;
-            try
-            {
-                using var error = JsonDocument.Parse(lookup.Output);
-                absent = error.RootElement.GetProperty("error").GetProperty("code").GetString() == "E404";
-            }
-            catch (JsonException) { }
-            if (!absent) throw new InvalidOperationException("npm lookup failed; check registry availability.");
-            string package = Path.GetFullPath(Path.Combine(root, "artifacts/packages", name.Replace("@", "").Replace("/", "-") + "-" + version + ".tgz"));
-            var arguments = new List<string> { "stage", "publish", package, "--ignore-scripts", "--access", "public",
-                "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-') ? "next" : "latest" };
-            arguments.AddRange(configuration);
-            if (dryRun) arguments.Add("--dry-run");
-            await RunAsync("npm", arguments, isolated, environment);
-            await SummaryAsync(dryRun
-                ? $"npm {version} staging dry-run completed; no stage was submitted and nothing was published.\n"
-                : $"npm {version} staged with provenance requested, pending human Windows 2FA approval; not publicly published.\n");
+            // Platform packages are staged before the main package; a failure stops before the main package is staged.
+            foreach (string package in NpmPackages(name))
+                await StageNpmPackageAsync(root, package, version, dryRun, isolated, environment, configuration);
+            if (!dryRun)
+                await SummaryAsync("Approve the staged platform packages before the main package, so it never resolves missing optional dependencies.\n");
         }
         finally { Directory.Delete(isolated, recursive: true); }
+    }
+
+    private static async Task StageNpmPackageAsync(string root, string name, string version, bool dryRun, string isolated,
+        Dictionary<string, string?> environment, string[] configuration)
+    {
+        var lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json",
+            "--registry", "https://registry.npmjs.org/", .. configuration], isolated, environment);
+        if (lookup.ExitCode == 0)
+        {
+            using var found = JsonDocument.Parse(lookup.Output);
+            // npm <= 11 prints a JSON string; npm 12 prints a one-element array for an exact version.
+            JsonElement reported = found.RootElement;
+            if (reported.ValueKind == JsonValueKind.Array && reported.GetArrayLength() == 1) reported = reported[0];
+            if (reported.ValueKind != JsonValueKind.String || reported.GetString() != version)
+                throw new InvalidOperationException($"Unexpected npm registry version response for {name}.");
+            await SummaryAsync($"npm {name}@{version} already exists; immutable version was not republished or staged.\n");
+            return;
+        }
+        bool absent = false;
+        try
+        {
+            using var error = JsonDocument.Parse(lookup.Output);
+            absent = error.RootElement.GetProperty("error").GetProperty("code").GetString() == "E404";
+        }
+        catch (JsonException) { }
+        if (!absent) throw new InvalidOperationException($"npm lookup failed for {name}; check registry availability.");
+        string package = Path.GetFullPath(Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, version)));
+        var arguments = new List<string> { "stage", "publish", package, "--ignore-scripts", "--access", "public",
+            "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-') ? "next" : "latest" };
+        arguments.AddRange(configuration);
+        if (dryRun) arguments.Add("--dry-run");
+        await RunAsync("npm", arguments, isolated, environment);
+        await SummaryAsync(dryRun
+            ? $"npm {name}@{version} staging dry-run completed; no stage was submitted and nothing was published.\n"
+            : $"npm {name}@{version} staged with provenance requested, pending human Windows 2FA approval; not publicly published.\n");
     }
 
     private static async Task OutputAsync(string name, string value)

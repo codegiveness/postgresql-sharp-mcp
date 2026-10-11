@@ -224,7 +224,7 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-context --dir publication-context
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-artifacts --dir artifacts
-      - name: Stage npm tarball with OIDC pending Windows 2FA approval
+      - name: Stage npm platform and main packages with OIDC pending Windows 2FA approval
         run: dotnet release-tool/PostgreSqlMcp.Release.dll npm --context publication-context/publication-context.json
   nuget:
     needs: [preflight, package, attest, github-release]
