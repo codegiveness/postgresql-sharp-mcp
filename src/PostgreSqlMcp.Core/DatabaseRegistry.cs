@@ -73,7 +73,7 @@ public sealed class DatabaseRegistry : IAsyncDisposable
                 yield return (target, _profiles[target].ConnectionString);
     }
 
-    internal DatabaseSelection Resolve(string database, string? target)
+    internal DatabaseSelection Resolve(string database, string? target, out string profileName)
     {
         if (string.IsNullOrEmpty(database))
             throw new ToolException("invalid_target", "A database name or configured profile alias is required.");
@@ -82,11 +82,18 @@ public sealed class DatabaseRegistry : IAsyncDisposable
         {
             if (!_profiles.TryGetValue(target, out profile!))
                 throw new ToolException("invalid_target", "Specify an exact configured connection profile as target.");
+            profileName = target;
         }
         else if (_profiles.TryGetValue(database, out profile!))
+        {
+            profileName = database;
             database = profile.Database;
+        }
         else
+        {
+            profileName = DefaultTarget;
             profile = _profiles[DefaultTarget];
+        }
         if (!IsDatabaseName(database))
             throw new ToolException("invalid_target", "Specify a database name of 1..63 UTF-8 bytes without NUL, or a configured profile alias.");
         RequireAllowed(database);

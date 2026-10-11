@@ -56,6 +56,7 @@ internal static class Integration
         await VerifyWritesAsync(command, environment, fixture.Port);
         await VerifyConfigurationAsync(command, environment, targets, connection);
         await VerifySecurityWarningsAsync(command, environment, fixture);
+        await TlsChecks.RunAsync(command, environment, "Username=mcp_reader;Password=reader-disposable;Database=postgres;Timeout=5");
         await VerifyDiscoveryAsync(command, environment, fixture, connection);
         await VerifyPoolCapacityAsync(command, environment, fixture, connection);
         await VerifyCancellationAsync(command, environment, fixture);
@@ -746,7 +747,7 @@ internal static class Integration
         // Name resolution of .invalid fails without network traffic; the warning comes from configuration alone.
         // The login name is the marker: no part of the connection string may appear in a warning.
         const string remote = "Host=tls-warning.invalid;Username=sensitive-tls-marker;Database=d;Timeout=2";
-        foreach (var (mode, warns) in new[] { ("", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
+        foreach (var (mode, warns) in new[] { ("", false), (";SSL Mode=Prefer", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
         {
             var tls = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { remote = remote + mode }) };
             ProcessResult result = await Processes.RunAsync(command.With("--validate"), tls, expected: 1);
@@ -754,17 +755,19 @@ internal static class Integration
                 $"Unverified-TLS warning was {(warns ? "missing" : "emitted")} for '{mode}'.");
             Check.Confidential(result.Error, "sensitive-tls-marker");
         }
+        // An omitted SSL Mode is verified, so grouping is exercised with the explicit opt-out.
+        const string unverified = remote + ";SSL Mode=Prefer";
         // Profiles on the same host but different ports are different servers: both are named. A connection-string lock's
         // aliases share one connection, so they share one line instead of repeating it per locked name.
         var ports = new Dictionary<string, string>(environment)
         {
-            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { one = remote, two = remote + ";Port=6543" })
+            ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { one = unverified, two = unverified + ";Port=6543" })
         };
         ProcessResult grouped = await Processes.RunAsync(command.With("--validate"), ports, expected: 1);
         Check.That(grouped.Error.Contains("[warning] profile one: SSL Mode=", StringComparison.Ordinal)
             && grouped.Error.Contains("[warning] profile two: SSL Mode=", StringComparison.Ordinal),
             "A remote profile on another port was not named in an unverified-TLS warning.");
-        var locked = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = remote, ["POSTGRES_DATABASES"] = "[\"d1\",\"d2\"]" };
+        var locked = new Dictionary<string, string>(environment) { ["POSTGRES_CONNECTION_STRING"] = unverified, ["POSTGRES_DATABASES"] = "[\"d1\",\"d2\"]" };
         locked.Remove("POSTGRES_TARGETS");
         ProcessResult shared = await Processes.RunAsync(command.With("--validate"), locked, expected: 1);
         Check.That(shared.Error.Contains("[warning] profiles d1, d2: SSL Mode=", StringComparison.Ordinal),

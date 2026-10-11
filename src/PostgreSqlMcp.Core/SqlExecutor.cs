@@ -20,7 +20,7 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     public async Task<T> WithSessionAsync<T>(string database, Func<SqlSession, CancellationToken, Task<T>> action,
         bool readOnly = true, CancellationToken ct = default, string? target = null)
     {
-        DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target);
+        DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target, out string profile);
         if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "This server is in restricted access mode and refuses writes; use read_only=true.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.QueryTimeout));
@@ -31,7 +31,7 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
         {
             await _calls.WaitAsync(token).ConfigureAwait(false); entered = true;
             source = await registry.AcquireAsync(selection, token).ConfigureAwait(false);
-            await using var connection = await source.Source.OpenConnectionAsync(token).ConfigureAwait(false);
+            await using var connection = await OpenAsync(source, profile, selection.ConnectionString, token).ConfigureAwait(false);
             await using var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
             // Control statements are fixed server text. User SQL cannot end this transaction. The session sends them
             // in the same batch as its first statement, so setup costs no extra network round trip.
@@ -57,6 +57,12 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
             }
             finally { if (entered) _calls.Release(); }
         }
+    }
+
+    private static async Task<NpgsqlConnection> OpenAsync(DatabaseRegistry.SourceEntry source, string profile, string connectionString, CancellationToken token)
+    {
+        try { return await source.Source.OpenConnectionAsync(token).ConfigureAwait(false); }
+        catch (NpgsqlException ex) when (TlsPolicy.Explain(ex, profile, connectionString) is { } tls) { throw tls; }
     }
 
     public void Dispose() => _calls.Dispose();

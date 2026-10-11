@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 codegiveness
 // SPDX-License-Identifier: MIT
 
-using System.Net;
 using Npgsql;
 
 namespace PostgreSqlMcp.Core;
@@ -37,7 +36,7 @@ public static class SecurityWarnings
         ORDER BY severity, warning COLLATE "C"
         """;
 
-    /// <summary>Profiles that reach a non-local host without certificate verification (Npgsql's default SSL Mode is Prefer).</summary>
+    /// <summary>Profiles that reach a non-local host without certificate verification because the operator set an explicit SSL Mode other than VerifyCA/VerifyFull.</summary>
     public static IReadOnlyList<string> Tls(ServerOptions options)
     {
         // One line per distinct server login (host, port, user, mode) naming its profiles: lock aliases of one connection
@@ -48,7 +47,7 @@ public static class SecurityWarnings
             var builder = new NpgsqlConnectionStringBuilder(connectionString);
             if (builder.SslMode is SslMode.VerifyCA or SslMode.VerifyFull) continue;
             string host = builder.Host ?? "";
-            if (host.Split(',').All(IsLocal)) continue;
+            if (TlsPolicy.IsLocalHost(host)) continue;
             var key = (host, builder.Port, builder.Username, builder.SslMode);
             if (!groups.TryGetValue(key, out List<string>? aliases)) groups[key] = aliases = [];
             aliases.Add(alias);
@@ -88,19 +87,5 @@ public static class SecurityWarnings
             catch (Exception) when (!ct.IsCancellationRequested) { }
         }
         return warnings;
-    }
-
-    private static bool IsLocal(string entry)
-    {
-        string host = entry.Trim();
-        if (host.Length == 0 || host[0] is '/' or '@') return true; // Unix-domain socket directory or abstract socket.
-        if (host.StartsWith('['))
-        {
-            int close = host.IndexOf(']');
-            host = close > 0 ? host[1..close] : host;
-        }
-        else if (host.Count(c => c == ':') == 1) host = host[..host.IndexOf(':')]; // host:port
-        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || (IPAddress.TryParse(host, out IPAddress? address) && IPAddress.IsLoopback(address));
     }
 }
