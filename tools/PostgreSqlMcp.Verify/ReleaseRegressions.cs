@@ -5,6 +5,8 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PostgreSqlMcp.Verify;
 
@@ -16,6 +18,8 @@ internal static class ReleaseRegressions
         AssetPlanning().GetAwaiter().GetResult();
         ArchiveReproducibility();
         NuGetPayloadComparison();
+        SbomReproducibility();
+        PackReproducibility().GetAwaiter().GetResult();
     }
 
     private static LocalAsset Built(string name, string content) =>
@@ -140,5 +144,62 @@ internal static class ReleaseRegressions
             "An entry missing from the registry package must be reported.");
         Check.That(NuGetRegistry.ComparePayload(local, Package("extra.nupkg", ("tool.nuspec", "spec"), ("tools/net10.0/any/app.dll", "binary"), ("tools/extra.dll", "x"))).Count == 1,
             "An entry only in the registry package must be reported.");
+    }
+
+    // dotnet-CycloneDX stamps a random serial and the wall clock; the release tool normalizes both from content and commit time.
+    private static void SbomReproducibility()
+    {
+        static string Generated(string serial, string timestamp, string component) =>
+            $$$"""{"bomFormat":"CycloneDX","specVersion":"1.7","serialNumber":"urn:uuid:{{{serial}}}","version":1,"metadata":{"timestamp":"{{{timestamp}}}","component":{"name":"app"}},"components":[{"name":"{{{component}}}"},{"name":"a"}]}""";
+        var buildTime = new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.FromHours(2));
+
+        string first = SbomNormalizer.Normalize(Generated(Guid.NewGuid().ToString(), "2026-10-11T02:38:39Z", "b"), buildTime);
+        string second = SbomNormalizer.Normalize(Generated(Guid.NewGuid().ToString(), "2031-01-01T00:00:00Z", "b"), buildTime);
+        Check.That(first == second, "SBOMs generated from the same content with different random serials and wall-clock times must normalize to identical bytes.");
+
+        using JsonDocument document = JsonDocument.Parse(first);
+        JsonElement root = document.RootElement;
+        Check.That(root.EnumerateObject().Select(property => property.Name).SequenceEqual(["bomFormat", "specVersion", "serialNumber", "version", "metadata", "components"])
+            && root.GetProperty("components").EnumerateArray().Select(component => component.GetProperty("name").GetString()).SequenceEqual(["b", "a"]),
+            "SBOM normalization must keep the generated property and component order.");
+        Check.That(root.GetProperty("metadata").GetProperty("timestamp").GetString() == "2026-03-04T03:06:07Z", "The SBOM timestamp must be the given build time in UTC.");
+        string serial = root.GetProperty("serialNumber").GetString()!;
+        Check.That(Regex.IsMatch(serial, "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOptions.CultureInvariant),
+            "The SBOM serial number must be an RFC 4122 URN with a version 8 UUID.");
+
+        string Serial(string json) => JsonDocument.Parse(json).RootElement.GetProperty("serialNumber").GetString()!;
+        Check.That(Serial(SbomNormalizer.Normalize(Generated("x", "y", "other"), buildTime)) != serial, "Changed SBOM content must change the serial number.");
+        Check.That(Serial(SbomNormalizer.Normalize(Generated("x", "y", "b"), buildTime.AddSeconds(1))) != serial, "A different build time must change the serial number.");
+        try { SbomNormalizer.Normalize("""{"bomFormat":"CycloneDX","metadata":{"timestamp":"t"}}""", buildTime); }
+        catch (InvalidOperationException) { return; }
+        throw new VerificationException("An SBOM without a serialNumber must be rejected, not silently accepted.");
+    }
+
+    // Packs a dependency-free probe twice, more than the 2-second ZIP time resolution apart, with the property the package builder passes.
+    private static async Task PackReproducibility()
+    {
+        using TemporaryDirectory temporary = new();
+        string project = Directory.CreateDirectory(Path.Combine(temporary.Path, "probe")).FullName;
+        File.WriteAllText(Path.Combine(project, "Probe.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Probe</PackageId><Version>1.0.0</Version></PropertyGroup></Project>");
+        File.WriteAllText(Path.Combine(project, "Probe.cs"), "internal sealed class Probe { }");
+        string dotnet = Processes.FindExecutable("dotnet");
+
+        async Task<string> Pack(string output)
+        {
+            foreach (string folder in new[] { "bin", "obj" })
+                if (Directory.Exists(Path.Combine(project, folder))) Directory.Delete(Path.Combine(project, folder), recursive: true);
+            await Processes.RunAsync(new(dotnet, "pack", "Probe.csproj", "-c", "Release", "-o", output, "-p:DeterministicTimestamp=" + ReleaseArchive.ZipTimestamp.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")),
+                timeout: 300, directory: project);
+            return Path.Combine(output, "Probe.1.0.0.nupkg");
+        }
+
+        string first = await Pack(Path.Combine(temporary.Path, "first"));
+        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        string second = await Pack(Path.Combine(temporary.Path, "second"));
+        Check.That(File.ReadAllBytes(first).AsSpan().SequenceEqual(File.ReadAllBytes(second)), "dotnet pack must produce identical .nupkg bytes with the fixed timestamp.");
+        using ZipArchive package = ZipFile.OpenRead(first);
+        Check.That(package.Entries.Count > 0 && package.Entries.All(entry => entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime),
+            "Every .nupkg entry must carry the fixed timestamp.");
     }
 }

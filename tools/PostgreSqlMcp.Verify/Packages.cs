@@ -409,6 +409,7 @@ internal static class Packages
             Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), "NuGet artifact lost legal notices.");
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
+                Check.That(entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime, $"NuGet entry {entry.FullName} carries a build-time stamp, so the package is not reproducible.");
                 using Stream stream = entry.Open();
                 await VerifyNoWorkspacePathAsync(stream, workspacePaths);
             }

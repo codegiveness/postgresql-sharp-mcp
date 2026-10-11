@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -58,11 +59,17 @@ internal static class Release
                 case "sbom":
                     await RunAsync("dotnet", ["tool", "restore"], root);
                     await RunAsync("dotnet", ["dotnet-CycloneDX", "src/PostgreSqlMcp/PostgreSqlMcp.csproj", "--exclude-dev", "--disable-package-restore", "--output-format", "Json", "--output", "artifacts/sbom", "--filename", "bom.json", "--set-name", "codegiveness.postgresql-sharp-mcp", "--set-version", metadata.Version], root);
-                    using (var document = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "artifacts/sbom/bom.json"))))
+                    string bom = Path.Combine(root, "artifacts/sbom/bom.json");
+                    using (var document = JsonDocument.Parse(await File.ReadAllTextAsync(bom)))
                     {
                         if (document.RootElement.GetProperty("bomFormat").GetString() != "CycloneDX" || document.RootElement.GetProperty("components").GetArrayLength() == 0)
                             throw new InvalidOperationException("Generated SBOM lacks application dependencies.");
                     }
+                    // The checked-out commit's time (not the wall clock) keeps the SBOM byte-identical across rebuilds of the same source.
+                    var commitTime = await CaptureAsync("git", ["log", "-1", "--format=%ct", "HEAD"], root);
+                    if (commitTime.ExitCode != 0 || !long.TryParse(commitTime.Output.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long commitSeconds))
+                        throw new InvalidOperationException("Cannot read the checked-out commit time for the SBOM timestamp.");
+                    await File.WriteAllTextAsync(bom, SbomNormalizer.Normalize(await File.ReadAllTextAsync(bom), DateTimeOffset.FromUnixTimeSeconds(commitSeconds)));
                     await ChecksumsAsync(root);
                     break;
                 case "github":

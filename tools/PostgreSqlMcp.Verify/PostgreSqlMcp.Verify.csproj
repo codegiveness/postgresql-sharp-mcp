@@ -11,6 +11,7 @@
     <Compile Include="..\PostgreSqlMcp.Release\ReleaseAssets.cs" Link="Release\ReleaseAssets.cs" />
     <Compile Include="..\PostgreSqlMcp.Release\ReleaseArchive.cs" Link="Release\ReleaseArchive.cs" />
     <Compile Include="..\PostgreSqlMcp.Release\NuGetRegistry.cs" Link="Release\NuGetRegistry.cs" />
+    <Compile Include="..\PostgreSqlMcp.Release\SbomNormalizer.cs" Link="Release\SbomNormalizer.cs" />
     <Compile Include="..\Shared\ProcessRunner.cs" Link="Shared\ProcessRunner.cs" />
     <Compile Include="..\Shared\RepositoryRoot.cs" Link="Shared\RepositoryRoot.cs" />
     <Compile Include="..\Shared\NpmPlatforms.cs" Link="Shared\NpmPlatforms.cs" />
