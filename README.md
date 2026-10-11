@@ -344,7 +344,7 @@ Normal stdout is reserved for MCP JSON-RPC; diagnostics use stderr. Keep credent
 
 Choose one installation method from step 1 and follow the same environment/client setup. If registry installation is unavailable, use the self-contained archive, a [verified local NuGet package](CONTRIBUTING.md#install-a-verified-release-artifact), or a [source build](CONTRIBUTING.md#build-from-source). Downloadable npm/NuGet release package files alone do not establish registry publication.
 
-After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
+After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.5.0`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
