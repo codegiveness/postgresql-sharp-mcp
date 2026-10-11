@@ -13,7 +13,6 @@ This is the direction for the twelve months from 2026-10-11 to 2027-10-11, so th
 
 ### Close the security gaps the project already knows about
 
-- **TLS defaults.** Npgsql's default `SSL Mode=Prefer` encrypts without verifying the server and can fall back to plaintext. Today the server only warns ([assurance case, residual risks](assurance-case.md#7-residual-risks-and-known-gaps)). The intent is to decide, with an upgrade note, whether connections to non-loopback hosts should require certificate verification unless the operator opts out explicitly.
 - **Measured test coverage.** Statement and branch coverage of the integration run is not measured today. The intent is to collect it with a .NET FLOSS tool in CI, publish the result and then set a threshold.
 - **Reproducible packages.** Archives and npm tarballs are byte-identical across rebuilds; the `.nupkg` and the SBOM are not. The intent is to make them deterministic.
 - **Release provenance visibility.** Releases from 0.5.0 carry `provenance.sigstore.json`, which is how Scorecard's Signed-Releases check sees the signatures. Each new release extends that coverage.

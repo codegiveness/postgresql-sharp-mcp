@@ -43,6 +43,7 @@ Three projects keep one dependency direction, `Core <- Tools <- App`:
 | `QueryPage.cs` | Result records: columns, rows, truncation, `next_offset`. |
 | `DatabaseLockCheck.cs` | At startup and in `--validate`, proves in PostgreSQL that a locked login cannot reach other databases (superuser, server-file roles, `CREATEROLE`/`CREATEDB`, owned or connectable databases, `dblink`/`postgres_fdw`, server-file function grants). |
 | `SecurityWarnings.cs` | Non-blocking stderr warnings: non-loopback hosts without certificate verification, and privileged role capabilities. |
+| `TlsPolicy.cs` | Applies the TLS default to every profile that omits `SSL Mode` (`VerifyFull` for non-loopback hosts, `Disable` for loopback and Unix sockets; explicit values are kept) and maps TLS handshake failures to fixed `tls_verification_failed`/`tls_unavailable` errors. |
 
 ### Tools
 
