@@ -173,8 +173,8 @@ internal static class Packages
             ?? throw new VerificationException($"No npm platform package for {os}-{cpu}.");
     }
 
-    // Without its platform package (--omit=optional, or an unsupported platform) the install must fail,
-    // never leave the non-runnable seed executable in place as an apparently installed command.
+    // Without its platform package (--omit=optional, or an unsupported platform) the install must fail with the
+    // actionable message on stderr, never leave the non-runnable seed executable in place as an apparently installed command.
     private static async Task VerifyMissingPlatformFailsAsync(Command npm, string stage, string spec, string npmName,
         Dictionary<string, string> environment, string registry)
     {
@@ -188,7 +188,9 @@ internal static class Packages
         environment["npm_config_registry"] = registry;
         ProcessResult omitted = await Processes.RunAsync(NpmInstall(npm, home, spec).With("--omit=optional"), environment, expected: null, timeout: 600);
         Check.That(omitted.ExitCode != 0, "npm install without the platform package succeeded instead of failing.");
-        Console.WriteLine("PASS npm install without the platform package fails instead of installing the seed");
+        Check.That(omitted.Error.Contains(NpmPlatform.MissingPlatformMessage, StringComparison.Ordinal),
+            "npm install without the platform package did not print the missing-platform instructions on stderr.");
+        Console.WriteLine("PASS npm install without the platform package fails with the missing-platform instructions on stderr");
     }
 
     private static (Command Npm, Command Npx, Dictionary<string, string> Environment) CreateNpmEnvironment(
