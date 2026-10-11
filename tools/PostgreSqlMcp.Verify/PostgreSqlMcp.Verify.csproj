@@ -13,5 +13,6 @@
     <Compile Include="..\PostgreSqlMcp.Release\NuGetRegistry.cs" Link="Release\NuGetRegistry.cs" />
     <Compile Include="..\Shared\ProcessRunner.cs" Link="Shared\ProcessRunner.cs" />
     <Compile Include="..\Shared\RepositoryRoot.cs" Link="Shared\RepositoryRoot.cs" />
+    <Compile Include="..\Shared\NpmPlatforms.cs" Link="Shared\NpmPlatforms.cs" />
   </ItemGroup>
 </Project>

@@ -1,20 +1,17 @@
-using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 
 return await PackageBuilder.RunAsync(args);
 
 internal static class PackageBuilder
 {
-    private static readonly string[] RuntimeIdentifiers = ["win-x64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"];
     private static readonly string[] Documents = ["README.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md"];
+    private static readonly string[] Notices = ["LICENSE", "THIRD-PARTY-NOTICES.md"];
     private static readonly string[] ServerProjects = ["PostgreSqlMcp", "PostgreSqlMcp.Core", "PostgreSqlMcp.Tools"];
     private const string InstallerName = "PostgreSqlMcp.NpmInstall";
-    private const string RunnerUrl = "https://registry.npmjs.org/run-script-os/-/run-script-os-1.1.6.tgz";
-    private const string RunnerSha512 = "aa5e8fd8bce10534c37f32adb3e428e07f785542a9c4a0c5cfa431c7069464dd26c2f8bb2f7969388ec1a8f0aaee58038775cb974769797c1f715222b65ad8af";
 
     internal static async Task<int> RunAsync(string[] args)
     {
@@ -35,9 +32,9 @@ internal static class PackageBuilder
             var packageName = metadata.RootElement.GetProperty("name").GetString() ?? throw new InvalidDataException("npm package name is missing.");
             if (metadata.RootElement.GetProperty("version").GetString() != version)
                 throw new InvalidDataException("npm/package.json version must match PostgreSqlMcp.csproj Version.");
-            var tarballName = $"{packageName.Replace("@", "", StringComparison.Ordinal).Replace('/', '-')}-{version}.tgz";
+            CheckPlatformDependencies(metadata.RootElement, packageName, version);
             var nugetName = $"{packageId}.{version}.nupkg";
-            if (Path.GetFileName(tarballName) != tarballName || Path.GetFileName(nugetName) != nugetName)
+            if (Path.GetFileName(NpmPlatform.TarballName(packageName, version)) != NpmPlatform.TarballName(packageName, version) || Path.GetFileName(nugetName) != nugetName)
                 throw new InvalidDataException("Package names must not contain filesystem paths.");
 
             temporary = Directory.CreateTempSubdirectory("postgresql-mcp-package-").FullName;
@@ -48,42 +45,46 @@ internal static class PackageBuilder
             // Resolve project identities from the child working directory; macOS temp paths can alias /private/var.
             var server = Path.Combine("src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
             var installer = Path.Combine("tools", InstallerName, $"{InstallerName}.csproj");
-            var package = Path.Combine(temporary, "npm");
-            Directory.CreateDirectory(package);
-            CopyFile(Path.Combine(root, "npm", "package.json"), Path.Combine(package, "package.json"));
-            foreach (var document in Documents)
-                CopyFile(Path.Combine(stage, document), Path.Combine(package, document));
-            foreach (var notice in Directory.EnumerateFiles(Path.Combine(stage, "LICENSES"), "*.txt"))
-                CopyFile(notice, Path.Combine(package, "LICENSES", Path.GetFileName(notice)));
-
-            await StageRunnerAsync(package);
-            foreach (var rid in RuntimeIdentifiers)
+            var tarballs = new List<string>();
+            foreach (var platform in NpmPlatform.All)
             {
-                // uname supplies these architecture names to the Unix npm scripts.
-                var folder = rid.Replace("x64", "x86_64", StringComparison.Ordinal)
-                    .Replace("linux-arm64", "linux-aarch64", StringComparison.Ordinal);
-                if (rid == "win-x64") folder = rid;
-                var native = Path.Combine(package, "runtimes", folder);
+                // One package per platform: npm installs only the one matching os/cpu/libc, so a machine downloads one runtime.
+                var name = platform.PackageName(packageName);
+                var package = Path.Combine(temporary, "npm-" + platform.Rid);
+                var runtime = Path.Combine(package, NpmPlatform.RuntimeDirectory);
                 await DotnetAsync(stage, "publish", server, "-c", "Release", "--self-contained", "true",
-                    $"-p:RuntimeIdentifier={rid}", $"-p:RuntimeIdentifiers={rid}", "-p:UseAppHost=true", "-o", native);
+                    $"-p:RuntimeIdentifier={platform.Rid}", $"-p:RuntimeIdentifiers={platform.Rid}", "-p:UseAppHost=true", "-o", runtime);
                 // Both applications share the same packaged runtime, not a system installation.
                 await DotnetAsync(stage, "publish", installer, "-c", "Release", "--self-contained", "true",
-                    $"-p:RuntimeIdentifier={rid}", $"-p:RuntimeIdentifiers={rid}", "-p:UseAppHost=true", "-o", native);
+                    $"-p:RuntimeIdentifier={platform.Rid}", $"-p:RuntimeIdentifiers={platform.Rid}", "-p:UseAppHost=true", "-o", runtime);
+                StageNotices(stage, package);
+                await File.WriteAllTextAsync(Path.Combine(package, "package.json"), PlatformManifest(metadata.RootElement, name, version, platform));
+                await File.WriteAllTextAsync(Path.Combine(package, "README.md"),
+                    $"# {name}\n\nThe {platform.Os}-{platform.Cpu} server and bundled .NET runtime of [{packageName}](https://www.npmjs.com/package/{packageName}). " +
+                    $"Install `{packageName}` instead; npm selects this package as an optional dependency on matching machines.\n");
+                var tarball = Path.Combine(temporary, NpmPlatform.TarballName(name, version));
+                CreateTarball(package, tarball);
+                tarballs.Add(tarball);
             }
 
+            var main = Path.Combine(temporary, "npm");
+            CopyFile(Path.Combine(root, "npm", "package.json"), Path.Combine(main, "package.json"));
+            foreach (var document in Documents)
+                CopyFile(Path.Combine(stage, document), Path.Combine(main, document));
+            StageNotices(stage, main);
             // npm creates bin links before postinstall. The seed is a real PE
             // apphost so Windows cmd-shim chooses native invocation (no shebang).
-            CopyFile(Path.Combine(package, "runtimes", "win-x64", "PostgreSqlMcp.exe"),
-                Path.Combine(package, "bin", "postgresql-sharp-mcp.exe"));
-            var tarball = Path.Combine(temporary, tarballName);
-            CreateTarball(package, tarball);
+            CopyFile(Path.Combine(temporary, "npm-win-x64", NpmPlatform.RuntimeDirectory, "PostgreSqlMcp.exe"),
+                Path.Combine(main, "bin", "postgresql-sharp-mcp.exe"));
+            var mainTarball = Path.Combine(temporary, NpmPlatform.TarballName(packageName, version));
+            CreateTarball(main, mainTarball);
 
             var packed = Path.Combine(temporary, "nuget");
             await DotnetAsync(stage, "pack", server, "-c", "Release", "-o", packed);
             var nupkg = Path.Combine(packed, nugetName);
             CheckNuget(nupkg);
             Directory.CreateDirectory(output);
-            foreach (var artifact in new[] { tarball, nupkg })
+            foreach (var artifact in tarballs.Prepend(mainTarball).Append(nupkg))
             {
                 var destination = Path.Combine(output, Path.GetFileName(artifact));
                 CopyFile(artifact, destination);
@@ -159,32 +160,51 @@ internal static class PackageBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         File.Copy(source, destination, overwrite: true);
     }
-    private static async Task StageRunnerAsync(string package)
+
+    // Every npm package redistributes .NET or ships with it, so each carries the license and dependency notices.
+    private static void StageNotices(string stage, string package)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-        byte[] bytes = await client.GetByteArrayAsync(RunnerUrl);
-        if (!Convert.ToHexString(SHA512.HashData(bytes)).Equals(RunnerSha512, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("The pinned run-script-os archive checksum does not match.");
-        using var stream = new MemoryStream(bytes);
-        using var gzip = new GZipStream(stream, CompressionMode.Decompress);
-        using var tar = new TarReader(gzip);
-        var required = new HashSet<string>(["index.js", "functions.js", "package.json", "LICENSE"], StringComparer.Ordinal);
-        while (await tar.GetNextEntryAsync() is { } entry)
-        {
-            if (entry.Name == "package/README.md") continue;
-            var name = entry.Name.StartsWith("package/", StringComparison.Ordinal) ? entry.Name["package/".Length..] : "";
-            if (!required.Remove(name) || entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || entry.DataStream is null)
-                throw new InvalidDataException("Unexpected entry in the pinned run-script-os archive.");
-            var destination = Path.Combine(package, "installer", "run-script-os", name);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            await using var output = File.Create(destination);
-            await entry.DataStream.CopyToAsync(output);
-        }
-        if (required.Count != 0)
-            throw new InvalidDataException("The pinned run-script-os archive is incomplete.");
+        foreach (var notice in Notices)
+            CopyFile(Path.Combine(stage, notice), Path.Combine(package, notice));
+        foreach (var notice in Directory.EnumerateFiles(Path.Combine(stage, "LICENSES"), "*.txt"))
+            CopyFile(notice, Path.Combine(package, "LICENSES", Path.GetFileName(notice)));
     }
 
+    // npm/package.json is the reviewed source: it must depend on exactly the built platform packages at this version.
+    private static void CheckPlatformDependencies(JsonElement metadata, string packageName, string version)
+    {
+        var expected = NpmPlatform.All.Select(platform => platform.PackageName(packageName) + "@" + version).ToHashSet(StringComparer.Ordinal);
+        var declared = metadata.TryGetProperty("optionalDependencies", out var dependencies)
+            ? dependencies.EnumerateObject().Select(dependency => dependency.Name + "@" + dependency.Value.GetString()).ToHashSet(StringComparer.Ordinal)
+            : [];
+        if (!declared.SetEquals(expected))
+            throw new InvalidDataException($"npm/package.json optionalDependencies must be exactly {string.Join(", ", expected.Order(StringComparer.Ordinal))}.");
+        if (metadata.TryGetProperty("dependencies", out _))
+            throw new InvalidDataException("npm/package.json must not declare dependencies; platform packages are optionalDependencies.");
+        if (!metadata.TryGetProperty("scripts", out var scripts) || scripts.EnumerateObject().Count() != 1 ||
+            !scripts.TryGetProperty("postinstall", out var postinstall) || postinstall.GetString() != NpmPlatform.InstallerCommand)
+            throw new InvalidDataException($"npm/package.json scripts must be exactly postinstall: {NpmPlatform.InstallerCommand}.");
+    }
 
+    private static string PlatformManifest(JsonElement main, string name, string version, NpmPlatform platform)
+    {
+        var manifest = new JsonObject
+        {
+            ["name"] = name,
+            ["version"] = version,
+            ["description"] = $"{platform.Os}-{platform.Cpu} server and bundled .NET runtime for {main.GetProperty("name").GetString()}; install that package instead.",
+            ["license"] = main.GetProperty("license").GetString(),
+            ["author"] = main.GetProperty("author").GetString(),
+            ["homepage"] = main.GetProperty("homepage").GetString(),
+            ["repository"] = JsonNode.Parse(main.GetProperty("repository").GetRawText()),
+            ["os"] = new JsonArray(platform.Os),
+            ["cpu"] = new JsonArray(platform.Cpu)
+        };
+        if (platform.Libc is not null) manifest["libc"] = new JsonArray(platform.Libc);
+        manifest["bin"] = new JsonObject { [NpmPlatform.InstallerCommand] = $"{NpmPlatform.RuntimeDirectory}/{platform.Executable(InstallerName)}" };
+        manifest["publishConfig"] = JsonNode.Parse(main.GetProperty("publishConfig").GetRawText());
+        return manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n";
+    }
     private static async Task DotnetAsync(string stage, params string[] arguments)
     {
         var properties = new[]

@@ -20,11 +20,13 @@ internal static class Packages
         string packageId = project.Descendants("PackageId").Single().Value;
         string npmName = metadata["name"].Text();
         Check.That(metadata["version"].Text() == version, "npm and NuGet package versions disagree.");
-        string tarball = Path.Combine(artifacts, npmName.Replace("@", "", StringComparison.Ordinal).Replace('/', '-') + "-" + version + ".tgz");
+        string tarball = Path.Combine(artifacts, NpmPlatform.TarballName(npmName, version));
+        string[] platformTarballs = NpmPlatform.All.Select(platform => Path.Combine(artifacts, NpmPlatform.TarballName(platform.PackageName(npmName), version))).ToArray();
         string nupkg = Path.Combine(artifacts, packageId + "." + version + ".nupkg");
         string config = Path.Combine(artifacts, "NuGet.Config");
-        Check.That(File.Exists(tarball) && File.Exists(nupkg) && File.Exists(config), "Generate both packages and local-only NuGet.Config before package verification.");
-        await VerifyArchivesAsync(root, tarball, nupkg);
+        Check.That(File.Exists(tarball) && platformTarballs.All(File.Exists) && File.Exists(nupkg) && File.Exists(config),
+            "Generate the npm package, its five platform packages, the NuGet package and local-only NuGet.Config before package verification.");
+        await VerifyArchivesAsync(root, tarball, platformTarballs, nupkg, npmName, version);
         VerifyLocalSource(config, artifacts);
         string npm = Processes.FindExecutable("npm");
         string npx = Processes.FindExecutable("npx");
@@ -52,29 +54,42 @@ internal static class Packages
         Directory.CreateDirectory(npmHome);
         Directory.CreateDirectory(globalHome);
         Directory.CreateDirectory(npxHome);
+        // Install by name from a loopback registry holding only the built tarballs, so npm resolves
+        // the optional platform packages exactly as from npmjs.org; nothing reaches a public registry.
+        await using var registry = await NpmRegistry.StartAsync(platformTarballs.Prepend(tarball));
+        foreach (var consumer in new[] { localEnvironment, globalEnvironment, npxEnvironment })
+            consumer["npm_config_registry"] = registry.Url;
+        string spec = npmName + "@" + version;
+        NpmPlatform platform = CurrentPlatform();
         await File.WriteAllTextAsync(Path.Combine(npmHome, "package.json"), JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["private"] = true,
-            ["allowScripts"] = new Dictionary<string, bool> { ["file:" + tarball] = true }
+            ["allowScripts"] = new Dictionary<string, bool> { [npmName] = true }
         }));
-        // Installation scripts must run: selecting the self-contained apphost is part of the consumer contract.
-        await Processes.RunAsync(NpmInstall(isolatedNpm, npmHome, tarball), localEnvironment, timeout: 600);
+        // Installation scripts must run: copying the matching platform's self-contained apphost is part of the consumer contract.
+        await Processes.RunAsync(NpmInstall(isolatedNpm, npmHome, spec), localEnvironment, timeout: 600);
+        string[] installed = Directory.EnumerateDirectories(Path.Combine(npmHome, "node_modules", npmName.Split('/')[0]))
+            .Select(directory => npmName.Split('/')[0] + "/" + Path.GetFileName(directory)).Order(StringComparer.Ordinal).ToArray();
+        Check.That(installed.SequenceEqual(new[] { npmName, platform.PackageName(npmName) }.Order(StringComparer.Ordinal)),
+            $"npm installed [{string.Join(", ", installed)}]; expected only the main package and the {platform.Rid} platform package.");
+        Console.WriteLine($"PASS npm selected only {platform.PackageName(npmName)} from the five platform packages");
         await Processes.RunAsync(isolatedNpm.With("install", "--global", "--prefix", globalHome,
-            "--allow-scripts=file:" + tarball, "--offline", "--no-audit", "--no-fund", "--ignore-scripts=false", tarball),
+            "--allow-scripts=" + npmName, "--no-audit", "--no-fund", "--ignore-scripts=false", spec),
             globalEnvironment, timeout: 600, directory: globalHome);
+        await VerifyMissingPlatformFailsAsync(isolatedNpm, stage, spec, npmName, ConsumerEnvironment(noDotnet, stage, "omit-optional"), registry.Url);
         await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
             "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, timeout: 120);
         string native = InstalledNpmCommand(npmHome, npmName, global: false, out string npmBin);
         string globalNative = InstalledNpmCommand(globalHome, npmName, global: true, out string globalBin);
-        Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=file:" + tarball, "--offline",
-            "--package=" + tarball, "--", "postgresql-sharp-mcp")
-            // npm re-reads a local tarball even with a warm cache; allow archive resolution before initialization.
+        Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=" + npmName,
+            "--package=" + spec, "--", "postgresql-sharp-mcp")
+            // A fresh npx cache downloads and installs the package and its runtime before initialization.
             with { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 600 };
         var commands = new (string Name, Command Command, Dictionary<string, string> Environment, string? Native)[]
         {
             ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
             ("npm global (no .NET)", new(globalBin) { WorkingDirectory = globalHome }, globalEnvironment, globalNative),
-            ("npx offline tarball (no .NET)", npxCommand, npxEnvironment, null),
+            ("npx fresh cache (no .NET)", npxCommand, npxEnvironment, null),
             ("NuGet", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.exe" : "postgresql-sharp-mcp")), environment, null)
         };
         // Exercise actual apphosts too, rather than accepting only cmd-shim success on Windows.
@@ -137,13 +152,44 @@ internal static class Packages
                     await VerifyMcpAsync(new(installedNative), configured, ["primary"]);
             }
         }
-        Console.WriteLine("Package verification passed; offline local and global npm installs, fresh-cache npx tarball CLI/MCP without .NET, NuGet, native commands and shutdown verified.");
+        Console.WriteLine("Package verification passed; local and global npm installs and fresh-cache npx from a loopback registry (platform package selection, CLI/MCP without .NET), NuGet, native commands and shutdown verified.");
         if (installationOnly)
             Console.WriteLine("Installation-only mode: live database discovery/query/write scenarios were not run; use default package verification for that coverage.");
     }
 
-    private static Command NpmInstall(Command npm, string home, string tarball) => npm.With("install", "--prefix", home,
-        "--offline", "--no-audit", "--no-fund", "--package-lock=false", "--ignore-scripts=false", tarball);
+    private static Command NpmInstall(Command npm, string home, string spec) => npm.With("install", "--prefix", home,
+        "--no-audit", "--no-fund", "--package-lock=false", "--ignore-scripts=false", spec);
+
+    private static NpmPlatform CurrentPlatform()
+    {
+        string os = OperatingSystem.IsWindows() ? "win32" : OperatingSystem.IsMacOS() ? "darwin" : "linux";
+        string cpu = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => "x64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+            var other => throw new VerificationException($"No npm platform package for {other}.")
+        };
+        return NpmPlatform.All.SingleOrDefault(platform => platform.Os == os && platform.Cpu == cpu)
+            ?? throw new VerificationException($"No npm platform package for {os}-{cpu}.");
+    }
+
+    // Without its platform package (--omit=optional, or an unsupported platform) the install must fail,
+    // never leave the non-runnable seed executable in place as an apparently installed command.
+    private static async Task VerifyMissingPlatformFailsAsync(Command npm, string stage, string spec, string npmName,
+        Dictionary<string, string> environment, string registry)
+    {
+        string home = Path.Combine(stage, "npm-omit-optional");
+        Directory.CreateDirectory(home);
+        await File.WriteAllTextAsync(Path.Combine(home, "package.json"), JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["private"] = true,
+            ["allowScripts"] = new Dictionary<string, bool> { [npmName] = true }
+        }));
+        environment["npm_config_registry"] = registry;
+        ProcessResult omitted = await Processes.RunAsync(NpmInstall(npm, home, spec).With("--omit=optional"), environment, expected: null, timeout: 600);
+        Check.That(omitted.ExitCode != 0, "npm install without the platform package succeeded instead of failing.");
+        Console.WriteLine("PASS npm install without the platform package fails instead of installing the seed");
+    }
 
     private static (Command Npm, Command Npx, Dictionary<string, string> Environment) CreateNpmEnvironment(
         string npm, string npx, string node, string stage, Dictionary<string, string> environment)
@@ -165,9 +211,6 @@ internal static class Packages
             Directory.CreateDirectory(isolatedDistribution);
             foreach (string file in Directory.EnumerateFiles(distribution, "*", SearchOption.AllDirectories))
                 File.Copy(file, Path.Combine(isolatedDistribution, Path.GetRelativePath(distribution, file)));
-            // Preserve upstream wrappers: the bundled OS runner launches npm again from PATH.
-            File.Copy(Path.Combine(distribution, "bin", "npm.cmd"), Path.Combine(path, "npm.cmd"));
-            File.Copy(Path.Combine(distribution, "bin", "npx.cmd"), Path.Combine(path, "npx.cmd"));
             isolatedNpm = new(isolatedNode, Path.Combine(isolatedDistribution, "bin", "npm-cli.js"));
             isolatedNpx = new(isolatedNode, Path.Combine(isolatedDistribution, "bin", "npx-cli.js"));
         }
@@ -178,7 +221,6 @@ internal static class Packages
             string isolatedNpxPath = Path.Combine(path, "npx");
             File.CreateSymbolicLink(isolatedNpmPath, npm);
             File.CreateSymbolicLink(isolatedNpxPath, npx);
-            File.CreateSymbolicLink(Path.Combine(path, "uname"), Processes.FindExecutable("uname"));
             File.CreateSymbolicLink(Path.Combine(path, "sh"), "/bin/sh");
             isolatedNpm = new(isolatedNpmPath);
             isolatedNpx = new(isolatedNpxPath);
@@ -336,22 +378,29 @@ internal static class Packages
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal), "NuGet source does not match the requested artifact directory.");
     }
 
-    private static async Task VerifyArchivesAsync(string root, string tarball, string nupkg)
+    private static async Task VerifyArchivesAsync(string root, string tarball, string[] platformTarballs, string nupkg, string npmName, string version)
     {
         HashSet<string> legal = ["LICENSE", "THIRD-PARTY-NOTICES.md", .. Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt").Select(file => "LICENSES/" + Path.GetFileName(file))];
         byte[][] workspacePaths = new[] { root, root.Replace('\\', '/'), root.Replace('/', '\\') }.Distinct().Select(Encoding.UTF8.GetBytes).ToArray();
-        var tarNames = new HashSet<string>();
-        using (FileStream file = File.OpenRead(tarball))
-        using (var gzip = new GZipStream(file, CompressionMode.Decompress))
-        using (var archive = new TarReader(gzip))
+        HashSet<string> main = await TarNamesAsync(tarball, workspacePaths);
+        Check.That(legal.All(name => main.Contains("package/" + name)), "npm artifact lost legal notices.");
+        // The main package carries only the seed apphost; every runtime ships in exactly one platform package.
+        HashSet<string> mainFiles = ["package/package.json", "package/bin/postgresql-sharp-mcp.exe", "package/README.md", "package/SECURITY.md",
+            "package/CONTRIBUTING.md", .. legal.Select(name => "package/" + name)];
+        Check.That(main.SetEquals(mainFiles), $"npm main package has unexpected entries: {string.Join(", ", main.Except(mainFiles).Take(5))}.");
+        foreach (var (platform, platformTarball) in NpmPlatform.All.Zip(platformTarballs))
         {
-            while (await archive.GetNextEntryAsync() is { } entry)
-            {
-                tarNames.Add(entry.Name);
-                if (entry.DataStream is not null) await VerifyNoWorkspacePathAsync(entry.DataStream, workspacePaths);
-            }
+            HashSet<string> names = await TarNamesAsync(platformTarball, workspacePaths);
+            Check.That(legal.All(name => names.Contains("package/" + name)), $"npm {platform.Rid} package lost legal notices.");
+            Check.That(names.Contains($"package/{NpmPlatform.RuntimeDirectory}/{platform.Executable("PostgreSqlMcp")}")
+                && names.Contains($"package/{NpmPlatform.RuntimeDirectory}/{platform.Executable("PostgreSqlMcp.NpmInstall")}")
+                && names.Contains($"package/{NpmPlatform.RuntimeDirectory}/PostgreSqlMcp.dll"), $"npm {platform.Rid} package lost its server or installer.");
+            JsonNode manifest = await NpmRegistry.ManifestAsync(platformTarball);
+            Check.That(manifest["name"].Text() == platform.PackageName(npmName) && manifest["version"].Text() == version
+                && manifest["os"]!.AsArray().Single().Text() == platform.Os && manifest["cpu"]!.AsArray().Single().Text() == platform.Cpu
+                && manifest["libc"]?.AsArray().Single().Text() == platform.Libc && manifest["scripts"] is null,
+                $"npm {platform.Rid} package manifest does not select exactly {platform.Os}-{platform.Cpu} or declares scripts.");
         }
-        Check.That(legal.All(name => tarNames.Contains("package/" + name)), "npm artifact lost legal notices.");
         using (ZipArchive archive = ZipFile.OpenRead(nupkg))
         {
             Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), "NuGet artifact lost legal notices.");
@@ -361,7 +410,21 @@ internal static class Packages
                 await VerifyNoWorkspacePathAsync(stream, workspacePaths);
             }
         }
-        Console.WriteLine("PASS npm/NuGet legal notices and build-machine path confidentiality");
+        Console.WriteLine("PASS npm main/platform package contents, NuGet legal notices and build-machine path confidentiality");
+    }
+
+    private static async Task<HashSet<string>> TarNamesAsync(string tarball, byte[][] workspacePaths)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        await using FileStream file = File.OpenRead(tarball);
+        await using var gzip = new GZipStream(file, CompressionMode.Decompress);
+        await using var archive = new TarReader(gzip);
+        while (await archive.GetNextEntryAsync() is { } entry)
+        {
+            names.Add(entry.Name);
+            if (entry.DataStream is not null) await VerifyNoWorkspacePathAsync(entry.DataStream, workspacePaths);
+        }
+        return names;
     }
 
     private static async Task VerifyNoWorkspacePathAsync(Stream stream, byte[][] paths)

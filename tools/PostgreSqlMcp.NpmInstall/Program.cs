@@ -16,15 +16,19 @@ try
         OperatingSystem.IsMacOS() ? "osx" :
         OperatingSystem.IsLinux() && !RuntimeInformation.RuntimeIdentifier.StartsWith("linux-musl", StringComparison.Ordinal) ? "linux" :
         throw new PlatformNotSupportedException("Supported platforms are Windows x64, glibc Linux x64/arm64, and macOS x64/arm64.");
-    var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".."));
+    // The main package's postinstall runs this from the matching platform package's bin link, with the main
+    // package as working directory. The payload (this executable's directory) is that platform package's runtime.
+    var root = Environment.CurrentDirectory;
     var payload = AppContext.BaseDirectory;
+    if (!File.Exists(Path.Combine(root, "package.json")) || !File.Exists(Path.Combine(root, "bin", "postgresql-sharp-mcp.exe")))
+        throw new InvalidOperationException("Run this installer only through the npm package's postinstall script.");
     var source = Path.Combine(payload, OperatingSystem.IsWindows() ? "PostgreSqlMcp.exe" : "PostgreSqlMcp");
     if (!File.Exists(source))
         throw new InvalidDataException($"The packaged server executable is missing for {platform}-{architecture}.");
 
     foreach (var name in new[] { "PostgreSqlMcp.dll", "PostgreSqlMcp.deps.json", "PostgreSqlMcp.runtimeconfig.json" })
         if (!File.Exists(Path.Combine(payload, name)))
-            throw new InvalidDataException($"The package is incomplete: {name} is missing from the selected runtime.");
+            throw new InvalidDataException($"The package is incomplete: {name} is missing from the {platform}-{architecture} runtime.");
 
     var bin = Path.Combine(root, "bin");
     Directory.CreateDirectory(bin);
@@ -59,7 +63,7 @@ try
     }
     return 0;
 }
-catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or
+catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidDataException or
     PlatformNotSupportedException or InvalidOperationException or System.ComponentModel.Win32Exception)
 {
     Console.Error.WriteLine($"postgresql-sharp-mcp: {exception.Message}");
