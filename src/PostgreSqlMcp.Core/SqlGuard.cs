@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 namespace PostgreSqlMcp.Core;
 
 // This is a statement-boundary lexer, not a SQL authorization parser. PostgreSQL

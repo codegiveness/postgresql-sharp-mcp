@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -14,6 +17,10 @@ internal static class Program
             string root = RepositoryRoot.Find() ?? throw new VerificationException("Run the verifier from the repository or a child directory.");
             if (args is ["integration"])
                 await Integration.RunAsync(root);
+            else if (args is ["integration", "--no-build"])
+                await Integration.RunAsync(root, build: false);
+            else if (args is ["coverage", .. var coverageOptions])
+                await Coverage.RunAsync(root, coverageOptions);
             else if (args is ["sarif", "--baseline", var baseline, "--candidate", var candidate])
                 SarifGate.Run(baseline, candidate, Console.Out);
             else if (args is ["sarif-regressions"])
@@ -46,7 +53,7 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions");
+                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions");
             return 0;
         }
         catch (Exception ex)

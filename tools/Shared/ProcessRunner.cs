@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Diagnostics;
 
 // Shared by the tool projects through <Compile Include=... Link=...>; this file is the only home of

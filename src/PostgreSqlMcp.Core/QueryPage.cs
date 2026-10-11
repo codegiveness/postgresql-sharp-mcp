@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 namespace PostgreSqlMcp.Core;
 
 public sealed record ColumnInfo(string Name, string Type);

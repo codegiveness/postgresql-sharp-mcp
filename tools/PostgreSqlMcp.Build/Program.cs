@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text.Json;
@@ -12,6 +15,9 @@ internal static class PackageBuilder
     private static readonly string[] Notices = ["LICENSE", "THIRD-PARTY-NOTICES.md"];
     private static readonly string[] ServerProjects = ["PostgreSqlMcp", "PostgreSqlMcp.Core", "PostgreSqlMcp.Tools"];
     private const string InstallerName = "PostgreSqlMcp.NpmInstall";
+    // NuGet otherwise stamps every .nupkg entry with the wall clock. 1980-01-01 is the earliest ZIP time, matching the release archives;
+    // the explicit property also wins over a SOURCE_DATE_EPOCH inherited from the environment.
+    private const string PackageTimestamp = "1980-01-01T00:00:00Z";
 
     internal static async Task<int> RunAsync(string[] args)
     {
@@ -80,7 +86,7 @@ internal static class PackageBuilder
             CreateTarball(main, mainTarball);
 
             var packed = Path.Combine(temporary, "nuget");
-            await DotnetAsync(stage, "pack", server, "-c", "Release", "-o", packed);
+            await DotnetAsync(stage, "pack", server, "-c", "Release", "-o", packed, $"-p:DeterministicTimestamp={PackageTimestamp}");
             var nupkg = Path.Combine(packed, nugetName);
             CheckNuget(nupkg);
             Directory.CreateDirectory(output);

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Data.Common;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -280,7 +283,8 @@ internal static class Packages
         ProcessResult validation = await Processes.RunAsync(command.With("--validate"), configured, expected: 1, timeout: 600);
         Check.That(validation.Output.Length == 0, $"{name} unavailable endpoint validation contaminated stdout.");
         JsonNode[] reports = Reports(validation.Error);
-        Check.That(reports.Any(report => report["error"]?["code"]?.Text() is "connection_error" or "timeout"), $"{name} did not diagnose the unavailable endpoint.");
+        Check.That(reports.Any(report => report["error"]?["code"]?.Text() is "connection_error" or "timeout"),
+            $"{name} did not diagnose the unavailable endpoint; observed codes: {string.Join(", ", reports.Select(report => report["error"]?["code"]?.Text() ?? "none"))}.");
         Check.Confidential(validation.Error, "disposable-package-secret");
     }
 
@@ -406,6 +410,7 @@ internal static class Packages
             Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), "NuGet artifact lost legal notices.");
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
+                Check.That(entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime, $"NuGet entry {entry.FullName} carries a build-time stamp, so the package is not reproducible.");
                 using Stream stream = entry.Open();
                 await VerifyNoWorkspacePathAsync(stream, workspacePaths);
             }

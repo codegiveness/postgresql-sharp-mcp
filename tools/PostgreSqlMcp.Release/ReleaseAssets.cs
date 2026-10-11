@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Text.Json;
 
 /// <summary>One asset as reported by the GitHub Releases API.</summary>

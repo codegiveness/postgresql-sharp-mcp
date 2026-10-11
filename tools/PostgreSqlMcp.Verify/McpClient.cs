@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
@@ -161,7 +164,8 @@ internal sealed class McpClient : IAsyncDisposable
     {
         var (error, data) = await CallAsync(tool, arguments);
         Check.That(error, $"Expected tool failure: {tool}.");
-        if (code is not null) Check.That(data["error"]?["code"].Text() == code, $"Unexpected error code from {tool}; expected {code}.");
+        // Codes are fixed server identifiers, never provider text, so the observed one is safe to report.
+        if (code is not null) Check.That(data["error"]?["code"].Text() == code, $"Unexpected error code from {tool}; expected {code}, got {data["error"]?["code"]?.Text() ?? "none"}.");
         if (state is not null) Check.That(data["error"]?["sql_state"].Text() == state, $"Unexpected SQLSTATE from {tool}; expected {state}.");
         JsonNode? target = JsonSerializer.SerializeToNode(arguments)?["database"];
         if (target is not null) Check.That(JsonNode.DeepEquals(target, data["database"]), "Error response lost requested target identity.");
