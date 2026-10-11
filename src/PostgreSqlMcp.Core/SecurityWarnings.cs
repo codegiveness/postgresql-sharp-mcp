@@ -6,7 +6,7 @@ using Npgsql;
 namespace PostgreSqlMcp.Core;
 
 /// <summary>
-/// Non-fatal operator warnings for configurations whose enforced behavior is weaker than the advertised one:
+/// Non-fatal operator advice for configurations whose enforced behavior is weaker than a hardened one:
 /// unverified TLS to remote hosts, and logins whose privileges reach past READ ONLY transactions.
 /// Messages name profiles and roles only, never connection strings or credentials.
 /// </summary>
@@ -36,7 +36,7 @@ public static class SecurityWarnings
         ORDER BY severity, warning COLLATE "C"
         """;
 
-    /// <summary>Profiles that reach a non-local host without certificate verification because the operator set an explicit SSL Mode other than VerifyCA/VerifyFull.</summary>
+    /// <summary>Profiles that reach a non-local host without certificate verification (any SSL Mode other than VerifyCA/VerifyFull, including the Prefer default).</summary>
     public static IReadOnlyList<string> Tls(ServerOptions options)
     {
         // One line per distinct server login (host, port, user, mode) naming its profiles: lock aliases of one connection
@@ -57,8 +57,15 @@ public static class SecurityWarnings
         {
             string names = aliases.Count == 1 ? $"profile {aliases[0]}"
                 : $"profiles {string.Join(", ", aliases.Take(5))}{(aliases.Count > 5 ? $" and {aliases.Count - 5} more" : "")}";
-            warnings.Add($"{names}: SSL Mode={mode} to a non-local host does not verify the server certificate, " +
-                "so a network attacker can impersonate the server. Use SSL Mode=VerifyFull with the provider's CA certificate.");
+            string effect = mode switch
+            {
+                SslMode.Disable => "does not encrypt the connection",
+                SslMode.Require => "encrypts without verifying the server certificate",
+                SslMode.Allow => "encrypts only if the server requires TLS and never verifies the server certificate",
+                _ => "encrypts only if the server offers TLS and never verifies the server certificate"
+            };
+            warnings.Add($"{names}: SSL Mode={mode} to a non-local host {effect}, so someone on the network path could read the traffic or impersonate the server. " +
+                "This is fine on a trusted network; to harden, set SSL Mode=VerifyFull in the connection string (add Root Certificate=<CA file> for a private CA).");
         }
         return warnings;
     }

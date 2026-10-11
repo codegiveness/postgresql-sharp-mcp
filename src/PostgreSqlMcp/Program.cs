@@ -26,18 +26,25 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
           --targets-file PATH          Same; overrides POSTGRES_TARGETS_FILE.
 
         TLS (SSL Mode inside each connection string):
-          Omitted                      Non-loopback host: SSL Mode=VerifyFull (certificate chain and host name verified
-                                       before any credential is sent; add Root Certificate=<CA file> for a private CA).
-                                       Loopback or Unix socket: SSL Mode=Disable (no TLS).
-          Explicit (any value)         Used unchanged. A remote host without VerifyCA/VerifyFull is warned about on stderr.
-                                       To opt out of verification explicitly, set SSL Mode=Require (or Prefer/Disable).
-          Failures                     tls_verification_failed (untrusted CA or host name mismatch) and tls_unavailable
-                                       (server offers no TLS) name the profile and the fix; no plaintext fallback.
+          Omitted                      SSL Mode=Prefer for every host: TLS when the server offers it, plaintext otherwise;
+                                       the server certificate is not verified. A non-loopback host gets a [warning] on
+                                       stderr with hardening advice; startup continues. Exception: a string with Root
+                                       Certificate=<CA file> but no SSL Mode gets SSL Mode=VerifyFull.
+          Explicit (any value)         Used unchanged. To verify the server, set SSL Mode=VerifyFull (certificate chain
+                                       and host name checked before any credential is sent; add Root Certificate=<CA
+                                       file> for a private CA).
+          Failures                     tls_verification_failed (VerifyCA/VerifyFull: untrusted CA or host name mismatch)
+                                       and tls_unavailable (VerifyCA/VerifyFull/Require: server offers no TLS) name the
+                                       profile and the fix; no plaintext fallback.
 
         Options:
           --databases JSON             POSTGRES_DATABASES. Database lock: JSON array of 1+ unique physical names
-                                       (1..63 UTF-8 bytes, no NUL), with a connection string or targets. Startup then
-                                       verifies PostgreSQL grants enforce the lock.
+                                       (1..63 UTF-8 bytes, no NUL), with a connection string or targets. Tools reject
+                                       every other database before connecting. Startup also checks whether PostgreSQL
+                                       grants confine the login to the list (see --database-lock-mode).
+          --database-lock-mode MODE    POSTGRES_DATABASE_LOCK_MODE: advisory (default) or strict. advisory prints grant
+                                       findings as warnings and starts; strict refuses to start on any finding and
+                                       requires a database lock.
           --require-database-lock      POSTGRES_REQUIRE_DATABASE_LOCK=true (default false) also works. Refuse to
                                        start unless a database lock is configured.
           --access-mode MODE           POSTGRES_ACCESS_MODE: unrestricted (default) or restricted.
@@ -45,7 +52,8 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
           --log-level LEVEL            POSTGRES_LOG_LEVEL: trace|debug|information|warning|error|critical|none
                                        (default warning).
           --validate                   Check each seed connection (and the database lock) and exit; diagnostics and
-                                       privilege/TLS warnings on stderr.
+                                       privilege/TLS/lock warnings on stderr. Exit status 1 only for a failed connection
+                                       or, with --database-lock-mode strict, a lock finding.
           --version                    Print executable version.
           -h, --help                   Print this help.
 
@@ -73,7 +81,7 @@ if (!Enum.TryParse<LogLevel>(options.LogLevel, true, out var logLevel) || !Enum.
 ToolReply.Configure(options);
 // Warnings never block startup: they name configurations whose real exposure exceeds what tools advertise.
 foreach (string warning in SecurityWarnings.Tls(options)) Console.Error.WriteLine($"[warning] {warning}");
-static async Task<bool> CheckDatabaseLockAsync(DatabaseRegistry registry, SqlExecutor executor)
+static async Task<bool> CheckDatabaseLockAsync(ServerOptions options, DatabaseRegistry registry, SqlExecutor executor)
 {
     if (registry.AllowedDatabaseNames is null) return true;
     IReadOnlyList<string> findings = await DatabaseLockCheck.VerifyAsync(registry, executor);
@@ -82,9 +90,19 @@ static async Task<bool> CheckDatabaseLockAsync(DatabaseRegistry registry, SqlExe
         Console.Error.WriteLine("[startup] Database lock verified: PostgreSQL grants confine every configured login to POSTGRES_DATABASES.");
         return true;
     }
-    Console.Error.WriteLine("[startup] Refusing to start: the PostgreSQL check for the configured database lock (POSTGRES_DATABASES) failed.");
-    foreach (string finding in findings.Take(32)) Console.Error.WriteLine($"[startup]   {finding}");
-    if (findings.Count > 32) Console.Error.WriteLine($"[startup]   ... {findings.Count - 32} more findings.");
+    string prefix = options.StrictDatabaseLock ? "[startup]   " : "[warning] database lock (advisory): ";
+    if (options.StrictDatabaseLock)
+        Console.Error.WriteLine("[startup] Refusing to start: the PostgreSQL check for the configured database lock (POSTGRES_DATABASES) failed and POSTGRES_DATABASE_LOCK_MODE is strict.");
+    foreach (string finding in findings.Take(32)) Console.Error.WriteLine(prefix + finding);
+    if (findings.Count > 32) Console.Error.WriteLine($"{prefix}... {findings.Count - 32} more findings.");
+    if (!options.StrictDatabaseLock)
+    {
+        // In-process enforcement still rejects every database outside the list; only PostgreSQL-side confinement is missing.
+        Console.Error.WriteLine("[warning] database lock (advisory): PostgreSQL does not confine the configured login to POSTGRES_DATABASES (or the check " +
+            "could not confirm it), so SQL can still reach other databases. Tools still reject databases outside the list. To refuse startup " +
+            "instead, set POSTGRES_DATABASE_LOCK_MODE=strict after hardening the role (SECURITY.md, Database lock hardening).");
+        return true;
+    }
     Console.Error.WriteLine("[startup] Harden the role as described in SECURITY.md (Database lock hardening), then retry.");
     return false;
 }
@@ -108,14 +126,14 @@ if (options.Validate)
     }
     foreach (string warning in await SecurityWarnings.RolesAsync(registry, executor))
         Console.Error.WriteLine($"[warning] {warning}");
-    ok &= await CheckDatabaseLockAsync(registry, executor);
+    ok &= await CheckDatabaseLockAsync(options, registry, executor);
     return ok ? 0 : 1;
 }
 {
     // The serving registry stays lazy; the check uses its own short-lived pools.
     await using var registry = new DatabaseRegistry(options);
     using var executor = new SqlExecutor(options, registry);
-    if (!await CheckDatabaseLockAsync(registry, executor)) return 1;
+    if (!await CheckDatabaseLockAsync(options, registry, executor)) return 1;
 }
 // Disable default file watchers/providers; stdout belongs exclusively to MCP.
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });

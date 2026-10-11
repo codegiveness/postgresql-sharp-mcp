@@ -698,6 +698,7 @@ internal static class Integration
             {
                 ProcessResult denied = await Processes.RunAsync(command.With("--targets-file", path, "--validate"), Processes.CleanEnvironment(), expected: 1);
                 Check.That(denied.Output.Length == 0, "Denied targets file contaminated stdout.");
+                Check.That(denied.Error.Contains("Cannot read the targets file", StringComparison.Ordinal), "An unreadable targets file was not named as the cause.");
                 Check.Confidential(denied.Error, path, "Exception");
             }
             finally { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
@@ -710,6 +711,24 @@ internal static class Integration
             Check.That(bad.Output.Length == 0, "Invalid configuration contaminated stdout.");
             Check.Confidential(bad.Error, "sensitive-configuration-marker", "reader-disposable");
         }
+        // Common first-run mistakes get a specific remedy, never the rejected value.
+        var unset = new Dictionary<string, string>(environment);
+        unset.Remove("POSTGRES_TARGETS");
+        (string Key, string Value, string Expected)[] mistakes =
+        [
+            // The marker sits in the URL's user part: still checked for non-echo, but not a credential-shaped literal.
+            ("POSTGRES_CONNECTION_STRING", "postgresql://sensitive-configuration-marker@localhost:5432/postgres", "is a postgres:// URL"),
+            ("POSTGRES_CONNECTION_STRING", "Host=localhost;Password=\"sensitive-configuration-marker", "not a valid Npgsql key=value connection string"),
+            ("POSTGRES_TARGETS", "{\"a\":\"postgres://sensitive-configuration-marker@localhost/postgres\"}", "not postgres:// URLs"),
+        ];
+        foreach (var (key, value, expected) in mistakes)
+        {
+            ProcessResult bad = await Processes.RunAsync(command.With("--validate"), new Dictionary<string, string>(unset) { [key] = value }, expected: 1);
+            Check.That(bad.Output.Length == 0 && bad.Error.Contains(expected, StringComparison.Ordinal), $"Configuration mistake was not explained: {expected}.");
+            Check.Confidential(bad.Error, "sensitive-configuration-marker", "reader-disposable");
+        }
+        ProcessResult notJson = await Processes.RunAsync(command.With("--validate"), new Dictionary<string, string>(environment) { ["POSTGRES_DATABASES"] = "app_db" }, expected: 1);
+        Check.That(notJson.Error.Contains("must be a JSON array of database names", StringComparison.Ordinal), "A non-JSON POSTGRES_DATABASES was not explained.");
         foreach (var (key, value) in new[] { ("POSTGRES_POOL_SIZE", "0"), ("POSTGRES_MAX_CONCURRENT_CALLS", "0"), ("POSTGRES_MAX_RESULT_BYTES", "4095"), ("POSTGRES_MAX_ROWS", "0"), ("POSTGRES_MAX_CELL_CHARS", "0"), ("POSTGRES_QUERY_TIMEOUT", "0"), ("POSTGRES_ACCESS_MODE", "invalid") })
         {
             var invalidEnvironment = new Dictionary<string, string>(validationEnvironment) { [key] = value };
@@ -747,7 +766,7 @@ internal static class Integration
         // Name resolution of .invalid fails without network traffic; the warning comes from configuration alone.
         // The login name is the marker: no part of the connection string may appear in a warning.
         const string remote = "Host=tls-warning.invalid;Username=sensitive-tls-marker;Database=d;Timeout=2";
-        foreach (var (mode, warns) in new[] { ("", false), (";SSL Mode=Prefer", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
+        foreach (var (mode, warns) in new[] { ("", true), (";SSL Mode=Prefer", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
         {
             var tls = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { remote = remote + mode }) };
             ProcessResult result = await Processes.RunAsync(command.With("--validate"), tls, expected: 1);
@@ -755,8 +774,8 @@ internal static class Integration
                 $"Unverified-TLS warning was {(warns ? "missing" : "emitted")} for '{mode}'.");
             Check.Confidential(result.Error, "sensitive-tls-marker");
         }
-        // An omitted SSL Mode is verified, so grouping is exercised with the explicit opt-out.
-        const string unverified = remote + ";SSL Mode=Prefer";
+        // An omitted SSL Mode is the unverified Prefer default, so grouping is exercised with it.
+        const string unverified = remote;
         // Profiles on the same host but different ports are different servers: both are named. A connection-string lock's
         // aliases share one connection, so they share one line instead of repeating it per locked name.
         var ports = new Dictionary<string, string>(environment)

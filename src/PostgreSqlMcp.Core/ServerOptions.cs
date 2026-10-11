@@ -13,6 +13,11 @@ public sealed class ServerOptions
     public required IReadOnlyDictionary<string, string> Targets { get; init; }
     /// <summary>Database lock: the only physical databases this server may connect to, in configured order.</summary>
     public IReadOnlyList<string>? AllowedDatabases { get; init; }
+    /// <summary>
+    /// True: startup refuses when PostgreSQL grants do not confine every login to the lock. False (advisory, the default):
+    /// findings are warnings. The lock itself is enforced in-process in both modes.
+    /// </summary>
+    public bool StrictDatabaseLock { get; init; }
     public bool Unrestricted { get; init; } = true;
     public int QueryTimeout { get; init; } = 30;
     public int MaxRows { get; init; } = 1000;
@@ -27,7 +32,7 @@ public sealed class ServerOptions
     {
         var cli = new Dictionary<string, string>(StringComparer.Ordinal);
         bool validate = false, requireLock = false;
-        string[] allowed = ["--targets-file", "--connection-string", "--databases", "--access-mode", "--query-timeout", "--log-level"];
+        string[] allowed = ["--targets-file", "--connection-string", "--databases", "--database-lock-mode", "--access-mode", "--query-timeout", "--log-level"];
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--validate") { validate = true; continue; }
@@ -66,19 +71,35 @@ public sealed class ServerOptions
                 throw new ToolException("configuration", "Use targets JSON/file OR a connection string, not both.");
             if (names is not null)
             {
-                using var doc = JsonDocument.Parse(names);
-                allowedDatabases = [];
-                foreach (var item in doc.RootElement.EnumerateArray())
+                try
                 {
-                    string db = item.GetString() ?? "";
-                    if (!DatabaseRegistry.IsDatabaseName(db))
-                        throw new ToolException("configuration", "POSTGRES_DATABASES entries must be database names of 1..63 UTF-8 bytes without NUL.");
-                    if (allowedDatabases.Contains(db)) throw new ToolException("configuration", "Duplicate database name in POSTGRES_DATABASES.");
-                    allowedDatabases.Add(db);
+                    using var doc = JsonDocument.Parse(names);
+                    allowedDatabases = [];
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                    {
+                        string db = item.GetString() ?? "";
+                        if (!DatabaseRegistry.IsDatabaseName(db))
+                            throw new ToolException("configuration", "POSTGRES_DATABASES entries must be database names of 1..63 UTF-8 bytes without NUL.");
+                        if (allowedDatabases.Contains(db)) throw new ToolException("configuration", "Duplicate database name in POSTGRES_DATABASES.");
+                        allowedDatabases.Add(db);
+                    }
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+                {
+                    throw new ToolException("configuration", "POSTGRES_DATABASES/--databases must be a JSON array of database names, for example [\"app_db\"].");
                 }
                 if (allowedDatabases.Count == 0) throw new ToolException("configuration", "POSTGRES_DATABASES must list at least one database.");
             }
-            if (json is null && file is not null) json = File.ReadAllText(file);
+            if (json is null && file is not null)
+            {
+                try { json = File.ReadAllText(file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    // The path can identify the operator; name the setting only.
+                    throw new ToolException("configuration", "Cannot read the targets file named by POSTGRES_TARGETS_FILE/--targets-file: check that it exists and " +
+                        "that this process can read it (a container's non-root user cannot read a chmod 600 file owned by another account).");
+                }
+            }
             if (json is not null)
             {
                 using var doc = JsonDocument.Parse(json);
@@ -89,7 +110,17 @@ public sealed class ServerOptions
             }
             else if (baseString is not null)
             {
-                var builder = new NpgsqlConnectionStringBuilder(baseString);
+                if (IsUrl(baseString))
+                    throw new ToolException("configuration", "POSTGRES_CONNECTION_STRING/--connection-string is a postgres:// URL, which is not supported. Use the Npgsql " +
+                        "key=value form, " + ExampleConnectionString + ", decoding %-escaped characters from the URL.");
+                NpgsqlConnectionStringBuilder builder;
+                try { builder = new NpgsqlConnectionStringBuilder(baseString); }
+                catch (ArgumentException)
+                {
+                    // Provider messages can contain secrets; never echo connection-string input.
+                    throw new ToolException("configuration", "POSTGRES_CONNECTION_STRING/--connection-string is not a valid Npgsql key=value connection string " +
+                        "(its value is not shown). Use " + ExampleConnectionString + ", and wrap a value containing ';' in double quotes.");
+                }
                 if (allowedDatabases is not null)
                 {
                     foreach (string db in allowedDatabases)
@@ -112,6 +143,8 @@ public sealed class ServerOptions
             {
                 if (string.IsNullOrWhiteSpace(alias) || alias.Length > 128 || alias.Any(char.IsControl))
                     throw new ToolException("configuration", "Target aliases must be nonblank, <=128 characters, without control characters.");
+                if (IsUrl(connectionString))
+                    throw new ToolException("configuration", "Targets profile values must be Npgsql key=value connection strings, not postgres:// URLs: use " + ExampleConnectionString + ".");
                 var builder = new NpgsqlConnectionStringBuilder(connectionString);
                 if (string.IsNullOrWhiteSpace(builder.Database) || string.IsNullOrWhiteSpace(builder.Host))
                     throw new ToolException("configuration", "Each target requires an explicit Host and Database.");
@@ -129,6 +162,11 @@ public sealed class ServerOptions
         }
         if (requireLock && allowedDatabases is null)
             throw new ToolException("configuration", "POSTGRES_REQUIRE_DATABASE_LOCK/--require-database-lock is set, but no POSTGRES_DATABASES/--databases database lock is configured.");
+        string lockMode = Value("--database-lock-mode", "DATABASE_LOCK_MODE") ?? "advisory";
+        if (lockMode is not ("advisory" or "strict"))
+            throw new ToolException("configuration", "POSTGRES_DATABASE_LOCK_MODE/--database-lock-mode must be advisory or strict.");
+        if (lockMode == "strict" && allowedDatabases is null)
+            throw new ToolException("configuration", "POSTGRES_DATABASE_LOCK_MODE/--database-lock-mode is strict, but no POSTGRES_DATABASES/--databases database lock is configured.");
         string mode = Value("--access-mode", "ACCESS_MODE") ?? "unrestricted";
         if (mode is not ("restricted" or "unrestricted")) throw new ToolException("configuration", "Access mode must be restricted or unrestricted.");
         int poolSize = Number("POOL_SIZE", 8, 1, 32);
@@ -136,6 +174,7 @@ public sealed class ServerOptions
         return new ServerOptions
         {
             Targets = new ReadOnlyDictionary<string, string>(targets), AllowedDatabases = allowedDatabases,
+            StrictDatabaseLock = lockMode == "strict",
             Unrestricted = mode == "unrestricted",
             QueryTimeout = Number("QUERY_TIMEOUT", 30, 1, 600, "--query-timeout"),
             MaxRows = Number("MAX_ROWS", 1000, 1, 5000), MaxResultBytes = Number("MAX_RESULT_BYTES", 65536, 4096, 1048576),
@@ -143,6 +182,15 @@ public sealed class ServerOptions
             MaxConcurrentCalls = Number("MAX_CONCURRENT_CALLS", 16, 1, 64),
             LogLevel = Value("--log-level", "LOG_LEVEL") ?? "warning", Validate = validate
         };
+    }
+
+    // Names the password key without a key=value literal, so the message never resembles a credential.
+    private const string ExampleConnectionString = "Host=<host>;Port=5432;Database=<database>;Username=<user> plus a Password key";
+
+    private static bool IsUrl(string value)
+    {
+        string text = value.TrimStart();
+        return text.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase);
     }
 }
 
