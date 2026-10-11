@@ -283,7 +283,8 @@ internal static class Packages
         ProcessResult validation = await Processes.RunAsync(command.With("--validate"), configured, expected: 1, timeout: 600);
         Check.That(validation.Output.Length == 0, $"{name} unavailable endpoint validation contaminated stdout.");
         JsonNode[] reports = Reports(validation.Error);
-        Check.That(reports.Any(report => report["error"]?["code"]?.Text() is "connection_error" or "timeout"), $"{name} did not diagnose the unavailable endpoint.");
+        Check.That(reports.Any(report => report["error"]?["code"]?.Text() is "connection_error" or "timeout"),
+            $"{name} did not diagnose the unavailable endpoint; observed codes: {string.Join(", ", reports.Select(report => report["error"]?["code"]?.Text() ?? "none"))}.");
         Check.Confidential(validation.Error, "disposable-package-secret");
     }
 
