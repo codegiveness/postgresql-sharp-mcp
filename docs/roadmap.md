@@ -1,5 +1,7 @@
 # Roadmap
 
+**Status: unconfirmed maintainer draft.** An AI coding agent wrote this roadmap on 2026-10-11 from the gaps the project has documented, for the maintainer to review. The maintainer has not confirmed it yet. Until this notice is removed, treat it as a proposal.
+
 This is the direction for the twelve months from 2026-10-11 to 2027-10-11, so that users and contributors can see what the project intends to do and not do. It is not a promise: the project has one maintainer ([governance](../GOVERNANCE.md)), the software is a 0.x release series, and dates depend on the maintainer's time. Items that need someone other than the maintainer are marked as such. The list is derived from gaps the project has documented itself in [docs/security-posture.md](security-posture.md), [docs/assurance-case.md](assurance-case.md) and the [OpenSSF Best Practices answers](security-posture.md#openssf-best-practices-enrollment).
 
 ## What the project intends to do
@@ -15,7 +17,7 @@ This is the direction for the twelve months from 2026-10-11 to 2027-10-11, so th
 
 - **Statement coverage above 90%.** The integration scenarios reach 89.41% of statements and 84.84% of branches (measured 2026-10-11; CI fails below 80% lines, see [Measure test coverage](../CONTRIBUTING.md#measure-test-coverage)). The least-covered file is `src/PostgreSqlMcp/Program.cs`: a scenario for `--help`, `--version` and an invalid `--log-level` would close most of the gap to 90%.
 - **Independently reproduced release.** Every release asset except the per-run provenance bundle is now byte-identical across rebuilds of the same source. The next release is the first whose `.nupkg` and SBOM can be checked against an independent rebuild.
-- **Release provenance visibility.** Releases from 0.5.0 carry `provenance.sigstore.json`, which is how Scorecard's Signed-Releases check sees the signatures. Each new release extends that coverage.
+- **Release provenance visibility.** Releases from v0.3.1 carry `provenance.sigstore.json` (0.5.0 at publication; v0.3.1 to v0.4.0 since 2026-10-11), which is how Scorecard's Signed-Releases check sees the signatures. Each new release keeps that coverage.
 - **Assurance case upkeep.** Review and update the assurance case whenever the trust boundary, a default or a release path changes, and at least once a year.
 
 ### Sustain the project

@@ -11,7 +11,7 @@ Checked against the source of release 0.5.0 (commit `64c55c7`) on 2026-10-11.
         |  JSON-RPC over stdin/stdout
         v
  postgresql-sharp-mcp (one process)  -- diagnostics on stderr only
-        |  Npgsql (PostgreSQL wire protocol, TLS as configured by the operator)
+        |  Npgsql (PostgreSQL wire protocol; TLS verified by default, explicit SSL Mode kept)
         v
  PostgreSQL server(s): the authorization boundary
 ```

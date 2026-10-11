@@ -2,7 +2,7 @@
 
 This document argues why postgresql-sharp-mcp meets its security requirements, and says plainly where it does not. It contains the security requirements (what you can and cannot expect), the threat model, the trust boundaries, an argument that secure design principles were applied, an argument that common implementation weaknesses are countered, and the residual risks. Each claim points to code, documentation or a check you can rerun.
 
-**Status.** Drafted on 2026-10-11 against release 0.5.0 (commit `64c55c7`) by an AI coding agent working for the maintainer, from the source and the project's documents. It is a self-assessment, not an independent audit or certification. The [review record](#review-record) shows whether the maintainer has reviewed it. Report errors through the process in [SECURITY.md](../SECURITY.md#reporting-a-vulnerability). Component descriptions are in [docs/architecture.md](architecture.md).
+**Status: unconfirmed maintainer draft.** Drafted on 2026-10-11 against release 0.5.0 (commit `64c55c7`) by an AI coding agent working for the maintainer, from the source and the project's documents. The maintainer has not reviewed it yet; the [review record](#review-record) shows when that happens. It is a self-assessment, not an independent audit or certification. Report errors through the process in [SECURITY.md](../SECURITY.md#reporting-a-vulnerability). Component descriptions are in [docs/architecture.md](architecture.md).
 
 ## 1. Security requirements
 

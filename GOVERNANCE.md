@@ -1,5 +1,7 @@
 # Governance
 
+**Status: unconfirmed maintainer draft.** An AI coding agent wrote this document on 2026-10-11 for the maintainer to review. The maintainer has not confirmed it yet. Until this notice is removed, it is a proposed description of the project's governance, not an adopted policy. The repository settings it cites are in force either way.
+
 This document says how decisions are made in postgresql-sharp-mcp, who holds which role, and what happens if the maintainer is unavailable. It describes the project as it is on 2026-10-11, not as it might become. The project has one maintainer; where that limits what it can promise, the text says so.
 
 ## Governance model
