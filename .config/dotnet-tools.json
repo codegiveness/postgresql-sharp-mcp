@@ -9,6 +9,10 @@
     "sharpfuzz.commandline": {
       "version": "2.3.0",
       "commands": ["sharpfuzz"]
+    },
+    "coverlet.console": {
+      "version": "10.1.0",
+      "commands": ["coverlet"]
     }
   }
 }

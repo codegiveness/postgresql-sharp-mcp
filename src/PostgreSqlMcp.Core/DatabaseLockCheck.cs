@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using Npgsql;
 
 namespace PostgreSqlMcp.Core;
@@ -96,7 +99,8 @@ public static class DatabaseLockCheck
             }
             catch (ToolException ex) { findings.Add($"target {target}: lock check failed ({ex.Code}): {ex.Message}"); }
             catch (PostgresException ex) { findings.Add($"target {target}: lock check failed (SQLSTATE {ex.SqlState})."); }
-            catch (NpgsqlException) { findings.Add($"target {target}: lock check could not connect or authenticate."); }
+            // A raw SocketException is the same transport failure (see ToolReply.Run).
+            catch (Exception ex) when (ex is NpgsqlException or System.Net.Sockets.SocketException) { findings.Add($"target {target}: lock check could not connect or authenticate."); }
             catch (TimeoutException) { findings.Add($"target {target}: lock check timed out."); }
         }
         return findings;

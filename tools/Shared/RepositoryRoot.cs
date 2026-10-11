@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 internal static class RepositoryRoot
 {
     /// <summary>The nearest ancestor of the current directory (inclusive) containing the solution file, or null outside the repository.</summary>

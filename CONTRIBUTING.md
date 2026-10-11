@@ -46,6 +46,8 @@ The fixture major version defaults to 17. Set `POSTGRES_FIXTURE_MAJOR` to 13, 14
 
 The integration scenarios also install `pg_stat_statements` at extension versions 1.8 and 1.7 (available on 13–18) to verify that `get_top_queries` omits `toplevel` consistently and explains an outdated extension.
 
+The TLS scenarios (`TlsChecks.cs`, `TlsFixture.cs`) start a second disposable container with TLS enabled and a throwaway CA and server certificate generated in C#, and connect to the container's Docker bridge address, a non-loopback host, to prove that an omitted `SSL Mode` verifies the server before any credential is sent, that explicit modes are honored and that loopback uses no TLS. They need a Docker Engine whose container addresses are reachable from the host (Linux); Docker Desktop on Windows and macOS does not route to them, so run this scenario on Linux or in CI.
+
 For database-discovery/setup changes, exercise one inherited connection string selecting an unregistered physical database with no targets file, live creation/grant/revoke changes, optional protected multi-profile files, the database lock in both connection modes (database, alias and `target` rejection, filtered listing, strict-switch refusal and startup grant-check refusal/success), missing/denied selections without fallback, conflicting credential sources failing closed, and concurrent per-call isolation. Verify omitted-mode write commit/rollback with `read_only=false` separately from explicit restricted-mode refusal. Use disposable data; do not treat existing historical verification results as evidence that new behavior passed.
 
 Coverage includes explicit multi-target isolation, permissions/RLS, bounded results and pagination, metadata, health/workload tools, plans, hypothetical-index cleanup, explicit writes and rollback, sanitized errors, configuration failures and log confidentiality. Linux subprocess and MCP-client regressions exercise blocked stdin, inherited output pipes, failed-writer disposal and owned-child cleanup. Verification command deadlines cover stdin, exit and output drains; release capture deadlines cover exit and drains. MCP verification requests also bound semaphore wait, stdin writing and response wait with one cancellation-aware deadline. Asynchronous stdin close is bounded, and cleanup observes readers before disposal. An already-orphaned descendant is outside the exited parent's `Process.Kill` tree, so this is not an OS process-group/job-object containment guarantee. Report only the commands and scenarios actually exercised; passing one fixture does not prove every platform, PostgreSQL version or MCP client works.
@@ -78,6 +80,22 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regression
 ```
 
 For a bug, reproduce the failure before changing code and exercise the same path after the fix. Major new functionality must have automated consumer-visible behavior coverage; extend the maintained verifier with relevant boundaries, transitions and errors rather than duplicating wiring assertions. Add regression coverage for plausible consumer-visible failures or uncertain boundaries; avoid source-text, wiring-only and mock-echo assertions. Documentation-only changes need link and command review rather than unrelated database runs.
+
+### Measure test coverage
+
+```bash
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage [--output artifacts/coverage] [--threshold 80]
+```
+
+The `coverage` command builds the solution, restores the pinned [coverlet](https://github.com/coverlet-coverage/coverlet) console tool (MIT, `.config/dotnet-tools.json`), instruments the shipped `PostgreSqlMcp`, `PostgreSqlMcp.Core` and `PostgreSqlMcp.Tools` assemblies in place and runs `integration --no-build` as the coverlet target. Every scenario launches the real server as a child `dotnet PostgreSqlMcp.dll` process, and each process writes its hits when it exits, so one report merges all of them. Coverlet restores the original assemblies afterwards, and the next build repairs them if a run is killed. The command needs the same Docker fixture as `integration`. It prints coverlet's per-assembly line, branch and method table, then the files with the most unexecuted lines and the methods no scenario ever ran, and writes `coverage.cobertura.xml` under `artifacts/coverage` (ignored by git). `--threshold` fails the command when the **total line coverage** across the three assemblies is below the given percentage (the report is still written); CI passes 80. The command also fails when an assembly has no executed line, which would mean it was not instrumented or no server process flushed its hits.
+
+What the figures mean:
+
+- Coverlet counts a *line* as a statement: one unit per IL sequence point with source. It also reports branch and method coverage. The figures describe the `integration` scenarios only. `packages`, `release-regressions` and the fuzz campaign exercise other code, and the verifier itself is not measured.
+- The server exits normally when the verifier closes its stdin, on `--validate`, on a refused startup and on SIGTERM (a .NET host turns SIGTERM into a graceful exit; confirmed with an instrumented server), so those runs keep their hits. A server killed with SIGKILL, such as a verifier deadline expiring on a failing run, loses its hits, so no scenario that passes today depends on that path.
+- The only exclusion is `--exclude-by-file **/obj/**`: the `[GeneratedRegex]` implementations that the compiler generates under `obj`. Nothing handwritten is excluded or annotated with `ExcludeFromCodeCoverage`.
+- Coverage is measured on the default PostgreSQL major (17) in the CI `verify` job and uploaded as the `coverage` artifact. The other majors run the same scenarios without instrumentation.
+- Use the report to find gaps. A new feature's scenario must assert consumer-visible behavior, not merely execute lines. Raise the gate only to a level measured on a clean run, never to a figure that a flaky scenario might miss.
 
 ## Build and install package artifacts
 
@@ -192,6 +210,31 @@ docker run --rm -i \
 
 The database hostname must be reachable from the container; `localhost` refers to the container itself. Retain certificate validation for remote connections and mount any required CA material at the connection string's container path. For the optional credentials file, ensure the non-root runtime user can read it using a suitable group/UID or secret mount, not world-readable permissions. `-i` keeps stdin available for MCP stdio. Both routes use one bootstrap profile to select live physical databases without per-database JSON edits.
 
+## Coding standards
+
+All maintained code is C# on .NET 10 with the SDK-default language version. The style guides are Microsoft's [C# coding conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions) and the [.NET naming guidelines](https://learn.microsoft.com/dotnet/standard/design-guidelines/naming-guidelines). Contributions must comply with them and with the repository rules below.
+
+**Enforced automatically.** The CI `verify` job fails a pull request that violates any of these, and the `main` ruleset requires that job:
+
+- The compiler: nullable reference types are on and every warning, including use of an obsolete API, is an error ([`Directory.Build.props`](Directory.Build.props)).
+- The C# rules in [`.editorconfig`](.editorconfig), checked by `dotnet format style`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
+
+```bash
+dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
+dotnet format style postgresql-sharp-mcp.slnx --no-restore   # applies the fixable ones
+```
+
+The same file sets UTF-8, LF line endings, four-space indentation (two for YAML, JSON, project files and Markdown), a final newline and no trailing whitespace for editors that read EditorConfig. The repository currently satisfies those settings, but they are not part of the automated check.
+
+**Followed in review.** Match the surrounding file for layout and brace style, which the check does not prescribe. Comments explain why, not what. Keep the `Core <- Tools <- App` dependency direction, keep MCP stdout for JSON-RPC and diagnostics on stderr, and keep maintained automation in C#. Every `.cs` file starts with the two-line header below; add it to new files.
+
+```csharp
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+```
+
+**Exceptions** must be rare and justified. Use a narrowly scoped `#pragma warning disable` or `[SuppressMessage]`, or an `.editorconfig` severity entry, with a comment saying why; reviewers treat it like any other change. No exceptions exist today. Do not weaken the compiler settings or the check to make a build pass.
+
 ## Issues, pull requests and reviews
 
 [Git and GitHub workflow](docs/git-workflow.md) explains step by step how a change moves through this repository: branch names, worktrees, commit messages, issue and pull-request lifecycle, squash merging, Dependabot, tags and releases, and branch cleanup. The issue forms and pull-request template ask for the information below.
@@ -205,6 +248,29 @@ The database hostname must be reachable from the container; `localhost` refers t
 
 Keep versions, affected help/docs and release notes consistent. Update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and bundled licenses when shipped dependencies change. Contributions are under the project's [MIT license](LICENSE); dependencies retain their own terms.
 
+### Code review standards
+
+Every change to `main` is reviewed before it merges, whoever wrote it. The repository enforces pull requests with passing required checks and resolved conversations. It does not enforce an independent approval: GitHub does not let an author approve their own pull request, so `main` requires zero approvals and the maintainer's own pull requests are self-reviewed ([why](docs/git-workflow.md#6-review)). Anyone may review and comment on any pull request, and an independent review is welcome and recorded in the pull request.
+
+**How review is conducted.** The reviewer reads the whole diff in **Files changed**, not only the description, and checks each claim under **Evidence** against the CI logs or by rerunning it. Pull requests written by AI agents carry the `agent-authored` label and are reviewed as a contribution from a capable stranger ([git workflow](docs/git-workflow.md#6-review)).
+
+**What must be checked.**
+
+- Every hunk traces to the stated problem; nothing unrequested is included.
+- Behavior, compatibility and security impact are stated and match the diff, including defaults, permissions, the read-only boundary and output formats.
+- Major new functionality or a bug fix has consumer-visible regression coverage in the verifier ([Verify behavior](#verify-behavior)), and the stated commands and scenarios actually ran.
+- Docs, `--help`, `CHANGELOG.md` and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) are updated where affected.
+- No credentials, real connection strings, customer SQL or database results appear anywhere in the change or its description.
+- Workflow changes are reviewed line by line: permissions, triggers, full-SHA action pins with version comments, and what runs with secrets or write tokens.
+- Dependency updates have their release notes and advisory impact read, and locked restore still passes.
+- The [coding standards](#coding-standards) hold.
+
+**What makes a change acceptable.** All required checks pass (build and integration, installation on Linux/Windows/macOS, dependency audit, CodeQL gate, secret and container scanning, fuzzing), conversations are resolved, the title follows the [commit format](docs/git-workflow.md#commits), and the reviewer has no unanswered finding about correctness, security or maintainability. The maintainer decides when those conditions hold and merges with Squash and merge.
+
+### Small tasks for new contributors
+
+Issues suited to a first contribution carry the [`good first issue`](https://github.com/codegiveness/postgresql-sharp-mcp/labels/good%20first%20issue) label, and larger tasks where help is wanted carry [`help wanted`](https://github.com/codegiveness/postgresql-sharp-mcp/labels/help%20wanted). A small task can be a documentation fix, a missing verifier scenario or a contained code change. If none is open, say what you would like to work on in [Discussions Q&A](https://github.com/codegiveness/postgresql-sharp-mcp/discussions/categories/q-a) before starting.
+
 ## Automation and releases
 
 Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the capability boundary introduced by **0.3.1**, the first release that contains it (source version 0.3.0 was never tagged or released). **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. **0.4.0** adds the database lock and its startup PostgreSQL grant check, which can refuse startup for existing `POSTGRES_DATABASES` configurations. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
@@ -212,7 +278,7 @@ Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a m
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
 - **Release re-runs never replace published bytes.** The GitHub job uploads only assets missing from the release (no `--clobber`). An existing asset, including `SHA256SUMS` and the `provenance.sigstore.json` attestation bundle, must be completely uploaded and have the same SHA-256 as the freshly built file, using GitHub's reported asset digest or, when absent, a downloaded copy; otherwise the job fails. The NuGet job (`release-tool nuget`) asks nuget.org whether the version exists. If not, it pushes without `--skip-duplicate`, so a concurrent push also fails. If so, it downloads the registry package and compares every entry's name and SHA-256 with the built package, ignoring only nuget.org's `.signature.p7s` repository countersignature (the registry's file bytes always differ from the local file because of it); any other difference fails. A failure means different bytes already exist under that version: a maintainer must delete the specific GitHub asset deliberately, or release a new version for NuGet. `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regressions` (also run by `integration`) checks these comparisons and the zip/tar.gz archive builders offline.
-- **Reproducible and non-reproducible assets.** The five archives (fixed timestamps, owners, modes and entry order; the Linux/macOS tar.gz use GNU tar format because .NET's PAX writer names extended headers after the process ID) and the six npm tarballs (main and platform packages) built by `tools/PostgreSqlMcp.Build` are byte-identical across rebuilds of the same source. The `.nupkg` (`dotnet pack` stamps wall-clock times on zip entries; its entry contents are identical) and the CycloneDX SBOM (random `serialNumber`, generation `timestamp`) are not, and neither is `SHA256SUMS`, which lists them, nor the provenance bundle, which is signed once per workflow run. Consequently, after a partial publication, re-run the failed jobs of the same workflow run (same artifacts, same digests) instead of dispatching a new run for the same tag, which would fail closed on those assets.
+- **Reproducible and non-reproducible assets.** Built from the same source, the five archives (fixed timestamps, owners, modes and entry order; the Linux/macOS tar.gz use GNU tar format because .NET's PAX writer names extended headers after the process ID), the six npm tarballs (main and platform packages), the `.nupkg` and the CycloneDX SBOM are byte-identical across rebuilds, and so is `SHA256SUMS`, which lists them. `tools/PostgreSqlMcp.Build` packs the `.nupkg` with NuGet's supported `DeterministicTimestamp` property fixed to 1980-01-01 (the earliest ZIP time; an inherited `SOURCE_DATE_EPOCH` does not override it), so no entry carries the wall clock; the entry order and the `nuget.psmdcp` name are already stable. `release-tool sbom` replaces dotnet-CycloneDX's random `serialNumber` (the generator can only omit it) and wall-clock `timestamp` (no option) with the commit time of the checked-out release commit and a version 8 UUID derived from the SHA-256 of the BOM without its serial number. The provenance bundle is not reproducible: it is signed once per workflow run. Consequently, after a partial publication, re-run the failed jobs of the same workflow run (same artifacts, same digests) instead of dispatching a new run for the same tag: a new run rebuilds identical packages, but its provenance bundle differs from the published `provenance.sigstore.json` and fails closed. `release-regressions` checks the SBOM normalization and a double `dotnet pack` offline, and `packages --artifacts` requires the fixed timestamp on every built `.nupkg` entry.
 - **Dependency audit** checks direct and transitive NuGet packages against known advisories. This is not proof that all vulnerabilities are absent.
 - **CodeQL** scans C# and GitHub Actions with `security-extended`. C# uses real builds, including generated sources. Trusted main/scheduled runs publish code-scanning results; PRs scan both the base and candidate with read-only tokens, retain raw SARIF and run the trusted-base severity-delta gate. Extraction errors and missing reports fail closed. Review workflow changes as well as findings.
 - **Scorecard** publishes repository-practice findings on main and weekly. Its score is not a vulnerability-free claim or profile achievement.

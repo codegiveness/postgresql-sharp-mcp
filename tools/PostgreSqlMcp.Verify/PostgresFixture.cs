@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Globalization;
 
 namespace PostgreSqlMcp.Verify;
@@ -40,12 +43,15 @@ internal sealed class PostgresFixture : IAsyncDisposable
         }
     }
 
+    /// <summary>The digest-pinned official image for <see cref="Major"/>.</summary>
+    public static string Image => $"postgres:{Major}-bookworm@{ImageDigests[Major]}";
+
     public async Task StartAsync()
     {
         // This verifier never attaches to an existing container or operator database.
         attempted = true;
         await Processes.RunAsync(new("docker", "run", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=mcp-disposable-only",
-            "-p", "127.0.0.1::5432", $"postgres:{Major}-bookworm@{ImageDigests[Major]}", "-c", "shared_preload_libraries=pg_stat_statements"), timeout: 180);
+            "-p", "127.0.0.1::5432", Image, "-c", "shared_preload_libraries=pg_stat_statements"), timeout: 180);
         started = true;
         bool ready = false;
         for (int attempt = 0; attempt < 60; attempt++)

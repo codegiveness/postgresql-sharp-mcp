@@ -1,8 +1,10 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
 using PostgreSqlMcp.Core;
 using PostgreSqlMcp.Tools;
 
@@ -22,6 +24,15 @@ if (args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", Strin
                                        1..128 characters without control characters. Wins over a targets file.
           POSTGRES_TARGETS_FILE        Path to a targets JSON file with the same format.
           --targets-file PATH          Same; overrides POSTGRES_TARGETS_FILE.
+
+        TLS (SSL Mode inside each connection string):
+          Omitted                      Non-loopback host: SSL Mode=VerifyFull (certificate chain and host name verified
+                                       before any credential is sent; add Root Certificate=<CA file> for a private CA).
+                                       Loopback or Unix socket: SSL Mode=Disable (no TLS).
+          Explicit (any value)         Used unchanged. A remote host without VerifyCA/VerifyFull is warned about on stderr.
+                                       To opt out of verification explicitly, set SSL Mode=Require (or Prefer/Disable).
+          Failures                     tls_verification_failed (untrusted CA or host name mismatch) and tls_unavailable
+                                       (server offers no TLS) name the profile and the fix; no plaintext fallback.
 
         Options:
           --databases JSON             POSTGRES_DATABASES. Database lock: JSON array of 1+ unique physical names

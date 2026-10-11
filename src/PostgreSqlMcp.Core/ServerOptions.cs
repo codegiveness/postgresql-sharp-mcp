@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.Json;
@@ -105,7 +108,7 @@ public sealed class ServerOptions
             // Lock-derived aliases of one connection string share a single login profile; only targets JSON/file defines several.
             profileCount = json is null ? 1 : targets.Count;
             if (profileCount is < 1 or > 32) throw new ToolException("configuration", "Configure 1..32 connection profiles in targets JSON/file.");
-            foreach (var (alias, connectionString) in targets)
+            foreach (var (alias, connectionString) in targets.ToArray())
             {
                 if (string.IsNullOrWhiteSpace(alias) || alias.Length > 128 || alias.Any(char.IsControl))
                     throw new ToolException("configuration", "Target aliases must be nonblank, <=128 characters, without control characters.");
@@ -114,6 +117,9 @@ public sealed class ServerOptions
                     throw new ToolException("configuration", "Each target requires an explicit Host and Database.");
                 if (builder.NoResetOnClose || builder.Multiplexing)
                     throw new ToolException("configuration", "No Reset On Close and Multiplexing are not supported.");
+                // Targets hold the effective TLS mode, so warnings and pools see what the connection will really do.
+                TlsPolicy.ApplyDefault(builder);
+                targets[alias] = builder.ConnectionString;
             }
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -36,7 +39,9 @@ public static class ToolReply
         catch (OperationCanceledException) { throw; }
         catch (NpgsqlException ex) when (ex.InnerException is TimeoutException)
         { return Error(database, "timeout", "Connection or command timed out; no fallback was used."); }
-        catch (NpgsqlException)
+        // Npgsql 10.0.3 lets a raw SocketException escape when it applies a socket timeout to a connection the peer already
+        // reset (observed on macOS while opening without TLS); it is the same transport failure, not a server bug.
+        catch (Exception ex) when (ex is NpgsqlException or System.Net.Sockets.SocketException)
         { return Error(database, "connection_error", "Cannot connect to or communicate with the requested target. Check configured credentials, network and database. No fallback was used."); }
         catch (TimeoutException) { return Error(database, "timeout", "Operation timed out; no fallback was used."); }
         catch (Exception)
