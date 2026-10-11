@@ -1,0 +1,42 @@
+# Repository-wide formatting and the C# style rules that CI enforces.
+# `dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn`
+# fails on any warning below; see CONTRIBUTING.md#coding-standards.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{yml,yaml,json,csproj,props,slnx,md}]
+indent_size = 2
+
+[*.cs]
+# Using directives: no unused ones, outside the namespace.
+dotnet_diagnostic.IDE0005.severity = warning
+csharp_using_directive_placement = outside_namespace:warning
+# File-scoped namespaces.
+csharp_style_namespace_declarations = file_scoped:warning
+# Explicit accessibility on every non-interface member.
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# Naming (.NET Framework Design Guidelines): PascalCase types and members, I-prefixed interfaces.
+dotnet_naming_symbols.types.applicable_kinds = class, struct, interface, enum, delegate
+dotnet_naming_symbols.members.applicable_kinds = method, property, event
+dotnet_naming_symbols.members.applicable_accessibilities = public, internal, protected, protected_internal
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+dotnet_naming_style.i_prefix.capitalization = pascal_case
+dotnet_naming_style.i_prefix.required_prefix = I
+dotnet_naming_rule.interfaces_i_prefix.symbols = interfaces
+dotnet_naming_rule.interfaces_i_prefix.style = i_prefix
+dotnet_naming_rule.interfaces_i_prefix.severity = warning
+dotnet_naming_rule.types_pascal.symbols = types
+dotnet_naming_rule.types_pascal.style = pascal_case
+dotnet_naming_rule.types_pascal.severity = warning
+dotnet_naming_rule.members_pascal.symbols = members
+dotnet_naming_rule.members_pascal.style = pascal_case
+dotnet_naming_rule.members_pascal.severity = warning

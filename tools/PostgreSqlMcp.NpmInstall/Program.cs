@@ -1,4 +1,6 @@
-using System.Diagnostics;
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Runtime.InteropServices;
 
 try

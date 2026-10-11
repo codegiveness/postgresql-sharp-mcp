@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text.Json;

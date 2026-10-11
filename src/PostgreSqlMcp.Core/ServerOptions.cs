@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.Json;

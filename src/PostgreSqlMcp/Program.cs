@@ -1,8 +1,10 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
 using PostgreSqlMcp.Core;
 using PostgreSqlMcp.Tools;
 

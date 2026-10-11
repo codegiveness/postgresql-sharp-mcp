@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 /// <summary>
 /// One npm platform package per supported runtime identifier. The main npm package lists every one in
 /// optionalDependencies; npm installs only the package whose os/cpu/libc fields match the machine.

@@ -26,6 +26,8 @@ jobs:
           node-version: '24'
       - name: Restore locked dependencies
         run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
+      - name: Enforce C# coding style (.editorconfig)
+        run: dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
       - name: Real PostgreSQL MCP integration
         run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
       - name: Build npm and NuGet packages with .NET

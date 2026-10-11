@@ -1,4 +1,6 @@
-using System.Text;
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 using System.Text.Json;
 using System.Text.Json.Nodes;
 

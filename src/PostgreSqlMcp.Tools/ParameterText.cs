@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 codegiveness
+// SPDX-License-Identifier: MIT
+
 namespace PostgreSqlMcp.Tools;
 
 /// <summary>Parameter descriptions shared by several tools; one wording per concept, kept short because every tools/list repeats them.</summary>
