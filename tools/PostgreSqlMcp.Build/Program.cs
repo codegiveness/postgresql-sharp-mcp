@@ -182,8 +182,8 @@ internal static class PackageBuilder
         if (metadata.TryGetProperty("dependencies", out _))
             throw new InvalidDataException("npm/package.json must not declare dependencies; platform packages are optionalDependencies.");
         if (!metadata.TryGetProperty("scripts", out var scripts) || scripts.EnumerateObject().Count() != 1 ||
-            !scripts.TryGetProperty("postinstall", out var postinstall) || postinstall.GetString() != NpmPlatform.PostinstallScript)
-            throw new InvalidDataException($"npm/package.json scripts must be exactly postinstall: {NpmPlatform.PostinstallScript}");
+            !scripts.TryGetProperty("postinstall", out var postinstall) || postinstall.GetString() != NpmPlatform.InstallerCommand)
+            throw new InvalidDataException($"npm/package.json scripts must be exactly postinstall: {NpmPlatform.InstallerCommand}.");
     }
 
     private static string PlatformManifest(JsonElement main, string name, string version, NpmPlatform platform)

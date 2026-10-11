@@ -19,7 +19,7 @@
   "os": ["linux", "darwin", "win32"],
   "cpu": ["x64", "arm64"],
   "scripts": {
-    "postinstall": "postgresql-sharp-mcp-npm-install || (echo postgresql-sharp-mcp: setup did not complete. If npm reported postgresql-sharp-mcp-npm-install as not found or not recognized, npm did not install the platform package for this machine: reinstall without --omit=optional and without an omit=optional npm setting, and delete a package-lock.json created on another OS. Platform packages exist for Windows x64, macOS x64 and arm64, and glibc Linux x64 and arm64. See https://github.com/codegiveness/postgresql-sharp-mcp#if-setup-does-not-work 1>&2 && exit 1)"
+    "postinstall": "postgresql-sharp-mcp-npm-install"
   },
   "optionalDependencies": {
     "@codegiveness/postgresql-sharp-mcp-darwin-arm64": "0.5.0",

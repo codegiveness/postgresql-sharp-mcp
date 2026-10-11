@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- npm: an install whose platform package is missing (`--omit=optional`, an `omit=optional` setting, a lockfile from another OS, or an unsupported platform such as Alpine/musl or Windows on Arm) now prints `postgresql-sharp-mcp: setup did not complete. ...` on stderr after npm's `postgresql-sharp-mcp-npm-install: not found` line. The message says why the platform package is missing, how to reinstall and which platforms have packages; in 0.5.0 the shell's not-found line was the only output. The fallback in the main package's `postinstall` uses only `echo` and `exit`, which `sh` and `cmd.exe` both accept. `npx` hides install-script output, so a failed npx setup still exits (now with code 1 instead of 127) without printing anything. The README troubleshooting table now covers that case and shows how to reveal the message with `--foreground-scripts`. The package verifier now requires the message on stderr when optional dependencies are omitted.
+- README troubleshooting: a new row explains that `npx` (and an MCP client's npx entry) hides install-script output, so a failed setup, such as a missing platform package, exits without printing anything (exit code 127 on Linux), and shows how to reveal the message with `--foreground-scripts`. The missing-platform row now also names Windows on Arm among the platforms without a platform package. The main package's `postinstall` stays a bare command; CONTRIBUTING explains why a shell fallback message is not used.
 
 ## 0.5.0
 
