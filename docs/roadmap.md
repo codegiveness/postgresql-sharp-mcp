@@ -13,8 +13,8 @@ This is the direction for the twelve months from 2026-10-11 to 2027-10-11, so th
 
 ### Close the security gaps the project already knows about
 
-- **Measured test coverage.** Statement and branch coverage of the integration run is not measured today. The intent is to collect it with a .NET FLOSS tool in CI, publish the result and then set a threshold.
-- **Reproducible packages.** Archives and npm tarballs are byte-identical across rebuilds; the `.nupkg` and the SBOM are not. The intent is to make them deterministic.
+- **Statement coverage above 90%.** The integration scenarios reach 89.41% of statements and 84.84% of branches (measured 2026-10-11; CI fails below 80% lines, see [Measure test coverage](../CONTRIBUTING.md#measure-test-coverage)). The least-covered file is `src/PostgreSqlMcp/Program.cs`: a scenario for `--help`, `--version` and an invalid `--log-level` would close most of the gap to 90%.
+- **Independently reproduced release.** Every release asset except the per-run provenance bundle is now byte-identical across rebuilds of the same source. The next release is the first whose `.nupkg` and SBOM can be checked against an independent rebuild.
 - **Release provenance visibility.** Releases from 0.5.0 carry `provenance.sigstore.json`, which is how Scorecard's Signed-Releases check sees the signatures. Each new release extends that coverage.
 - **Assurance case upkeep.** Review and update the assurance case whenever the trust boundary, a default or a release path changes, and at least once a year.
 

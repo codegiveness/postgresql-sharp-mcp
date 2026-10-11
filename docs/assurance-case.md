@@ -131,7 +131,7 @@ These are recorded here rather than argued away. Items marked **gap** are the on
 5. **Prompt injection** cannot be detected by the server (N7).
 6. **Plaintext secrets at rest in process state.** Environment values, process arguments and targets files are exposed to sufficiently privileged local users; the server does not check targets-file permissions.
 7. **Container image.** The Dockerfile installs a few runtime libraries without version pins; Trivy scans the built image on every run and fails on HIGH/CRITICAL findings.
-8. **Test coverage is not measured.** The verifier exercises real behavior against PostgreSQL 13–18, but statement and branch coverage have not been computed, so untested paths cannot be enumerated.
+8. **Coverage is incomplete.** The `integration` scenarios reach 89.41% of statements and 84.84% of branches in the shipped assemblies (coverlet, 2026-10-11, PostgreSQL 17); CI fails below 80% lines. The [coverage command](../CONTRIBUTING.md#measure-test-coverage) lists the files and methods no scenario reaches.
 9. **Single maintainer.** Review is self-review; there is no independent approval and no continuity if the maintainer is unavailable ([governance](../GOVERNANCE.md#continuity-if-the-maintainer-is-unavailable), [security posture](security-posture.md)).
 
 ## 8. Re-verifying the evidence
@@ -142,6 +142,7 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration       
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- sarif-regressions
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regressions
 dotnet run --project tools/PostgreSqlMcp.Fuzz -c Release -p:RestoreLockedMode=true -- campaign 60
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage --threshold 80  # needs Docker
 ```
 
 Hosted-run claims are tied to the run URLs above and to the revision they ran on; check the current `main` results rather than assuming they still hold.
