@@ -10,13 +10,13 @@
 
 SQL calls are read-only by default, but the server's default access mode permits explicitly requested writes. Use a least-privileged database login, never a superuser. Keep an existing explicit `restricted` setting; [access boundaries](#access-and-resource-boundaries) explain how to refuse writes entirely.
 
-**Fastest start:** Node.js 22+ and npm are enough, because npm installs the .NET runtime with the server. This downloads and runs version 0.4.0:
+**Fastest start:** Node.js 22+ and npm are enough, because npm installs the .NET runtime with the server. This downloads and runs version 0.5.0:
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.5.0 --version
 ```
 
-It should print `postgresql-sharp-mcp 0.4.0.0`. Then register it with your MCP client and enter your connection string: the [quick start](#quick-start) has three steps. Prefer a .NET tool or a standalone archive for Linux, macOS or Windows? See [step 1](#1-install-or-run). To build and run a container image from the Dockerfile, see [CONTRIBUTING.md](CONTRIBUTING.md#self-contained-executable-and-container).
+It should print `postgresql-sharp-mcp 0.5.0.0`. Then register it with your MCP client and enter your connection string: the [quick start](#quick-start) has three steps. Prefer a .NET tool or a standalone archive for Linux, macOS or Windows? See [step 1](#1-install-or-run). To build and run a container image from the Dockerfile, see [CONTRIBUTING.md](CONTRIBUTING.md#self-contained-executable-and-container).
 
 **What you can ask once it is connected:**
 
@@ -41,12 +41,12 @@ Every result is a row- and byte-bounded page that the assistant can continue wit
 
 Choose **npx** for on-demand execution or a **.NET tool** for a persistent command. Starting with **0.3.3**, npm bundles the .NET runtime: npx requires only Node.js 22+ and npm, not an installed .NET runtime or SDK. The .NET tool still requires the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0), and installing it requires the .NET 10 SDK.
 
-This guide targets **0.4.0**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
+This guide targets **0.5.0**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
 
 **npx — run without a global install:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.5.0 --version
 ```
 
 The package-specific `--allow-scripts` approves installation on npm 12. Do not use `--ignore-scripts` for automatic setup. npm downloads only the platform package matching your OS/CPU (about 35–39 MB; the main package is under 1 MB). Its self-contained C# installer then installs the server and runtime. Starting with 0.5.0, npm no longer downloads all five platform runtimes. The installer downloads nothing itself. The installed server command is native; it needs neither Node.js nor `dotnet` to run.
@@ -54,18 +54,18 @@ The package-specific `--allow-scripts` approves installation on npm 12. Do not u
 **.NET tool — install once, then run by name:**
 
 ```sh
-dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.4.0
+dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.5.0
 postgresql-sharp-mcp --version
 ```
 
 If the command is not found, add the .NET tools directory to your PATH (`$HOME/.dotnet/tools` on Linux/macOS; `%USERPROFILE%\.dotnet\tools` on Windows), or use its absolute executable path. Do not reinstall to fix PATH.
 
-The command should report **0.4.0** (or assembly version **0.4.0.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
+The command should report **0.5.0** (or assembly version **0.5.0.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
 
 <details>
 <summary>Standalone archives — no .NET, Node.js or npm installation needed</summary>
 
-Download **one archive** and `SHA256SUMS` from [release 0.4.0](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.4.0). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
+Download **one archive** and `SHA256SUMS` from [release 0.5.0](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.5.0). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
 
 | Your computer | Archive |
 |---|---|
@@ -128,7 +128,7 @@ Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Destina
 
 </details>
 
-The executable should report **0.4.0**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
+The executable should report **0.5.0**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
 
 </details>
 
@@ -142,7 +142,7 @@ For **npx**, use this JSON for a new file. If the file already has other servers
     "postgresql": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.4.0"]
+      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.5.0"]
     }
   }
 }
@@ -201,7 +201,7 @@ Use the command for your installation method. If you use a standalone archive, r
 **npx, Linux/macOS:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --validate && omp
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.5.0 --validate && omp
 ```
 
 **.NET tool, Linux/macOS:**
@@ -221,7 +221,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 ```
 
-For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.4.0 --validate`; keep the `$LASTEXITCODE` check and launch block.
+For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.5.0 --validate`; keep the `$LASTEXITCODE` check and launch block.
 
 Validation is read-only and exits; its successful stderr output includes your database name, so keep it private. Empty input is rejected before OMP starts. If it fails, fix your connection details and repeat step 2; [troubleshooting](#if-setup-does-not-work) covers common failures.
 
@@ -248,9 +248,9 @@ For a remote server needing a provider CA certificate, retain `SSL Mode=VerifyFu
 
 ### Upgrading an existing installation
 
-Automatic discovery and the unrestricted default require **0.3.1 or newer**: the contract was developed under source version 0.3.0, which was never tagged or released, so 0.3.1 is the first release that contains it. npm runtime bundling requires **0.3.3 or newer**. This guide targets **0.4.0**, which adds the [database lock](#database-lock): an existing `POSTGRES_DATABASES` configuration now refuses to start unless PostgreSQL grants match the list (see the [hardening guide](SECURITY.md#database-lock-hardening)). Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
+Automatic discovery and the unrestricted default require **0.3.1 or newer**: the contract was developed under source version 0.3.0, which was never tagged or released, so 0.3.1 is the first release that contains it. npm runtime bundling requires **0.3.3 or newer**. **0.4.0** added the [database lock](#database-lock): an existing `POSTGRES_DATABASES` configuration refuses to start unless PostgreSQL grants match the list (see the [hardening guide](SECURITY.md#database-lock-hardening)). This guide targets **0.5.0**, whose lock check also refuses a login that can execute server-file functions such as `pg_read_binary_file` in a locked database; revoke such grants before upgrading a locked configuration. Older 0.2.0 executables use configured database aliases and a restricted default. Changing configuration does not upgrade an old executable.
 
-After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.4.0`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.4.0`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
+After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.5.0`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.5.0`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
 
