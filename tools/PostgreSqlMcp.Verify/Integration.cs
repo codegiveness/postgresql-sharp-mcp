@@ -8,9 +8,10 @@ namespace PostgreSqlMcp.Verify;
 
 internal static class Integration
 {
-    public static async Task RunAsync(string root)
+    public static async Task RunAsync(string root, bool build = true)
     {
-        await Processes.RunAsync(new("dotnet", "build", Path.Combine(root, "postgresql-sharp-mcp.slnx"), "-c", "Release"), timeout: 180);
+        if (build)
+            await Processes.RunAsync(new("dotnet", "build", Path.Combine(root, "postgresql-sharp-mcp.slnx"), "-c", "Release"), timeout: 180);
         await ResourceChecks.RunAsync();
         SarifRegression.Run();
         ReleaseRegressions.Run();

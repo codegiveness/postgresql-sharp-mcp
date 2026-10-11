@@ -79,6 +79,22 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regression
 
 For a bug, reproduce the failure before changing code and exercise the same path after the fix. Major new functionality must have automated consumer-visible behavior coverage; extend the maintained verifier with relevant boundaries, transitions and errors rather than duplicating wiring assertions. Add regression coverage for plausible consumer-visible failures or uncertain boundaries; avoid source-text, wiring-only and mock-echo assertions. Documentation-only changes need link and command review rather than unrelated database runs.
 
+### Measure test coverage
+
+```bash
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage [--output artifacts/coverage] [--threshold 80]
+```
+
+The `coverage` command builds the solution, restores the pinned [coverlet](https://github.com/coverlet-coverage/coverlet) console tool (MIT, `.config/dotnet-tools.json`), instruments the shipped `PostgreSqlMcp`, `PostgreSqlMcp.Core` and `PostgreSqlMcp.Tools` assemblies in place and runs `integration --no-build` as the coverlet target. Every scenario launches the real server as a child `dotnet PostgreSqlMcp.dll` process, and each process writes its hits when it exits, so one report merges all of them. Coverlet restores the original assemblies afterwards, and the next build repairs them if a run is killed. The command needs the same Docker fixture as `integration`. It prints coverlet's per-assembly line, branch and method table, then the files with the most unexecuted lines and the methods no scenario ever ran, and writes `coverage.cobertura.xml` under `artifacts/coverage` (ignored by git). `--threshold` fails the command when the **total line coverage** across the three assemblies is below the given percentage (the report is still written); CI passes 80. The command also fails when an assembly has no executed line, which would mean it was not instrumented or no server process flushed its hits.
+
+What the figures mean:
+
+- Coverlet counts a *line* as a statement: one unit per IL sequence point with source. It also reports branch and method coverage. The figures describe the `integration` scenarios only. `packages`, `release-regressions` and the fuzz campaign exercise other code, and the verifier itself is not measured.
+- The server exits normally when the verifier closes its stdin, on `--validate`, on a refused startup and on SIGTERM (a .NET host turns SIGTERM into a graceful exit; confirmed with an instrumented server), so those runs keep their hits. A server killed with SIGKILL, such as a verifier deadline expiring on a failing run, loses its hits, so no scenario that passes today depends on that path.
+- The only exclusion is `--exclude-by-file **/obj/**`: the `[GeneratedRegex]` implementations that the compiler generates under `obj`. Nothing handwritten is excluded or annotated with `ExcludeFromCodeCoverage`.
+- Coverage is measured on the default PostgreSQL major (17) in the CI `verify` job and uploaded as the `coverage` artifact. The other majors run the same scenarios without instrumentation.
+- Use the report to find gaps. A new feature's scenario must assert consumer-visible behavior, not merely execute lines. Raise the gate only to a level measured on a clean run, never to a figure that a flaky scenario might miss.
+
 ## Build and install package artifacts
 
 These commands build npm and NuGet artifacts without publishing:
