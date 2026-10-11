@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- README troubleshooting: a new row explains that `npx` (and an MCP client's npx entry) hides install-script output, so a failed setup, such as a missing platform package, exits without printing anything (exit code 127 on Linux), and shows how to reveal the message with `--foreground-scripts`. The missing-platform row now also names Windows on Arm among the platforms without a platform package. The main package's `postinstall` stays a bare command; CONTRIBUTING explains why a shell fallback message is not used.
+
 ## 0.5.0
 
 Upgrade notes: a locked configuration whose login can execute server-file functions is now refused at startup, and npm installs that omit optional dependencies now fail (both below). Existing tool names, parameters, environment variables, CLI flags and the targets-file format remain compatible; additions such as the `parameters` input of `execute_sql`/`explain_query` are optional.
