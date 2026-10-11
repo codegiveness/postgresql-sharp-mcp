@@ -39,7 +39,8 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/packages/*.tgz
           if-no-files-found: error
-  # The verify job above covers the default major (17); these cover the other supported majors with the same scenarios.
+  # The verify job above covers the default major (17); these cover the other supported majors with the same scenarios. Major 19 is
+  # pinned to a beta image and is not a required check: it informs, and cannot block merges (see docs/git-workflow.md).
   integration:
     name: Integration (PostgreSQL ${{ matrix.major }})
     runs-on: ubuntu-latest
@@ -47,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        major: ['13', '14', '15', '16', '18']
+        major: ['13', '14', '15', '16', '18', '19']
     env:
       RestoreLockedMode: 'true'
       POSTGRES_FIXTURE_MAJOR: ${{ matrix.major }}
