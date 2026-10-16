@@ -7,7 +7,7 @@ COPY LICENSES/ ./LICENSES/
 RUN dotnet restore src/PostgreSqlMcp/PostgreSqlMcp.csproj --locked-mode \
     && dotnet publish src/PostgreSqlMcp/PostgreSqlMcp.csproj -c Release --no-restore --no-self-contained -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:b89586dc17781f25531909993658aa8161205ae38b8cec8847df4a8221a403d5
+FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:939555726cae4c916d212323ac3c0792996dcac2614f00e82cc40fcf059e1af3
 # Native GSS for Npgsql, plus OpenSSL security updates absent from the pinned base.
 RUN apt-get update && apt-get install -y --no-install-recommends libgssapi-krb5-2 libssl3t64 openssl \
     && rm -rf /var/lib/apt/lists/*
