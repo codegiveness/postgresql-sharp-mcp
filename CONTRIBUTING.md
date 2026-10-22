@@ -42,7 +42,7 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 
 The .NET verifier builds the application and exercises real MCP calls against a disposable PostgreSQL Docker fixture with `pg_stat_statements` and HypoPG. It creates and removes its own container; do not substitute a production or unrelated database.
 
-The fixture major version defaults to 17. Set `POSTGRES_FIXTURE_MAJOR` to 13, 14, 15, 16, 17, 18 or 19 to run the same scenarios on another [supported version](README.md#supported-postgresql-versions); any other value fails before Docker starts. CI runs the integration command for majors 13–19 (the main `verify` job covers 17; `Integration (PostgreSQL 19)` tests a pre-release and is not a required check, see [branch protection](docs/git-workflow.md#branch-protection-on-main)). The fixture pulls the official `postgres` bookworm image by manifest-list digest (`<major>-bookworm`, except PostgreSQL 19 while it is a beta: `19beta4-bookworm`) and installs the `postgresql-<major>-hypopg` package at an exact pgdg version, both held in `tools/PostgreSqlMcp.Verify/PostgresFixture.cs`; it also fails when the started server's major does not match the requested one. Dependabot does not track them. To refresh, read each tag's digest from the registry (`docker buildx imagetools inspect postgres:<tag>`, or the `Docker-Content-Digest` header of a Docker Hub registry `HEAD` on the tag's manifest), check the available hypopg versions in the pgdg `bookworm-pgdg` package index (`main` for released majors, the `19` component the image enables for the beta), update every entry together and rerun the matrix. When PostgreSQL 19 is released, move its entry to `19-bookworm`, check for newer 19 digests and promote the CI job's status in the README and branch-protection documentation. A withdrawn hypopg version makes fixture start fail instead of silently testing something else.
+The fixture major version defaults to 17. Set `POSTGRES_FIXTURE_MAJOR` to 13, 14, 15, 16, 17, 18 or 19 to run the same scenarios on another [supported version](README.md#supported-postgresql-versions); any other value fails before Docker starts. CI runs the integration command for majors 13–19 (the main `verify` job covers 17; `Integration (PostgreSQL 19)` tests a pre-release and is not a required check, see [branch protection](docs/git-workflow.md#branch-protection-on-main)). The fixture pulls the official `postgres` bookworm image by manifest-list digest (`<major>-bookworm`, except PostgreSQL 19 while it is a pre-release: `19rc1-bookworm`) and installs the `postgresql-<major>-hypopg` package at an exact pgdg version, both held in `tools/PostgreSqlMcp.Verify/PostgresFixture.cs`; it also fails when the started server's major does not match the requested one. Dependabot does not track them. To refresh, read each tag's digest from the registry (`docker buildx imagetools inspect postgres:<tag>`, or the `Docker-Content-Digest` header of a Docker Hub registry `HEAD` on the tag's manifest), check the available hypopg versions in the pgdg `bookworm-pgdg` package index (`main` for released majors, the `19` component the image enables for the pre-release), update every entry together and rerun the matrix. When PostgreSQL 19 is released, move its entry to `19-bookworm`, check for newer 19 digests and promote the CI job's status in the README and branch-protection documentation. A withdrawn hypopg version makes fixture start fail instead of silently testing something else.
 
 The integration scenarios also install `pg_stat_statements` at extension versions 1.8 and 1.7 (available on 13–19) to verify that `get_top_queries` omits `toplevel` consistently and explains an outdated extension.
 
@@ -273,7 +273,7 @@ Issues suited to a first contribution carry the [`good first issue`](https://git
 
 ## Automation and releases
 
-Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the capability boundary introduced by **0.3.1**, the first release that contains it (source version 0.3.0 was never tagged or released). **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. **0.4.0** adds the database lock and its startup PostgreSQL grant check, which can refuse startup for existing `POSTGRES_DATABASES` configurations. **0.6.0** verified TLS by default for connection strings without `SSL Mode`, which can refuse existing remote profiles. **0.7.0** loosens those two defaults so that a plain connection string works: an omitted `SSL Mode` now means `Prefer` (TLS when the server offers it, never verified) and the database lock's PostgreSQL grant check is advisory (warnings) unless `POSTGRES_DATABASE_LOCK_MODE=strict`. The 0.6.0 behavior is restored with `SSL Mode=VerifyFull` in the connection string and `POSTGRES_DATABASE_LOCK_MODE=strict`. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
+Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a minor increment for new or incompatible 0.x contracts. Discovery and the unrestricted-default contract remain the capability boundary introduced by **0.3.1**, the first release that contains it (source version 0.3.0 was never tagged or released). **0.3.3** removes npm's installed-.NET prerequisite without changing database-access behavior; the .NET tool still requires .NET. **0.4.0** adds the database lock and its startup PostgreSQL grant check, which can refuse startup for existing `POSTGRES_DATABASES` configurations. **0.6.0** verified TLS by default for connection strings without `SSL Mode`, which can refuse existing remote profiles. **0.7.0** loosens those two defaults so that a plain connection string works: an omitted `SSL Mode` now means `Prefer` (TLS when the server offers it, never verified) and the database lock's PostgreSQL grant check is advisory (warnings) unless `POSTGRES_DATABASE_LOCK_MODE=strict`. The 0.6.0 behavior is restored with `SSL Mode=VerifyFull` in the connection string and `POSTGRES_DATABASE_LOCK_MODE=strict`. **0.7.1** is a compatible patch release that refreshes dependencies and pinned tooling (including the bundled .NET runtime 10.0.13 security update); it changes no tool, configuration or database-access contract. A version in source is not evidence of NuGet/npm/GitHub Release publication; check the corresponding registry endpoint and release jobs.
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
@@ -303,11 +303,11 @@ Use this repository's `release` GitHub environment. Its deployment policy permit
 2. npm configures trusted publishing only for a package that already exists ([npm trusted publishers](https://docs.npmjs.com/trusted-publishers/)), so the npm job fails while any platform package lacks one. For the first release that includes the platform packages, dispatch target `github` first. Then create each of the five once from Windows: verify its tarball from that release's GitHub assets as in [Approve each npm publication on Windows](#approve-each-npm-publication-on-windows), use the workstation-staged recovery command there with that platform tarball, and approve it with 2FA. These first platform versions have no CI provenance. Configure steps 3 and 4 for each platform package, then dispatch target `npm`. It skips package versions that already exist and stages the main package.
 3. Open each package's **Settings → Trusted publishing** on npmjs.com and add **GitHub Actions** with organization/user **`codegiveness`**, repository **`postgresql-sharp-mcp`**, workflow filename **`release.yml`** (not a path), and environment **`release`**. Configure **stage-only** allowed actions: allow **`npm stage publish`**, leave **`Allow npm publish` disabled**, and leave **`Allow npm dist-tag` disabled**. Inspect all other package trusted publishers and remove any direct-publish route that would defeat the required human approval.
 4. In each package's **Settings → Publishing access**, choose **Require two-factor authentication and disallow tokens**, then save. Do not create or use a bypass-2FA automation token. The staging workflow must use GitHub OIDC only; no `NPM_TOKEN`, `NODE_AUTH_TOKEN` or token fallback belongs in its npm job. Remove obsolete repository/environment npm publishing secrets and revoke obsolete publishing tokens through their owning account.
-5. On the approving Windows workstation, install [Node.js **24.21.0**](https://nodejs.org/en/download), open a new PowerShell terminal so PATH is refreshed, and use **npm 12.2.0**, matching the release workflow's explicit versions. The general staging minimum is Node **22.14.0** and npm **11.15.0**, but npm 12.2.0 has the stricter Node engine requirement **`^22.22.2 || ^24.15.0 || >=26`**; the older staging minimum alone is not sufficient for this pinned CLI.
+5. On the approving Windows workstation, install [Node.js **24.22.1**](https://nodejs.org/en/download), open a new PowerShell terminal so PATH is refreshed, and use **npm 12.2.1**, matching the release workflow's explicit versions. The general staging minimum is Node **22.14.0** and npm **11.15.0**, but npm 12.2.1 has the stricter Node engine requirement **`^22.22.2 || ^24.15.0 || >=26`**; the older staging minimum alone is not sufficient for this pinned CLI.
 
 ```powershell
 node --version
-npm.cmd install --global npm@12.2.0 --ignore-scripts --registry https://registry.npmjs.org/
+npm.cmd install --global npm@12.2.1 --ignore-scripts --registry https://registry.npmjs.org/
 npm.cmd --version
 npm.cmd login --auth-type=web --registry https://registry.npmjs.org/
 npm.cmd whoami --registry https://registry.npmjs.org/
@@ -329,17 +329,17 @@ Enter the username at the prompt rather than copying a sibling secret. GitHub OI
 
 #### Dispatch the exact existing release
 
-Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.7.0`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
+Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.7.1`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
 
 ```powershell
 # Default all: GitHub Release + npm staging + NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.0 -f target=all
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.1 -f target=all
 # npm staging only; no GitHub Release or NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.0 -f target=npm
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.1 -f target=npm
 # NuGet publication only; no GitHub Release or npm staging.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.0 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.1 -f target=nuget
 # GitHub Release only; no registry staging/publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.0 -f target=github
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.1 -f target=github
 ```
 
 `target` choices are `all`, `github`, `npm` and `nuget`, defaulting to `all`. Every target retains common preflight, package/installed-distribution verification and attestation. npm-only and NuGet-only jobs tolerate an intentionally skipped GitHub Release job **only for their dedicated target**; failed/canceled prerequisites cannot reach a publisher. In `all` mode both registry jobs require successful GitHub Release publication. The npm command stages the exact attested tarball using `npm stage publish`, never approves it or calls direct `npm publish`. Its successful summary means **staged, pending Windows 2FA approval**, not published.
@@ -350,21 +350,21 @@ For a failed current main-dispatched workflow, `gh run rerun <run-id> --failed -
 
 After the npm staging job succeeds, review each stage ID and intended `latest` tag. The job stages the five platform packages before the main package. Approve them in the same order, **platform packages first**, so the public main package never points at unpublished optional dependencies. Every public npm publication requires the maintainer's Windows 2FA approval. A successful dispatch, login, OIDC exchange or staging response is not approval.
 
-Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.7.0.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.7.0.tgz`:
+Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.7.1.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.7.1.tgz`:
 
 ```powershell
 $Package = '@codegiveness/postgresql-sharp-mcp-win32-x64'
-$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.7.0.tgz'
+$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.7.1.tgz'
 npm.cmd stage list $Package --registry https://registry.npmjs.org/
-$StageId = Read-Host "Stage ID for $Package 0.7.0"
+$StageId = Read-Host "Stage ID for $Package 0.7.1"
 npm.cmd stage view $StageId --registry https://registry.npmjs.org/
 npm.cmd stage download $StageId --registry https://registry.npmjs.org/
 ```
 
-Confirm the stage is **`$Package@0.7.0`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.7.0 GitHub release:
+Confirm the stage is **`$Package@0.7.1`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.7.1 GitHub release:
 
 ```powershell
-gh release download v0.7.0 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
+gh release download v0.7.1 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
 gh attestation verify ./release-verification/$Tarball --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
 Get-FileHash ./release-verification/$Tarball -Algorithm SHA256
 $StagedTarball = Read-Host 'Path printed by npm stage download'
@@ -377,14 +377,14 @@ Only after that review, approve the exact stage:
 
 ```powershell
 npm.cmd stage approve $StageId --registry https://registry.npmjs.org/
-npm.cmd view "$Package@0.7.0" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
+npm.cmd view "$Package@0.7.1" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
 npm.cmd view $Package dist-tags --registry https://registry.npmjs.org/
 ```
 
 After approving the main package last, check the public installation:
 
 ```powershell
-npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.7.0 '@codegiveness/postgresql-sharp-mcp@0.7.0' --version
+npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.7.1 '@codegiveness/postgresql-sharp-mcp@0.7.1' --version
 ```
 Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/$Tarball --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
 

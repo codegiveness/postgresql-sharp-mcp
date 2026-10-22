@@ -10,15 +10,15 @@
 
 SQL calls are read-only by default, but the server's default access mode permits explicitly requested writes. A least-privileged database login is recommended, but any login that can connect works for a first run, including a superuser such as `postgres`; `--validate` then prints advisory `[warning]` lines. Before you use real or shared data, follow [Hardening for advanced users](#hardening-for-advanced-users). Keep an existing explicit `restricted` setting; [access boundaries](#access-and-resource-boundaries) explain how to refuse writes entirely.
 
-**Fastest start:** Node.js 22+ and npm are enough, because npm installs the .NET runtime with the server. This downloads and runs version 0.7.0:
+**Fastest start:** Node.js 22+ and npm are enough, because npm installs the .NET runtime with the server. This downloads and runs version 0.7.1:
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.0 --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.1 --version
 ```
 
-It should print `postgresql-sharp-mcp 0.7.0.0`. Then register it with your MCP client and enter your connection string: the [quick start](#quick-start) has three steps. Prefer a .NET tool or a standalone archive for Linux, macOS or Windows? See [step 1](#1-install-or-run). To build and run a container image from the Dockerfile, see [CONTRIBUTING.md](CONTRIBUTING.md#self-contained-executable-and-container).
+It should print `postgresql-sharp-mcp 0.7.1.0`. Then register it with your MCP client and enter your connection string: the [quick start](#quick-start) has three steps. Prefer a .NET tool or a standalone archive for Linux, macOS or Windows? See [step 1](#1-install-or-run). To build and run a container image from the Dockerfile, see [CONTRIBUTING.md](CONTRIBUTING.md#self-contained-executable-and-container).
 
-> **Upgrading from 0.6.0?** 0.7.0 loosens two 0.6.0 defaults so that a plain connection string works: a connection string without `SSL Mode` now uses `Prefer` (TLS when the server offers it, certificate not verified) instead of `VerifyFull`, and the database lock is now advisory by default (the server's tools still enforce the list, but PostgreSQL grant findings are warnings) instead of refusing startup. To keep the 0.6.0 behavior, put `SSL Mode=VerifyFull` in the connection string and set `POSTGRES_DATABASE_LOCK_MODE=strict`; a string with `Root Certificate` and no `SSL Mode` keeps `VerifyFull` unchanged. Run `--validate` before reconnecting, and read [the upgrade note](#upgrading-an-existing-installation), which also covers upgrades from 0.5.0 or earlier.
+> **Upgrading from 0.6.0 or earlier?** Since 0.7.0, two 0.6.0 defaults are looser so that a plain connection string works (0.7.1 itself adds no behavior change): a connection string without `SSL Mode` now uses `Prefer` (TLS when the server offers it, certificate not verified) instead of `VerifyFull`, and the database lock is now advisory by default (the server's tools still enforce the list, but PostgreSQL grant findings are warnings) instead of refusing startup. To keep the 0.6.0 behavior, put `SSL Mode=VerifyFull` in the connection string and set `POSTGRES_DATABASE_LOCK_MODE=strict`; a string with `Root Certificate` and no `SSL Mode` keeps `VerifyFull` unchanged. Run `--validate` before reconnecting, and read [the upgrade note](#upgrading-an-existing-installation), which also covers upgrades from 0.5.0 or earlier.
 
 **What you can ask once it is connected:**
 
@@ -43,12 +43,12 @@ Every result is a row- and byte-bounded page that the assistant can continue wit
 
 Choose **npx** for on-demand execution or a **.NET tool** for a persistent command. Starting with **0.3.3**, npm bundles the .NET runtime: npx requires only Node.js 22+ and npm, not an installed .NET runtime or SDK. The .NET tool still requires the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0), and installing it requires the .NET 10 SDK.
 
-This guide targets **0.7.0**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
+This guide targets **0.7.1**. Registry commands require the corresponding published version; if it is unavailable, [build and install the local npm artifact](CONTRIBUTING.md#build-and-install-package-artifacts). npm **0.3.2** still requires .NET; installing it globally does not remove that prerequisite.
 
 **npx — run without a global install:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.0 --version
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.1 --version
 ```
 
 The package-specific `--allow-scripts` approves installation on npm 12. Do not use `--ignore-scripts` for automatic setup. npm downloads only the platform package matching your OS/CPU (about 35–39 MB; the main package is under 1 MB). Its self-contained C# installer then installs the server and runtime. Starting with 0.5.0, npm no longer downloads all five platform runtimes. The installer downloads nothing itself. The installed server command is native; it needs neither Node.js nor `dotnet` to run.
@@ -56,18 +56,18 @@ The package-specific `--allow-scripts` approves installation on npm 12. Do not u
 **.NET tool — install once, then run by name:**
 
 ```sh
-dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.7.0
+dotnet tool install --global codegiveness.postgresql-sharp-mcp --version 0.7.1
 postgresql-sharp-mcp --version
 ```
 
 If the command is not found, add the .NET tools directory to your PATH (`$HOME/.dotnet/tools` on Linux/macOS; `%USERPROFILE%\.dotnet\tools` on Windows), or use its absolute executable path. Do not reinstall to fix PATH.
 
-The command should report **0.7.0** (or assembly version **0.7.0.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
+The command should report **0.7.1** (or assembly version **0.7.1.0**). Continue with registration below, then prepare your connection environment in step 2. Package versions are immutable; a published release archive is an alternative if your registry is unavailable.
 
 <details>
 <summary>Standalone archives — no .NET, Node.js or npm installation needed</summary>
 
-Download **one archive** and `SHA256SUMS` from [release 0.7.0](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.7.0). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
+Download **one archive** and `SHA256SUMS` from [release 0.7.1](https://github.com/codegiveness/postgresql-sharp-mcp/releases/tag/v0.7.1). These archives include the .NET runtime: you do not need the .NET SDK, npm, Node.js or Docker for this installation.
 
 | Your computer | Archive |
 |---|---|
@@ -130,7 +130,7 @@ Expand-Archive -Path "$HOME\Downloads\postgresql-sharp-mcp-win-x64.zip" -Destina
 
 </details>
 
-The executable should report **0.7.0**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
+The executable should report **0.7.1**. If you already have an older installation, read [upgrade notes](#upgrading-an-existing-installation) before reusing its configuration.
 
 </details>
 
@@ -144,7 +144,7 @@ For **npx**, use this JSON for a new file. If the file already has other servers
     "postgresql": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.7.0"]
+      "args": ["-y", "--allow-scripts=@codegiveness/postgresql-sharp-mcp", "@codegiveness/postgresql-sharp-mcp@0.7.1"]
     }
   }
 }
@@ -203,7 +203,7 @@ Use the command for your installation method. If you use a standalone archive, r
 **npx, Linux/macOS:**
 
 ```sh
-npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.0 --validate && omp
+npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.1 --validate && omp
 ```
 
 **.NET tool, Linux/macOS:**
@@ -223,7 +223,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 ```
 
-For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.0 --validate`; keep the `$LASTEXITCODE` check and launch block.
+For npx in PowerShell, replace the first line with `npx -y --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.1 --validate`; keep the `$LASTEXITCODE` check and launch block.
 
 Validation is read-only and exits; its successful stderr output includes your database name, so keep it private. Empty input is rejected before OMP starts. Lines that start with `[warning]` (about TLS, a superuser login or the database lock) are advice: they do not stop validation or the server, and [Hardening for advanced users](#hardening-for-advanced-users) explains how to act on them. If it fails, fix your connection details and repeat step 2; [troubleshooting](#if-setup-does-not-work) covers common failures.
 
@@ -261,7 +261,7 @@ Automatic discovery and the unrestricted default require **0.3.1 or newer**: the
 
 **History: 0.6.0 made TLS verified by default.** From 0.6.0, a profile that did not set `SSL Mode` got `SSL Mode=VerifyFull` for a non-loopback host and `SSL Mode=Disable` for loopback/Unix-socket hosts, instead of Npgsql's `Prefer`; a remote server with a private CA then failed with `tls_verification_failed` and one without TLS with `tls_unavailable`. 0.7.0 reverted that default to `Prefer` (see above); profiles that already set `SSL Mode` were never changed. Pinning **0.5.0** (`dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.5.0`, or `@0.5.0` in the npx `args`) restores the pre-0.6.0 `Prefer` default together with the 0.5.0 strict lock check; 0.5.0 reads the same configuration.
 
-After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.7.0`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.7.0`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
+After publication, update an existing global .NET tool with `dotnet tool update --global codegiveness.postgresql-sharp-mcp --version 0.7.1`. For npx, update the version in your client's `args` to `@codegiveness/postgresql-sharp-mcp@0.7.1`; retain package-specific script approval. For archives, fully quit the client/server and replace the extracted files together. Recheck `--version` before reconnecting.
 
 **Breaking behavior:** a targets-file entry is now a host/login connection profile, not a database allowlist. The same credentials can select other physical databases on that PostgreSQL server. Omitted access mode means `unrestricted`; `list_databases` returns live databases rather than configured aliases. Preserve an existing explicit `POSTGRES_ACCESS_MODE=restricted` and review PostgreSQL grants before upgrading.
 
@@ -357,7 +357,7 @@ Normal stdout is reserved for MCP JSON-RPC; diagnostics use stderr. Keep credent
 
 Choose one installation method from step 1 and follow the same environment/client setup. If registry installation is unavailable, use the self-contained archive, a [verified local NuGet package](CONTRIBUTING.md#install-a-verified-release-artifact), or a [source build](CONTRIBUTING.md#build-from-source). Downloadable npm/NuGet release package files alone do not establish registry publication.
 
-After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.0`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
+After publication, get a global npm command with `npm install --global --allow-scripts=@codegiveness/postgresql-sharp-mcp @codegiveness/postgresql-sharp-mcp@0.7.1`, then `postgresql-sharp-mcp --version`. No .NET installation is required. Use `"command": "postgresql-sharp-mcp"` with no `args` in MCP JSON, or its absolute executable path if the client does not inherit npm's global bin directory on PATH.
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
@@ -505,7 +505,7 @@ Default PostgreSQL grants give `PUBLIC` CONNECT on `postgres` and `template1`, s
 
 **PostgreSQL 13 or newer** is supported. The integration verifier runs the MCP scenarios against official Docker images of majors 13 through 18 in CI. PostgreSQL 13 reached community end of life in November 2025, so the minimum can rise in a later release. Older servers are untested and unsupported; some catalog queries need 13 (`regcollation`) and there is no compatibility layer below it.
 
-**PostgreSQL 19 is tested as a pre-release.** As of 2026-10-11 the PostgreSQL project had published [19 Beta 4](https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/) but no release candidate or final release, and its supported-versions list ends at 18. CI runs the same integration scenarios against the official `postgres:19beta4-bookworm` image, an informational `Integration (PostgreSQL 19)` job that is not a required check. Beta behavior can still change before the final release, so 19 is not a support commitment until the fixture moves to the released image and passes.
+**PostgreSQL 19 is tested as a pre-release.** As of 2026-10-22 the PostgreSQL project had published [19 RC 1](https://www.postgresql.org/about/news/postgresql-19-rc-1-released-3409/) but no final release, and its supported-versions list ends at 18. CI runs the same integration scenarios against the official `postgres:19rc1-bookworm` image, an informational `Integration (PostgreSQL 19)` job that is not a required check. Pre-release behavior can still change before the final release, so 19 is not a support commitment until the fixture moves to the released image and passes.
 
 | Area | Requirement and behavior |
 |---|---|

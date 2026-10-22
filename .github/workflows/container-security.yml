@@ -22,11 +22,11 @@ jobs:
       - name: Install checksum-verified Trivy
         working-directory: ${{ runner.temp }}
         run: |
-          # Official v0.75.0 release and trivy_0.75.0_checksums.txt; no install script.
+          # Official v0.76.1 release and trivy_0.76.1_checksums.txt; no install script.
           curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 \
             --output trivy.tar.gz \
-            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-64bit.tar.gz
-          printf '%s  %s\n' 'c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f' 'trivy.tar.gz' | sha256sum --check --strict
+            https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
+          printf '%s  %s\n' 'c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0' 'trivy.tar.gz' | sha256sum --check --strict
           mkdir -p trivy-bin
           tar -xzf trivy.tar.gz -C trivy-bin trivy
           ./trivy-bin/trivy --version
@@ -37,7 +37,7 @@ jobs:
         # any future exception must be justified, scoped and expiry-bound in review.
         run: |
           mkdir -p artifacts/container-security
-          "${{ runner.temp }}/trivy-bin/trivy" image \
+          "$RUNNER_TEMP/trivy-bin/trivy" image \
             --config '' --ignorefile '' \
             --image-src docker --scanners vuln --pkg-types os,library \
             --severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1 \

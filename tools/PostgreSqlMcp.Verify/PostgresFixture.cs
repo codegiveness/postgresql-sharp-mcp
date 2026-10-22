@@ -14,24 +14,24 @@ internal sealed class PostgresFixture : IAsyncDisposable
     public const string PunctuationDatabase = "tenant ' ; \" = punctuation";
     public const int DefaultMajor = 17;
 
-    // Manifest-list digests of the official postgres bookworm tags, read from the Docker Hub registry API on 2026-10-11. The tag is
-    // <major>-bookworm for released majors. PostgreSQL 19 is still a pre-release, so its tag names the beta explicitly; move it to
-    // 19-bookworm once the final release is published. Dependabot does not track them: refresh deliberately (see CONTRIBUTING.md)
-    // and review the resulting image change.
+    // Manifest-list digests of the official postgres bookworm tags, read from the Docker Hub registry API on 2026-10-22. The tag is
+    // <major>-bookworm for released majors. PostgreSQL 19 is still a pre-release, so its tag names the release candidate explicitly;
+    // move it to 19-bookworm once the final release is published. Dependabot does not track them: refresh deliberately (see
+    // CONTRIBUTING.md) and review the resulting image change.
     private static readonly Dictionary<int, (string Tag, string Digest)> Images = new()
     {
         [13] = ("13-bookworm", "sha256:f0cffcc050a9f1f3c78a9968e221badc1cdd02e2ae15b1de9b12bee1ba5ea2db"),
-        [14] = ("14-bookworm", "sha256:5a05f61a534e50e679d27fb45953afec7821f2ffc2aa6c738b94515ca0891ac2"),
-        [15] = ("15-bookworm", "sha256:d4a8e1f88f475ee3e0137fa89d21ebc59f6c6ab16bf369ee92907607cc3455ae"),
-        [16] = ("16-bookworm", "sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4"),
-        [17] = ("17-bookworm", "sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826"),
-        [18] = ("18-bookworm", "sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"),
-        [19] = ("19beta4-bookworm", "sha256:4c618d9a30e0b88078b9371a0499d7055da9ab7f5afe386a460758eac9857f06")
+        [14] = ("14-bookworm", "sha256:eba39627b02201a04e851363546d34547cc82550a8d7f68c6e9ff6c8b2c6ff33"),
+        [15] = ("15-bookworm", "sha256:22c6356b2897cb0b4be6ad550b44ff97a0f29df7dbe327c01bc3c84bd457694d"),
+        [16] = ("16-bookworm", "sha256:d81f7b51697014367236d07ec58b54153fc28f828b72bf247fe5c7487520bcb0"),
+        [17] = ("17-bookworm", "sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27"),
+        [18] = ("18-bookworm", "sha256:bbf83594798e144bff365a9c191c5d779f181fb3135902064ab8ff11918020fc"),
+        [19] = ("19rc1-bookworm", "sha256:d1123bed61c903d36aa7c4ede13d7641d149fe4b82205b4e98ab1765b6cc6b5a")
     };
 
-    // Exact pgdg bookworm package version, the same for majors 13-18 on amd64 and arm64 when it was read on 2026-10-10 and for 19
-    // on amd64 on 2026-10-11 (19 comes from the pgdg "19" beta component the image already enables). The pgdg index keeps only
-    // recent versions, so fixture start fails loudly once this one is withdrawn; bump it with the image digests.
+    // Exact pgdg bookworm package version, the same for majors 13-19 on amd64 when it was read on 2026-10-22 (19 comes from the
+    // pgdg "19" pre-release component the image already enables). The pgdg index keeps only recent versions, so fixture start fails
+    // loudly once this one is withdrawn; bump it with the image digests.
     private const string HypoPgVersion = "1.4.3-1.pgdg12+2";
 
     // Resolved per use (not in a static initializer) so an invalid value is reported as a verification failure.
