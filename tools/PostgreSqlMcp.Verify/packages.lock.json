@@ -4,17 +4,18 @@
     "net10.0": {
       "FsCheck": {
         "type": "Direct",
-        "requested": "[3.4.0, )",
-        "resolved": "3.4.0",
-        "contentHash": "wkWR1DORrKd46W6MEhmS4muo/0kgrtUV/AGW1ohMWemy7WukcRH8T3JjkDpn/daOHk0yVqf0CBvScU17Ab//PA==",
+        "requested": "[3.6.0, )",
+        "resolved": "3.6.0",
+        "contentHash": "XjZ5sWf/QKLqB9aMKG7FvrT/8Ak2fPo0ygRstindBWZWU8P3EcmvYJ5UkX0daIL4+bZeaiD9ThkftGlIx3ZewQ==",
         "dependencies": {
           "FSharp.Core": "5.0.2"
         }
       },
       "FSharp.Core": {
-        "type": "Transitive",
-        "resolved": "5.0.2",
-        "contentHash": "DpcajqENgb3VXaHw1FKfVS+TWwEzck1PCajqLwBAVrtd1lfxd7T8JISVZBdV1mX9+2g48+tIgpNaVJWObdMrBw=="
+        "type": "CentralTransitive",
+        "requested": "[11.0.100, )",
+        "resolved": "11.0.100",
+        "contentHash": "ijfOz8ihqkFNdKUY57l8YTrbJNfQW/6tFYAUU57ByZzmTxxf1o12cQaCqDOjNqAz4h86AKS7IwQkNhYcrjLeCQ=="
       }
     }
   }

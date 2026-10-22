@@ -38,16 +38,16 @@ jobs:
         if: matrix.language == 'csharp'
         with:
           dotnet-version: '10.0.x'
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          tools: linked # CodeQL bundle 2.27.1, identical across all revisions/languages.
+          tools: linked # CodeQL bundle 2.27.3, identical across all revisions/languages.
           queries: security-extended
       - name: Build real solution including compiler-generated code
         if: matrix.language == 'csharp'
         run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           output: artifacts/codeql
           category: /language:${{ matrix.language }}
@@ -81,7 +81,7 @@ jobs:
         if: matrix.language == 'csharp'
         with:
           dotnet-version: '10.0.x'
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.language == 'csharp' && 'manual' || 'none' }}
@@ -90,7 +90,7 @@ jobs:
       - name: Build scanned revision including compiler-generated code
         if: matrix.language == 'csharp'
         run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           upload: never
           upload-database: false
@@ -172,7 +172,7 @@ jobs:
         with:
           name: codeql-candidate-${{ matrix.language }}
           path: ${{ runner.temp }}/codeql-candidate
-      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/codeql-candidate
           category: /language:${{ matrix.language }}
