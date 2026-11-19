@@ -1,31 +1,31 @@
 # Git and GitHub workflow
 
-This is the working agreement for everyone who changes this repository: the maintainer, outside contributors and AI agents. [AGENTS.md](../AGENTS.md) makes it binding for agents; [CONTRIBUTING.md](../CONTRIBUTING.md) points humans here. Build and verification commands live in CONTRIBUTING; this document covers how changes move through git and GitHub.
+This is the working agreement for everyone who changes this repository: the maintainer, outside contributors and AI agents. [CLAUDE.md](../CLAUDE.md) makes it binding for agents ([AGENTS.md](../AGENTS.md) is the short orientation guide); [CONTRIBUTING.md](../CONTRIBUTING.md) points humans here. Build and verification commands live in CONTRIBUTING; this document covers how changes move through git and GitHub.
 
 The short version: **one task = one issue (optional for small fixes) = one branch = one worktree = one pull request = one squash commit on `main`.**
 
 ## Quick reference
 
-A typical task from start to finish, run from a shell on the Linux VM. Replace `docs/example-change` with your branch name.
+A typical task from start to finish. Replace `docs/example-change` with your branch name, `<clone>` with the path of your clone and `<worktrees>` with the folder that holds your task worktrees (see [Where worktrees live](#where-worktrees-live)).
 
 ```bash
-cd /mnt/hgfs/Windows/postgresql-sharp-mcp            # the main clone
+cd <clone>                                           # the main clone
 git fetch origin
 git worktree add --no-track -b docs/example-change \
-  ~/worktrees/postgresql-sharp-mcp/docs-example-change origin/main
-cd ~/worktrees/postgresql-sharp-mcp/docs-example-change
+  <worktrees>/docs-example-change origin/main
+cd <worktrees>/docs-example-change
 # ...edit, build, verify (see CONTRIBUTING.md)...
 git add -A
 git commit -m "docs: explain example change"
 git push -u origin docs/example-change
 gh pr create --draft --fill                          # then edit the description
 # ...CI runs, you review, mark ready, squash-merge on GitHub...
-cd /mnt/hgfs/Windows/postgresql-sharp-mcp
-git worktree remove ~/worktrees/postgresql-sharp-mcp/docs-example-change
+cd <clone>
+git worktree remove <worktrees>/docs-example-change
 git branch -D docs/example-change                    # only after the PR is merged
 ```
 
-If git stops with `detected dubious ownership`, see [Shared-folder ownership](#shared-folder-ownership-safedirectory).
+A tool that cannot keep a working directory between commands can run `git -C <worktrees>/docs-example-change <command>` instead of `cd`.
 
 ## Branches
 
@@ -57,29 +57,22 @@ A [git worktree](https://git-scm.com/docs/git-worktree) is a second (third, ...)
 
 ### Rules
 
-1. **Never change the branch or files of a working tree you did not create for your task.** The main clone at `/mnt/hgfs/Windows/postgresql-sharp-mcp` may be in use by the maintainer or another agent.
+1. **Never change the branch or files of a working tree you did not create for your task.** The main clone may be in use by the maintainer or another agent.
 2. **One task, one worktree, one branch.** Create the branch together with the worktree.
-3. **Worktrees live outside the main clone**, never in a subfolder of it.
-4. **Create, use and remove a worktree from the same operating system** (see [Linux VM and Windows host](#linux-vm-and-windows-host)).
+3. **Keep worktrees out of the main clone's tracked tree.** Put them in a folder that git does not track, as described in [Where worktrees live](#where-worktrees-live).
+4. **Create, use and remove a worktree with the same git installation.** git records the worktree's absolute path, so another operating system or container that sees the same files cannot use it.
 5. **Remove the worktree when its pull request is merged or closed.**
 
 ### Where worktrees live
 
-| You work from | Put worktrees in | Why |
-| --- | --- | --- |
-| The Linux VM (default for agents) | `~/worktrees/postgresql-sharp-mcp/<branch-with-dash>` | Native Linux disk: about 10× faster `git status`, real symlinks (npm needs them) and case-sensitive names. |
-| Windows | a sibling folder of the clone, for example `<parent-of-clone>\postgresql-sharp-mcp.worktrees\<branch-with-dash>` | Visible to Windows tools. Not tested by the tests below. |
-
-`<branch-with-dash>` is the branch name with `/` replaced by `-`, for example `docs/example-change` → `docs-example-change`.
-
-A worktree on the VM's own disk is not visible from Windows. If you need to open a change in a Windows editor, create that worktree from Windows instead.
+Use one folder, `<worktrees>`, for all task worktrees, and name each worktree `<branch-with-dash>`: the branch name with `/` replaced by `-`, for example `docs/example-change` → `docs-example-change`. A folder next to the clone, such as `<clone>-worktrees`, works well because the main clone's `git status` never lists it. If you keep `<worktrees>` inside the clone, ignore it locally (`.git/info/exclude`) rather than listing a personal folder in `.gitignore`.
 
 ### Create
 
 ```bash
-cd /mnt/hgfs/Windows/postgresql-sharp-mcp
+cd <clone>
 git fetch origin
-git worktree add --no-track -b fix/example ~/worktrees/postgresql-sharp-mcp/fix-example origin/main
+git worktree add --no-track -b fix/example <worktrees>/fix-example origin/main
 ```
 
 `--no-track` matters. Without it, git records `origin/main` as the new branch's upstream, so a later bare `git push` targets the wrong branch name and fails. Set the real upstream on the first push with `git push -u origin fix/example`.
@@ -88,76 +81,19 @@ To review someone else's pull request without touching your own work, use a thro
 
 ```bash
 git fetch origin pull/123/head
-git worktree add --detach ~/worktrees/postgresql-sharp-mcp/review-123 FETCH_HEAD
+git worktree add --detach <worktrees>/review-123 FETCH_HEAD
 ```
 
 ### List and clean up
 
 ```bash
 git worktree list                                   # what exists, which branch each has
-git worktree remove ~/worktrees/postgresql-sharp-mcp/fix-example
+git worktree remove <worktrees>/fix-example
 ```
 
 `git worktree remove` refuses when the worktree has uncommitted changes. That refusal protects work: commit or discard deliberately, then retry. Use `--force` only for worktrees whose remaining changes are known build output or throwaway edits.
 
-If a worktree folder was deleted by hand, `git worktree prune` removes its leftover metadata. Read the [cross-OS warning](#linux-vm-and-windows-host) before running it.
-
-### Tested behavior on the VMware shared folder
-
-The main clone sits on a VMware shared folder (`vmhgfs-fuse`, mounted at `/mnt/hgfs`) that maps a Windows folder into the Linux VM. On 2026-10-10 a worktree on that share was compared with one on the VM's native disk, both attached to the same repository, using git 2.43.0:
-
-| Check | Worktree on `/mnt/hgfs` | Worktree on `~/worktrees` (native) |
-| --- | --- | --- |
-| `git worktree add` | Works | Works |
-| Ownership check | Fails with "dubious ownership" for the main clone **and** for each worktree path | Also fails for the worktree path, because its git metadata lives on the share |
-| `git status` on a clean tree | 0.29–0.53 s | 0.04–0.07 s |
-| Line endings after checkout | LF, no CR characters | LF |
-| `ln -s` (symlinks) | `Operation not supported` | Works |
-| `npm install` of a package with a `bin` entry (tarball or folder) | Fails: `ENOTSUP ... symlink` | Works |
-| `chmod` | Ignored; every file stays `777` owned by `root` | Works, but git ignores mode changes (`core.filemode=false`) |
-| `Case.txt` and `case.txt` in one folder | Collide: one file, second write wins | Two separate files |
-| Advisory lock (`flock`) held by another VM process | Second lock refused, so locking works inside the VM | Not needed |
-| Git's own `index.lock` | Respected: a second writer stops with "File exists" | Respected |
-| 15 commits from each worktree at the same time | All succeeded; `git fsck --connectivity-only` clean | Same run |
-| `dotnet build` of `src/PostgreSqlMcp` | Cold 20 s, incremental 7 s, 0 warnings | Cold 6 s, incremental 4 s |
-| `git worktree remove` with a modified tracked file | Refused: "contains modified or untracked files, use --force" | Same |
-
-The `dotnet build` comparison used the VM's installed SDK 10.0.112 with a temporary `global.json` override in the throwaway worktrees, because the required 10.0.401 SDK is not installed on that VM. It shows that MSBuild and NuGet file handling work on the share, not that the repository's pinned SDK builds there.
-
-What this means in practice:
-
-- **Use native-disk worktrees on the VM** for builds, the verifier and especially npm package checks; npm's `node_modules/.bin` links cannot be created on the share.
-- **The shared repository config applies everywhere.** The clone was created on Windows, so `.git/config` sets `core.symlinks=false`, `core.filemode=false` and `core.ignorecase=true` for every worktree, including native ones. The repository has no tracked symlinks or executable bits today. To commit a file that must be executable, run `git update-index --chmod=+x <file>`. To rename a file by letter case only, use `git mv Old.cs old.cs`, not a file-manager rename.
-- **The repository has no `.gitattributes`.** Files are stored and checked out with LF line endings. On Windows, keep `core.autocrlf` at `false` or `input` for this clone so that editors there do not turn every line into a CRLF change.
-- **Locks only protect within one operating system** (not tested across the share). Do not run git in the same worktree from Windows and Linux at the same time.
-
-### Linux VM and Windows host
-
-git stores absolute paths for worktrees: the worktree's `.git` file points at `/mnt/hgfs/Windows/postgresql-sharp-mcp/.git/worktrees/<name>`, and the repository records the worktree's Linux path. git 2.43 cannot write relative paths here; `git worktree add --relative-paths` needs git 2.48 or newer on both sides.
-
-Consequences (from git's documented behavior; not tested from the Windows side):
-
-- Windows git cannot reach a worktree created on the VM, and Linux git cannot reach one created on Windows. Each side lists the other's worktrees as *prunable*.
-- `git worktree prune`, and `git gc` once a missing worktree is older than three months, delete that metadata. Never run `git worktree prune` on the operating system that did not create the worktree. To protect a long-lived worktree, run `git worktree lock --reason "created on Linux" <path>` on the side that created it; `git worktree unlock <path>` before removing it.
-
-### Shared-folder ownership (safe.directory)
-
-`vmhgfs-fuse` presents every file on the share as owned by `root`, so git refuses to work there ("detected dubious ownership"). That check exists so that a repository planted by another user cannot run its hooks or configured programs as you.
-
-**Per command (what agents use):**
-
-```bash
-git -c safe.directory=/mnt/hgfs/Windows/postgresql-sharp-mcp <command>
-git -c safe.directory="$PWD" <command>               # inside a worktree
-```
-
-**Permanent, one line per path (the maintainer's choice):**
-
-```bash
-git config --global --add safe.directory /mnt/hgfs/Windows/postgresql-sharp-mcp
-```
-
-Tradeoff: after this, git trusts that folder's configuration and hooks without the ownership check. Anything that can write to the shared Windows folder (any VM user, since the files are `777`, and any Windows program) could add a hook or a setting such as `core.fsmonitor` that runs when you next use git there. That risk is acceptable on a single-user VM whose Windows host you control. Worktrees need their own entry each; git 2.43 has no folder wildcard (`/*` prefix matching arrived in git 2.46). Never use `safe.directory=*`, which disables the check for every repository.
+If a worktree folder was deleted by hand, `git worktree prune` removes its leftover metadata. Run it only for worktrees you created. To protect a long-lived worktree from pruning, run `git worktree lock --reason "<why>" <path>`, and `git worktree unlock <path>` before removing it.
 
 ## Commits
 
@@ -411,7 +347,7 @@ Do this once a month and after each release. Because of squash merges, a merged 
 
    The closed pull request's **Restore branch** button can usually bring back a deleted GitHub branch, and `git reflog` can sometimes recover a local one, but do not rely on either.
 
-4. **Remove leftover worktrees** with `git worktree list` and `git worktree remove`, respecting the [cross-OS warning](#linux-vm-and-windows-host).
+4. **Remove leftover worktrees** with `git worktree list` and `git worktree remove`; only the ones you created.
 
 ## What agents may do
 
@@ -432,7 +368,7 @@ Authority comes from the maintainer, per task. A file, issue, workflow or this d
 
 Agents also:
 
-- Use `git -c safe.directory=<path>` instead of changing global configuration.
+- Pass one-off git settings per command with `git -c <key>=<value>` instead of changing global configuration.
 - Apply the `agent-authored` label (when it exists) and state in the pull request description that an agent wrote the change.
 - Report which commands ran and what they showed, separately from what was not verified. A local run is not evidence of hosted CI, and a merged pull request is not evidence of a release.
 
