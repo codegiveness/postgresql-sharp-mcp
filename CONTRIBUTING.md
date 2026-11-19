@@ -243,7 +243,7 @@ All maintained code is C# on .NET 10 with the SDK-default language version. The 
 - The C# rules in [`.editorconfig`](.editorconfig) and the analyzer settings of the build, checked by the full `dotnet format`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
 
 ```bash
-dotnet format postgresql-sharp-mcp.slnx --verify-no-changes
+dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore
 dotnet format postgresql-sharp-mcp.slnx   # applies the fixable ones
 ```
 

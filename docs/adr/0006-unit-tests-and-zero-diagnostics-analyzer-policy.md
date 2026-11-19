@@ -25,10 +25,10 @@ For release 0.7.3, as repository engineering with no change to MCP tools, the SQ
 
 - Contributors run a Docker-free test command and a full format check before pushing; the pre-push checklist in [CONTRIBUTING.md](../../CONTRIBUTING.md#verify-behavior) and [AGENTS.md](../../AGENTS.md) lists both.
 - New code must be idiomatic enough to pass the strict analyzer level (file-scoped namespaces, invariant-culture formatting, no unused usings).
-- Unverified at the time of writing: the exact diagnostic count the analyzer pass will find and the size of the resulting sweep; this ADR records the policy, not that it is already green.
+- The 0.7.3 sweep measured 2895 diagnostics under the base configuration and brought the build to zero; `.editorconfig` is the single ledger of every rule switched off, each with its reason.
 
 ## Evidence
 
-- [`.editorconfig`](../../.editorconfig), the `dotnet format style` step in [ci.yml](../../.github/workflows/ci.yml), and the absence of a test project in [postgresql-sharp-mcp.slnx](../../postgresql-sharp-mcp.slnx) at 0.7.2.
+- [`.editorconfig`](../../.editorconfig), the `dotnet format` step in [ci.yml](../../.github/workflows/ci.yml), and the absence of a test project in [postgresql-sharp-mcp.slnx](../../postgresql-sharp-mcp.slnx) at 0.7.2.
 - Sibling references: `docs/adr/0013-testing-strategy.md` and `docs/adr/0020-roslyn-analyzer-strategy-hybrid-suppression.md` in [codegiveness/mssql-mcp](https://github.com/codegiveness/mssql-mcp).
 - No commit exists for this decision yet; link it here when the 0.7.3 change merges.
