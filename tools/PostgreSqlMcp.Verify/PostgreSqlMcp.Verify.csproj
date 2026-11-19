@@ -12,9 +12,11 @@
     <Compile Include="..\PostgreSqlMcp.Release\ReleaseArchive.cs" Link="Release\ReleaseArchive.cs" />
     <Compile Include="..\PostgreSqlMcp.Release\NuGetRegistry.cs" Link="Release\NuGetRegistry.cs" />
     <Compile Include="..\PostgreSqlMcp.Release\SbomNormalizer.cs" Link="Release\SbomNormalizer.cs" />
+    <Compile Include="..\PostgreSqlMcp.Release\RequiredChecks.cs" Link="Release\RequiredChecks.cs" />
     <Compile Include="..\Shared\ProcessRunner.cs" Link="Shared\ProcessRunner.cs" />
     <Compile Include="..\Shared\RepositoryRoot.cs" Link="Shared\RepositoryRoot.cs" />
     <Compile Include="..\Shared\NpmPlatforms.cs" Link="Shared\NpmPlatforms.cs" />
     <Compile Include="..\Shared\NuGetTool.cs" Link="Shared\NuGetTool.cs" />
+    <Compile Include="..\Shared\ProductVersion.cs" Link="Shared\ProductVersion.cs" />
   </ItemGroup>
 </Project>

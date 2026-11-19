@@ -32,8 +32,8 @@ internal static class PackageBuilder
                 throw new ArgumentException("Output must not be the source root or a source/package/tooling directory.");
 
             using var metadata = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "npm", "package.json")));
-            var projectMetadata = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
-            var version = projectMetadata.Descendants("Version").Single().Value;
+            var projectMetadata = XDocument.Load(Path.Combine(root, ProductVersion.ProjectFile));
+            var version = ProductVersion.Version(projectMetadata);
             var packageId = projectMetadata.Descendants("PackageId").Single().Value;
             var packageName = metadata.RootElement.GetProperty("name").GetString() ?? throw new InvalidDataException("npm package name is missing.");
             if (metadata.RootElement.GetProperty("version").GetString() != version)
