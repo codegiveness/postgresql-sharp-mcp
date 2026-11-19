@@ -1,6 +1,7 @@
 name: Semantic PR title
-# Trigger choice: plain `pull_request`, not `pull_request_target`. The action only reads the title from the event payload, so it needs no
-# privileged token; `pull_request_target` would add a write-capable path for fork PRs and gain nothing. This job checks out and executes nothing.
+# Trigger choice: plain `pull_request`, not `pull_request_target`, so the job holds only a read-only token and fork pull requests
+# gain no privileged path. The check is C# in the repository verifier (the repository allows GitHub-owned actions only), and the
+# title reaches it through an environment variable, never through expression interpolation into a script.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -11,24 +12,21 @@ concurrency:
 jobs:
   semantic:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
-      pull-requests: read
+      contents: read
+    env:
+      RestoreLockedMode: 'true'
     steps:
-      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Types and summary style are the ones in docs/git-workflow.md (Commits): the squash commit on main is the PR title.
-          types: |
-            feat
-            fix
-            docs
-            ci
-            build
-            perf
-            refactor
-            test
-            chore
-          subjectPattern: ^[^A-Z].*[^.]$
-          subjectPatternError: The summary "{subject}" must start with a lowercase letter and must not end with a period (docs/git-workflow.md, Commits).
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Restore locked verifier dependencies
+        run: dotnet restore tools/PostgreSqlMcp.Verify --locked-mode
+      - name: Require a Conventional Commit title (docs/git-workflow.md, Commits)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-restore -- pr-title

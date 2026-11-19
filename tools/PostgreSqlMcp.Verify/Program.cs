@@ -37,6 +37,8 @@ internal static class Program
                 ReleaseRegressions.Run();
             else if (args is ["version"])
                 VersionCheck.Run(root);
+            else if (args is ["pr-title"])
+                PullRequestTitle.Run(Environment.GetEnvironmentVariable("PR_TITLE"));
             else if (args.Length > 0 && args[0] == "packages")
             {
                 string artifacts = Path.Combine(root, "artifacts", "packages");
@@ -63,7 +65,7 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions | version | " + PinnedTools.Usage + " | install-tool-regressions | workflows | secret-detectors");
+                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions | version | pr-title (reads PR_TITLE) | " + PinnedTools.Usage + " | install-tool-regressions | workflows | secret-detectors");
             return 0;
         }
         catch (Exception ex)
