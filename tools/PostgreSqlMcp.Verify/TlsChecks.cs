@@ -71,11 +71,13 @@ internal static class TlsChecks
             };
             foreach ((string alias, string transport) in expected)
             {
-                JsonNode page = await client.OkAsync("execute_sql", new
+                (bool error, JsonNode page) = await client.CallAsync("execute_sql", new
                 {
                     database = alias,
                     sql = "SELECT CASE WHEN ssl THEN 'tls' ELSE 'plaintext' END AS transport FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
                 });
+                // Profile names are fixture aliases and codes are fixed identifiers: safe to report, unlike provider messages.
+                Check.That(!error, $"Profile {alias} failed: error code {page["error"]?["code"]?.Text() ?? "none"}, SQLSTATE {page["error"]?["sql_state"]?.Text() ?? "none"}.");
                 Check.That(Check.Rows(page).Single()["transport"].Text() == transport, $"Profile {alias} did not use {transport}.");
             }
             await client.StopAsync();
