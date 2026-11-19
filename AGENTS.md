@@ -63,20 +63,20 @@ Run the rows your change touches before you push, and report each command and it
 | --- | --- | --- |
 | `dotnet build postgresql-sharp-mcp.slnx -c Release` | 0 warnings, 0 errors | All changes |
 | `dotnet test --solution postgresql-sharp-mcp.slnx -c Release` | All unit tests pass; no Docker needed | All changes |
-| `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes` | Exit 0, no files reformatted (full format, not style-only) | All changes |
+| `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore` | Exit 0, no files reformatted (full format, not style-only) | All changes |
 | Roslyn LSP diagnostics on the changed files | 0 diagnostics at every severity, including hidden and info | All changes |
-| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- version` | Exit 0: project, npm, platform and `server.json` versions agree and major is 0 | Version or package metadata changes |
-| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- workflows` | Exit 0: workflow audit passes | Changes under `.github/workflows/` |
-| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- secret-detectors` | Exit 0: every detector self-test passes | Changes to secret scanning or its fixtures |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- version` | Exit 0: versions in `PostgreSqlMcp.csproj`, `npm/package.json` (including `optionalDependencies`) and `server.json` (top level and every `packages[].version`) agree; major is 0 | Version or package metadata changes |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- workflows` | Exit 0: actionlint and zizmor (offline) find nothing in `.github/workflows/` | Changes under `.github/workflows/` |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- secret-detectors` | Exit 0: the custom `.gitleaks.toml` rules fire and the exact README allowlist holds | Changes to secret scanning or its fixtures |
 | `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration` | Exit 0 against the disposable Docker fixture | Runtime, SQL, configuration or tool changes (needs Docker) |
 | `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage` | Exit 0 at or above the coverage gate | Runtime changes (needs Docker) |
 | `dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages`, then `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages` | Exit 0: the six NuGet packages, npm tarballs and archives install and run | Packaging, dependency or release changes |
 
-The `version`, `workflows` and `secret-detectors` commands are added by the 0.7.3 repository-engineering change set; if your checkout does not contain them yet, skip those rows. Expected results for the Docker-backed rows are those described in [Verify behavior](CONTRIBUTING.md#verify-behavior).
+CI runs these as jobs `unit-tests`, `version` (which also runs `release-regressions`), `workflow-audit` (`workflows` plus `install-tool-regressions`) and `gitleaks` (`secret-detectors`, then the history scan). Scanner tools are installed by `install-tool <name> --output <dir>` from SHA-256-pinned entries in `tools/PostgreSqlMcp.Verify/PinnedTools.cs`; bumping one means editing its row there, and `install-tool-regressions` proves tampered or unsafe archives are rejected. An intentional workflow pattern that a linter flags needs a per-line `# zizmor: ignore[rule]` comment with the reason. Expected results for the Docker-backed rows are those described in [Verify behavior](CONTRIBUTING.md#verify-behavior).
 
 ## Language server (LSP)
 
-Roslyn LSP, `csharp-ls` and C# Dev Kit open `postgresql-sharp-mcp.slnx`. With the analyzer settings in the repository's build files, the diagnostics your editor or agent shows match the build and `dotnet format`. Query the language server for definitions, references, hover and diagnostics instead of text searching C#, and check the changed files before you push.
+Roslyn LSP, `csharp-ls` and C# Dev Kit open `postgresql-sharp-mcp.slnx`. The analyzer policy is `AnalysisLevel=latest-all` with `EnforceCodeStyleInBuild=true`, and `.editorconfig` sets `dotnet_analyzer_diagnostic.severity = warning`, so the build fails on **any** analyzer diagnostic, including rules that are info or hidden by default. A rule that does not fit this codebase is disabled explicitly in `.editorconfig` with a one-line reason; do not suppress at the call site to get green. The diagnostics your editor or agent shows match the build, so also confirm 0 diagnostics at every severity on the changed files. Query the language server for definitions, references, hover and diagnostics instead of text searching C#.
 
 ## Key constraints
 
