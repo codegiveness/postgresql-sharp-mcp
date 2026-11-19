@@ -38,7 +38,7 @@ jobs:
         if: matrix.language == 'csharp'
         with:
           dotnet-version: '11.0.x'
-      - uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -47,7 +47,7 @@ jobs:
       - name: Build real solution including compiler-generated code
         if: matrix.language == 'csharp'
         run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
-      - uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           output: artifacts/codeql
           category: /language:${{ matrix.language }}
@@ -81,7 +81,7 @@ jobs:
         if: matrix.language == 'csharp'
         with:
           dotnet-version: '11.0.x'
-      - uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.language == 'csharp' && 'manual' || 'none' }}
@@ -90,7 +90,7 @@ jobs:
       - name: Build scanned revision including compiler-generated code
         if: matrix.language == 'csharp'
         run: dotnet build postgresql-sharp-mcp.slnx --configuration Release -p:RestoreLockedMode=true
-      - uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           upload: never
           upload-database: false
@@ -172,7 +172,7 @@ jobs:
         with:
           name: codeql-candidate-${{ matrix.language }}
           path: ${{ runner.temp }}/codeql-candidate
-      - uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/codeql-candidate
           category: /language:${{ matrix.language }}
