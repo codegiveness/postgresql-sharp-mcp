@@ -24,6 +24,18 @@ internal static class NuGetRegistry
             .Any(listed => string.Equals(listed.GetString(), version, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Polls until the registry lists the version, since a pushed package is only listed once nuget.org has validated it.</summary>
+    public static async Task WaitForVersionAsync(HttpClient http, string id, string version, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (!await HasVersionAsync(http, id, version))
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new InvalidOperationException($"NuGet {id} {version} was not listed within {timeout.TotalMinutes:0} minutes; the pointer package was not published.");
+            await Task.Delay(TimeSpan.FromSeconds(15));
+        }
+    }
+
     public static async Task DownloadAsync(HttpClient http, string id, string version, string destination)
     {
         string lower = version.ToLowerInvariant();

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
     <PackAsTool>true</PackAsTool>
     <PackageId>codegiveness.postgresql-sharp-mcp</PackageId>
     <ToolCommandName>postgresql-sharp-mcp</ToolCommandName>
@@ -13,6 +13,18 @@
     <PackageProjectUrl>https://github.com/codegiveness/postgresql-sharp-mcp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/codegiveness/postgresql-sharp-mcp.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+  <!-- The .NET tool is RID-specific and self-contained, so it needs no installed .NET runtime. `dotnet pack` writes one pointer package
+       plus one package per RID below; there is deliberately no framework-dependent `any` package. These RIDs are the ones npm and the
+       release archives already ship. Only packing restores them: a normal restore must not download five runtime packs, and the
+       five-RID graph has its own lock file (packages.tool.lock.json) beside the portable and per-RID ones. -->
+  <PropertyGroup>
+    <ToolPackageRuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</ToolPackageRuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(_IsPacking)' == 'true'">
+    <RuntimeIdentifiers>$(ToolPackageRuntimeIdentifiers)</RuntimeIdentifiers>
+    <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' == ''">$(MSBuildProjectDirectory)/packages.tool.lock.json</NuGetLockFilePath>
+    <PublishSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</PublishSelfContained>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../PostgreSqlMcp.Tools/PostgreSqlMcp.Tools.csproj" />
