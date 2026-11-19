@@ -173,7 +173,7 @@ Draft means "not ready to merge". The pull request template asks for the problem
 
 Required checks run on every push to the pull request. Open the **Checks** tab when one fails, fix the cause in the branch and push again. Do not re-run a failed job until it passes without understanding why it failed, and never weaken a check to make it pass.
 
-The checks introduced with 0.7.3, besides the existing ones, are `semantic` (pull request title format), `unit-tests` (`dotnet test --solution postgresql-sharp-mcp.slnx -c Release`, no Docker), `version` (project, npm and `server.json` versions agree and the major is 0), `workflow-audit` (static audit of `.github/workflows/`) and `dependency-review` (new or changed dependencies in the pull request). Treat all five as required: the same commands run locally as listed in the [pre-push checklist](../CONTRIBUTING.md#pre-push-checklist). Whether GitHub blocks the merge on them depends on the `main` ruleset, which is described under [Branch protection on `main`](#branch-protection-on-main).
+Besides the existing checks, 0.7.3 adds `semantic` (the `semantic` workflow: pull request title format), `unit-tests` (`dotnet test --solution postgresql-sharp-mcp.slnx -c Release`, no Docker), `version` (project, npm and `server.json` versions agree and the major is 0; also runs `release-regressions`), `workflow-audit` (actionlint and zizmor over `.github/workflows/`) and `dependency-review` (the `dependency-review.yml` gate: new or changed dependencies with high-severity vulnerabilities fail the pull request; the license check is off because the dependency graph has no NuGet/npm license data). The same commands run locally as listed in the [pre-push checklist](../CONTRIBUTING.md#pre-push-checklist). The merge-blocking list lives in the `main` ruleset and in `.github/required-checks.json`, described under [Branch protection on `main`](#branch-protection-on-main).
 
 ### 6. Review
 
@@ -280,7 +280,7 @@ Publication follows [release.yml](../.github/workflows/release.yml). Pushing a t
    ```
 
    The tag must be `v<major>.<minor>.<patch>` (optionally `-<prerelease>`) and must point to a commit on `origin/main`; the workflow's preflight rejects anything else. A tag containing `-` produces a GitHub prerelease. Never move or delete a published release tag.
-4. **Dispatch the release from `main`** with the tag and a target (`all`, `github`, `npm` or `nuget`). The exact commands and target meanings are in CONTRIBUTING's [Dispatch the exact existing release](../CONTRIBUTING.md#dispatch-the-exact-existing-release).
+4. **Dispatch the release from `main`** with the tag and a target (`all`, `github`, `npm` or `nuget`). Before anything is packaged, the `required-checks` preflight verifies every check in [`.github/required-checks.json`](../.github/required-checks.json) for the tagged commit (see [Branch protection on `main`](#branch-protection-on-main)); a missing, failed or pending check stops the release. The exact commands and target meanings are in CONTRIBUTING's [Dispatch the exact existing release](../CONTRIBUTING.md#dispatch-the-exact-existing-release).
 5. **Approve npm on Windows** after staging, following [Approve each npm publication on Windows](../CONTRIBUTING.md#approve-each-npm-publication-on-windows).
 6. **Verify before announcing:** every job's result, the GitHub Release assets and attestations, and each registry's public endpoint.
 
@@ -387,11 +387,15 @@ The settings below were applied on 2026-10-10 with the maintainer's approval. Th
 
 ### Branch protection on `main`
 
-Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
+Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10. Its rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), the required checks below with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
+
+Required checks: `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security`, `sql-boundaries`, `semantic`, `version`, `unit-tests`, `workflow-audit`, `dependency-review`, `analyze (csharp, manual)` and `analyze (actions, none)`. The first eight were recorded on 2026-10-10; the rest were added for 0.7.3 with the maintainer's approval.
+
+[`.github/required-checks.json`](../.github/required-checks.json) is the one home of this list for the release workflow. Its `commit` checks must have succeeded on the tagged commit (`verify`, `dependencies`, both `Native installation` jobs, `gitleaks`, `container-security`, `sql-boundaries`, `version`, `unit-tests`, `workflow-audit`, `analyze (csharp, manual)` and `analyze (actions, none)`). Its `pullRequest` checks (`pull-request-analysis`, `semantic`, `dependency-review`) exist only on pull request heads, so the release preflight `required-checks --sha <commit>` verifies them on the merged pull request's head, and only when that head's tree equals the tagged commit's tree. A missing, failed or pending check fails the release closed. Change the list in the ruleset and in that file together.
 
 The `Integration (PostgreSQL <major>)` matrix jobs are not in that list, so none of them blocks a merge. That is deliberate for `Integration (PostgreSQL 19)`, which tests the PostgreSQL 19 beta and can fail because of upstream beta changes. Requiring it, or any other matrix job, is a ruleset change that only the repository owner can make.
 
-The paragraphs above record the ruleset as applied on 2026-10-10. The checks `semantic`, `unit-tests`, `version`, `workflow-audit` and `dependency-review` are not in that record: adding them to the ruleset's required checks is a settings change that needs the maintainer's explicit OK (see [What agents may do](#what-agents-may-do)), and a check must have run on `main` at least once before it can be selected.
+A check must have run on `main` at least once before it can be selected in the ruleset, and changing the ruleset needs the maintainer's explicit OK (see [What agents may do](#what-agents-may-do)).
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 

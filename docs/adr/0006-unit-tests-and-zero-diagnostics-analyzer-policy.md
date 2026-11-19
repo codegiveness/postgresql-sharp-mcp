@@ -13,8 +13,8 @@ Today the repository's behavioral evidence comes from the verifier (`tools/Postg
 For release 0.7.3, as repository engineering with no change to MCP tools, the SQL guard, defaults, CLI options or outputs:
 
 - Add unit tests that run without Docker through `dotnet test --solution postgresql-sharp-mcp.slnx -c Release`. The Docker-backed `integration` command stays the evidence for database behavior.
-- Enable `AnalysisLevel=latest-recommended` and `EnforceCodeStyleInBuild`, and require **zero diagnostics at every severity, including info and hidden**, with the full `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes` replacing the style-only `--severity warn` check. IDE (Roslyn language server) diagnostics must match the build.
-- Fix diagnostics in code rather than suppress them; any suppression is narrow, commented and reviewed, as CONTRIBUTING already requires.
+- Enable `AnalysisLevel=latest-all` and `EnforceCodeStyleInBuild=true`, set `dotnet_analyzer_diagnostic.severity = warning` in `.editorconfig` with warnings as errors, so the build fails on **any** analyzer diagnostic, including those that are info or hidden by default. Roslyn language server diagnostics on changed files must also be 0 at every severity. The full `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore` replaces the style-only `--severity warn` check.
+- Fix diagnostics in code rather than suppress them. A rule that does not fit the codebase is disabled explicitly in `.editorconfig` with a one-line reason; any call-site suppression is narrow, commented and reviewed, as CONTRIBUTING already requires.
 
 ## Alternatives considered
 
