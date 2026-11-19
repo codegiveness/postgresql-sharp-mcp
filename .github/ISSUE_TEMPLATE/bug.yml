@@ -13,7 +13,7 @@ body:
     attributes:
       label: Version
       description: Output of `postgresql-sharp-mcp --version`, or the commit SHA when running from source.
-      placeholder: 0.7.2
+      placeholder: 0.7.3
     validations:
       required: true
   - type: dropdown
