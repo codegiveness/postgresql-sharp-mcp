@@ -85,8 +85,10 @@ internal static class Packages
             globalEnvironment, timeout: 600, directory: globalHome);
         await VerifyMissingPlatformFailsAsync(isolatedNpm, stage, spec, npmName, ConsumerEnvironment(noDotnet, stage, "omit-optional"), registry.Url);
         // The installing SDK needs a RID-specific-tool-capable version; the installed tool must then run without any .NET installation.
-        await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
-            "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, timeout: 120);
+        // The install runs from a local feed with POSTGRES_* removed, so its diagnostics carry no credentials and are reported on failure.
+        ProcessResult toolInstall = await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
+            "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, expected: null, timeout: 120);
+        Check.That(toolInstall.ExitCode == 0, $"dotnet tool install exited with status {toolInstall.ExitCode}:\n{toolInstall.Output}\n{toolInstall.Error}");
         string native = InstalledNpmCommand(npmHome, npmName, global: false, out string npmBin);
         string globalNative = InstalledNpmCommand(globalHome, npmName, global: true, out string globalBin);
         Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=" + npmName,
