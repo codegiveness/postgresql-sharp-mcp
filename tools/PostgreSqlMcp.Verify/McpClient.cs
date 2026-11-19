@@ -157,7 +157,9 @@ internal sealed class McpClient : IAsyncDisposable
     public async Task<JsonNode> OkAsync(string tool, object? arguments = null)
     {
         (bool error, JsonNode data) = await CallAsync(tool, arguments);
-        Check.That(!error, $"Expected successful tool result: {tool}. Captured arguments/results suppressed.");
+        // Codes and SQLSTATEs are fixed identifiers, never provider text, so they are safe to report; everything else stays suppressed.
+        Check.That(!error, $"Expected successful tool result: {tool}; got error code {data["error"]?["code"]?.Text() ?? "none"}, " +
+            $"SQLSTATE {data["error"]?["sql_state"]?.Text() ?? "none"}. Captured arguments/results suppressed.");
         return data;
     }
 
