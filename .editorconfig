@@ -1,6 +1,9 @@
-# Repository-wide formatting and the C# style rules that CI enforces.
-# `dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn`
-# fails on any warning below; see CONTRIBUTING.md#coding-standards.
+# Repository-wide formatting and the C# analyzer and style rules that CI enforces.
+# `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore` and the build itself fail on any
+# diagnostic below; see CONTRIBUTING.md#coding-standards and docs/adr/0006-unit-tests-and-zero-diagnostics-analyzer-policy.md.
+#
+# This file is the one ledger of what is switched off. Every `dotnet_diagnostic.<ID>.severity = none` has a reason on the line above it;
+# the style preferences further down encode the form the code predominantly used when the policy was adopted.
 root = true
 
 [*]
@@ -15,6 +18,10 @@ trim_trailing_whitespace = true
 indent_size = 2
 
 [*.cs]
+# Every analyzer diagnostic, including those that are info, hidden or off by default, is a build error (warnings are errors).
+dotnet_analyzer_diagnostic.severity = warning
+
+# --- Structure rules ---
 # Using directives: no unused ones, outside the namespace.
 dotnet_diagnostic.IDE0005.severity = warning
 csharp_using_directive_placement = outside_namespace:warning
@@ -22,6 +29,45 @@ csharp_using_directive_placement = outside_namespace:warning
 csharp_style_namespace_declarations = file_scoped:warning
 # Explicit accessibility on every non-interface member.
 dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# --- Rules that do not fit this codebase (severity none, with the reason) ---
+# The application ships no public API documentation, so missing XML comments are not a defect. GenerateDocumentationFile is only on so that IDE0005 runs in the build.
+dotnet_diagnostic.CS1591.severity = none
+# Console and MCP stdio hosts have no SynchronizationContext, so ConfigureAwait adds noise without changing behavior (and xUnit1030 forbids it in tests).
+dotnet_diagnostic.CA2007.severity = none
+# The server and its tools are a non-localized English CLI; every user-visible message is a protocol string, not a localizable resource.
+dotnet_diagnostic.CA1303.severity = none
+# Nullable reference types are enabled everywhere and the assembly is not a general-purpose library; null checks on already non-nullable parameters are redundant.
+dotnet_diagnostic.CA1062.severity = none
+# ToolException and VerificationException carry required data (an error code, a message); the parameterless and message-only constructors the rule asks for would allow invalid states.
+dotnet_diagnostic.CA1032.severity = none
+# The canonical form here is lower case (PostgreSQL object kinds, tool argument values, hex digests); the rule targets case-insensitive comparison, which this code does not do with these calls.
+dotnet_diagnostic.CA1308.severity = none
+# For constructor arguments (comparers, builders) the fix is the C# 15 `[with(...)]` collection-expression syntax, which is less readable than `new(StringComparer.Ordinal)` and has not been verified with the CodeQL C# extractor; plain empty collections and `.ToArray()` stay covered by IDE0300/IDE0305.
+dotnet_diagnostic.IDE0028.severity = none
+# Whether an ignored return value (Remove, CreateDirectory, awaited verifier helpers, collection mutators) matters is not decidable by a style rule; discarding every one adds noise.
+dotnet_diagnostic.IDE0058.severity = none
+# An editor-only hint that colors string literals as JSON; it is not a build analyzer and flags only the JSON text this code and its tests deliberately write as literals.
+dotnet_diagnostic.JSON002.severity = none
+
+# --- Style preferences: the form the code predominantly used when the policy was adopted (measured, not invented) ---
+# Explicit types except where the type is apparent from the right-hand side (about 1000 explicit declarations against 450 `var` elsewhere).
+csharp_style_var_for_built_in_types = false
+csharp_style_var_when_type_is_apparent = true
+csharp_style_var_elsewhere = false
+# Single-statement bodies are written without braces (guard clauses and one-line loops); multi-statement bodies always have them.
+csharp_prefer_braces = false
+# Members whose body is one expression are expression-bodied.
+csharp_style_expression_bodied_methods = true
+csharp_style_expression_bodied_constructors = true
+csharp_style_expression_bodied_operators = true
+csharp_style_expression_bodied_properties = true
+csharp_style_expression_bodied_indexers = true
+csharp_style_expression_bodied_accessors = true
+csharp_style_expression_bodied_lambdas = true
+csharp_style_expression_bodied_local_functions = true
+# Guard clauses (`if (bad) throw ...; return value;`) stay as statements instead of becoming `return bad ? throw ... : value`.
+dotnet_style_prefer_conditional_expression_over_return = false
 
 # Naming (.NET Framework Design Guidelines): PascalCase types and members, I-prefixed interfaces.
 dotnet_naming_symbols.types.applicable_kinds = class, struct, interface, enum, delegate
@@ -40,3 +86,30 @@ dotnet_naming_rule.types_pascal.severity = warning
 dotnet_naming_rule.members_pascal.symbols = members
 dotnet_naming_rule.members_pascal.style = pascal_case
 dotnet_naming_rule.members_pascal.severity = warning
+
+# --- Rules that fit product code but not everywhere ---
+# MCP tool parameters are the public JSON argument names (snake_case, e.g. include_system), and xUnit test names are sentences with underscores.
+[{src/PostgreSqlMcp.Tools/**.cs,tests/**.cs}]
+dotnet_diagnostic.CA1707.severity = none
+
+# Top-level boundaries and cleanup paths that must catch everything: they turn any failure into a redacted reply, an exit code or a cleared pool, so no secret, stack trace or leaked session state escapes.
+[{src/PostgreSqlMcp.Core/ToolReply.cs,src/PostgreSqlMcp.Core/SecurityWarnings.cs,src/PostgreSqlMcp.Tools/PlanTools.cs,tools/**.cs}]
+dotnet_diagnostic.CA1031.severity = none
+
+# DatabaseRegistry owns every NpgsqlDataSource it creates (eviction and DisposeAsync dispose them) and hands each to a SourceEntry, which the analyzer cannot see through.
+# Its SemaphoreSlim holds no unmanaged resource (AvailableWaitHandle is never read); disposing it would make a call after DisposeAsync fail inside the semaphore instead of at the explicit _disposed check.
+[src/PostgreSqlMcp.Core/DatabaseRegistry.cs]
+dotnet_diagnostic.CA2000.severity = none
+dotnet_diagnostic.CA2213.severity = none
+
+# The tests build a NullReferenceException as an input to the error classifier, which must map any unexpected exception type to a redacted internal_error; nothing throws it.
+[tests/PostgreSqlMcp.Core.Tests/ToolReplyTests.cs]
+dotnet_diagnostic.CA2201.severity = none
+
+# npm's registry packument requires the SHA-1 `shasum` field next to the SHA-512 integrity; the verifier computes it only to serve that field to npm and never uses it for security.
+[tools/PostgreSqlMcp.Verify/NpmRegistry.cs]
+dotnet_diagnostic.CA5350.severity = none
+
+# The SQL fuzz property randomizes letter case of a SQL keyword from a fixed seed; it is test input generation, not a security decision, and must stay reproducible.
+[tools/PostgreSqlMcp.Verify/FuzzChecks.cs]
+dotnet_diagnostic.CA5394.severity = none

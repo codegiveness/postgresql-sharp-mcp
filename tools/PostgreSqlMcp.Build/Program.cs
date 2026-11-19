@@ -14,6 +14,8 @@ internal static class PackageBuilder
     private static readonly string[] Documents = ["README.md", "LICENSE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md"];
     private static readonly string[] Notices = ["LICENSE", "THIRD-PARTY-NOTICES.md"];
     private static readonly string[] ServerProjects = ["PostgreSqlMcp", "PostgreSqlMcp.Core", "PostgreSqlMcp.Tools"];
+    private static readonly string[] SourceDirectories = ["src", "npm", "tools"];
+    private static readonly string[] RootFiles = [".editorconfig", "Directory.Build.props", "Directory.Packages.props", "global.json"];
     private const string InstallerName = "PostgreSqlMcp.NpmInstall";
     // NuGet otherwise stamps every .nupkg entry with the wall clock. 1980-01-01 is the earliest ZIP time, matching the release archives;
     // the explicit property also wins over a SOURCE_DATE_EPOCH inherited from the environment.
@@ -26,16 +28,16 @@ internal static class PackageBuilder
         {
             if (args.Length is not (1 or 3) || args[0] != "package" || (args.Length == 3 && args[1] != "--output"))
                 throw new ArgumentException("Usage: dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package [--output artifacts/packages]");
-            var root = FindRoot();
-            var output = Path.GetFullPath(args.Length == 3 ? args[2] : Path.Combine(root, "artifacts", "packages"));
-            if (output == root || new[] { "src", "npm", "tools" }.Any(name => IsWithin(output, Path.Combine(root, name))))
+            string root = FindRoot();
+            string output = Path.GetFullPath(args.Length == 3 ? args[2] : Path.Combine(root, "artifacts", "packages"));
+            if (output == root || SourceDirectories.Any(name => IsWithin(output, Path.Combine(root, name))))
                 throw new ArgumentException("Output must not be the source root or a source/package/tooling directory.");
 
-            using var metadata = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "npm", "package.json")));
-            var projectMetadata = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
-            var version = projectMetadata.Descendants("Version").Single().Value;
-            var packageId = projectMetadata.Descendants("PackageId").Single().Value;
-            var packageName = metadata.RootElement.GetProperty("name").GetString() ?? throw new InvalidDataException("npm package name is missing.");
+            using var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "npm", "package.json")));
+            var projectMetadata = XDocument.Load(Path.Combine(root, ProductVersion.ProjectFile));
+            string version = ProductVersion.Version(projectMetadata);
+            string packageId = projectMetadata.Descendants("PackageId").Single().Value;
+            string packageName = metadata.RootElement.GetProperty("name").GetString() ?? throw new InvalidDataException("npm package name is missing.");
             if (metadata.RootElement.GetProperty("version").GetString() != version)
                 throw new InvalidDataException("npm/package.json version must match PostgreSqlMcp.csproj Version.");
             CheckPlatformDependencies(metadata.RootElement, packageName, version);
@@ -46,18 +48,18 @@ internal static class PackageBuilder
             temporary = Directory.CreateTempSubdirectory("postgresql-mcp-package-").FullName;
             if (IsWithin(temporary, root))
                 throw new InvalidOperationException("Temporary staging must be outside the source tree; configure TMPDIR/TEMP accordingly.");
-            var stage = Path.Combine(temporary, "source");
+            string stage = Path.Combine(temporary, "source");
             StageSources(root, stage);
             // Resolve project identities from the child working directory; macOS temp paths can alias /private/var.
-            var server = Path.Combine("src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
-            var installer = Path.Combine("tools", InstallerName, $"{InstallerName}.csproj");
+            string server = Path.Combine("src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
+            string installer = Path.Combine("tools", InstallerName, $"{InstallerName}.csproj");
             var tarballs = new List<string>();
-            foreach (var platform in NpmPlatform.All)
+            foreach (NpmPlatform platform in NpmPlatform.All)
             {
                 // One package per platform: npm installs only the one matching os/cpu/libc, so a machine downloads one runtime.
-                var name = platform.PackageName(packageName);
-                var package = Path.Combine(temporary, "npm-" + platform.Rid);
-                var runtime = Path.Combine(package, NpmPlatform.RuntimeDirectory);
+                string name = platform.PackageName(packageName);
+                string package = Path.Combine(temporary, "npm-" + platform.Rid);
+                string runtime = Path.Combine(package, NpmPlatform.RuntimeDirectory);
                 await DotnetAsync(stage, "publish", server, "-c", "Release", "--self-contained", "true",
                     $"-p:RuntimeIdentifier={platform.Rid}", $"-p:RuntimeIdentifiers={platform.Rid}", "-p:UseAppHost=true", "-o", runtime);
                 // Both applications share the same packaged runtime, not a system installation.
@@ -68,32 +70,32 @@ internal static class PackageBuilder
                 await File.WriteAllTextAsync(Path.Combine(package, "README.md"),
                     $"# {name}\n\nThe {platform.Os}-{platform.Cpu} server and bundled .NET runtime of [{packageName}](https://www.npmjs.com/package/{packageName}). " +
                     $"Install `{packageName}` instead; npm selects this package as an optional dependency on matching machines.\n");
-                var tarball = Path.Combine(temporary, NpmPlatform.TarballName(name, version));
+                string tarball = Path.Combine(temporary, NpmPlatform.TarballName(name, version));
                 CreateTarball(package, tarball);
                 tarballs.Add(tarball);
             }
 
-            var main = Path.Combine(temporary, "npm");
+            string main = Path.Combine(temporary, "npm");
             CopyFile(Path.Combine(root, "npm", "package.json"), Path.Combine(main, "package.json"));
-            foreach (var document in Documents)
+            foreach (string document in Documents)
                 CopyFile(Path.Combine(stage, document), Path.Combine(main, document));
             StageNotices(stage, main);
             // npm creates bin links before postinstall. The seed is a real PE
             // apphost so Windows cmd-shim chooses native invocation (no shebang).
             CopyFile(Path.Combine(temporary, "npm-win-x64", NpmPlatform.RuntimeDirectory, "PostgreSqlMcp.exe"),
                 Path.Combine(main, "bin", "postgresql-sharp-mcp.exe"));
-            var mainTarball = Path.Combine(temporary, NpmPlatform.TarballName(packageName, version));
+            string mainTarball = Path.Combine(temporary, NpmPlatform.TarballName(packageName, version));
             CreateTarball(main, mainTarball);
 
             // One pack writes the pointer package and a self-contained package per RID; the project restores those RIDs only for `pack`.
-            var packed = Path.Combine(temporary, "nuget");
+            string packed = Path.Combine(temporary, "nuget");
             await DotnetAsync(stage, "pack", server, "-c", "Release", "-o", packed, $"-p:DeterministicTimestamp={PackageTimestamp}");
             CheckNuget(packed, nugetNames);
-            var nupkgs = nugetNames.Select(name => Path.Combine(packed, name));
+            IEnumerable<string> nupkgs = nugetNames.Select(name => Path.Combine(packed, name));
             Directory.CreateDirectory(output);
-            foreach (var artifact in tarballs.Prepend(mainTarball).Concat(nupkgs))
+            foreach (string artifact in tarballs.Prepend(mainTarball).Concat(nupkgs))
             {
-                var destination = Path.Combine(output, Path.GetFileName(artifact));
+                string destination = Path.Combine(output, Path.GetFileName(artifact));
                 CopyFile(artifact, destination);
                 Console.WriteLine(destination);
             }
@@ -104,7 +106,7 @@ internal static class PackageBuilder
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"package: {exception.Message}");
+            await Console.Error.WriteLineAsync($"package: {exception.Message}");
             return 1;
         }
         finally
@@ -116,7 +118,7 @@ internal static class PackageBuilder
 
     private static string FindRoot()
     {
-        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        foreach (string start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
             for (var directory = new DirectoryInfo(start); directory is not null; directory = directory.Parent)
                 if (File.Exists(Path.Combine(directory.FullName, "npm", "package.json")) &&
                     File.Exists(Path.Combine(directory.FullName, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj")))
@@ -126,33 +128,33 @@ internal static class PackageBuilder
 
     private static bool IsWithin(string path, string parent)
     {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return string.Equals(path, parent, comparison) || path.StartsWith(parent + Path.DirectorySeparatorChar, comparison);
     }
 
     private static void StageSources(string root, string stage)
     {
-        foreach (var name in new[] { "Directory.Build.props", "Directory.Packages.props", "global.json" }.Concat(Documents))
+        foreach (string name in RootFiles.Concat(Documents))
             CopyFile(Path.Combine(root, name), Path.Combine(stage, name));
-        foreach (var notice in Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt"))
+        foreach (string notice in Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt"))
             CopyFile(notice, Path.Combine(stage, "LICENSES", Path.GetFileName(notice)));
         // The installer links tools/Shared/ProcessRunner.cs, so staged builds need it at the same relative path.
-        foreach (var relative in ServerProjects.Select(name => Path.Combine("src", name)).Append(Path.Combine("tools", InstallerName)).Append(Path.Combine("tools", "Shared")))
+        foreach (string relative in ServerProjects.Select(name => Path.Combine("src", name)).Append(Path.Combine("tools", InstallerName)).Append(Path.Combine("tools", "Shared")))
             StageProject(Path.Combine(root, relative), Path.Combine(stage, relative));
     }
 
     private static void StageProject(string source, string destination)
     {
-        foreach (var file in Directory.EnumerateFiles(source))
+        foreach (string file in Directory.EnumerateFiles(source))
         {
-            var name = Path.GetFileName(file);
+            string name = Path.GetFileName(file);
             if (Path.GetExtension(file) is ".cs" or ".csproj" || (name.StartsWith("packages", StringComparison.Ordinal) && name.EndsWith(".lock.json", StringComparison.Ordinal)))
                 CopyFile(file, Path.Combine(destination, name));
         }
-        foreach (var directory in Directory.EnumerateDirectories(source))
+        foreach (string directory in Directory.EnumerateDirectories(source))
         {
-            var name = Path.GetFileName(directory);
-            if (name is "bin" or "obj" || name.StartsWith('.'))
+            string name = Path.GetFileName(directory);
+            if (name is "bin" or "obj" or ['.', ..])
                 continue;
             if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Source staging does not accept directory links.");
@@ -171,9 +173,9 @@ internal static class PackageBuilder
     // Every npm package redistributes .NET or ships with it, so each carries the license and dependency notices.
     private static void StageNotices(string stage, string package)
     {
-        foreach (var notice in Notices)
+        foreach (string notice in Notices)
             CopyFile(Path.Combine(stage, notice), Path.Combine(package, notice));
-        foreach (var notice in Directory.EnumerateFiles(Path.Combine(stage, "LICENSES"), "*.txt"))
+        foreach (string notice in Directory.EnumerateFiles(Path.Combine(stage, "LICENSES"), "*.txt"))
             CopyFile(notice, Path.Combine(package, "LICENSES", Path.GetFileName(notice)));
     }
 
@@ -181,15 +183,15 @@ internal static class PackageBuilder
     private static void CheckPlatformDependencies(JsonElement metadata, string packageName, string version)
     {
         var expected = NpmPlatform.All.Select(platform => platform.PackageName(packageName) + "@" + version).ToHashSet(StringComparer.Ordinal);
-        var declared = metadata.TryGetProperty("optionalDependencies", out var dependencies)
+        HashSet<string> declared = metadata.TryGetProperty("optionalDependencies", out JsonElement dependencies)
             ? dependencies.EnumerateObject().Select(dependency => dependency.Name + "@" + dependency.Value.GetString()).ToHashSet(StringComparer.Ordinal)
             : [];
         if (!declared.SetEquals(expected))
             throw new InvalidDataException($"npm/package.json optionalDependencies must be exactly {string.Join(", ", expected.Order(StringComparer.Ordinal))}.");
         if (metadata.TryGetProperty("dependencies", out _))
             throw new InvalidDataException("npm/package.json must not declare dependencies; platform packages are optionalDependencies.");
-        if (!metadata.TryGetProperty("scripts", out var scripts) || scripts.EnumerateObject().Count() != 1 ||
-            !scripts.TryGetProperty("postinstall", out var postinstall) || postinstall.GetString() != NpmPlatform.InstallerCommand)
+        if (!metadata.TryGetProperty("scripts", out JsonElement scripts) || scripts.EnumerateObject().Count() != 1 ||
+            !scripts.TryGetProperty("postinstall", out JsonElement postinstall) || postinstall.GetString() != NpmPlatform.InstallerCommand)
             throw new InvalidDataException($"npm/package.json scripts must be exactly postinstall: {NpmPlatform.InstallerCommand}.");
     }
 
@@ -214,12 +216,12 @@ internal static class PackageBuilder
     }
     private static async Task DotnetAsync(string stage, params string[] arguments)
     {
-        var properties = new[]
-        {
+        string[] properties =
+        [
             "RestoreLockedMode=true", "EnableSourceControlManagerQueries=false", "EnableSourceLink=false", "EmbedUntrackedSources=false",
             "DebugType=None", "DebugSymbols=false", "IncludeSymbols=false", $"PathMap={stage}=/_/"
-        };
-        var result = await ProcessRunner.RunAsync(new ProcessSpec("dotnet", [.. arguments, .. properties.Select(property => $"-p:{property}")])
+        ];
+        ProcessResult result = await ProcessRunner.RunAsync(new ProcessSpec("dotnet", [.. arguments, .. properties.Select(property => $"-p:{property}")])
         {
             WorkingDirectory = stage,
             Timeout = Timeout.InfiniteTimeSpan,
@@ -231,13 +233,13 @@ internal static class PackageBuilder
 
     private static void CreateTarball(string package, string destination)
     {
-        using var stream = File.Create(destination);
+        using FileStream stream = File.Create(destination);
         using var gzip = new GZipStream(stream, CompressionLevel.Optimal);
         // GNU format: .NET's PAX writer names each extended header after the process ID, which makes identical content hash differently per build.
         using var tar = new TarWriter(gzip, TarEntryFormat.Gnu);
-        foreach (var file in Directory.EnumerateFiles(package, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+        foreach (string file in Directory.EnumerateFiles(package, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         {
-            var relative = Path.GetRelativePath(package, file).Replace(Path.DirectorySeparatorChar, '/');
+            string relative = Path.GetRelativePath(package, file).Replace(Path.DirectorySeparatorChar, '/');
             var entry = new GnuTarEntry(TarEntryType.RegularFile, $"package/{relative}")
             {
                 Uid = 0,
@@ -249,7 +251,7 @@ internal static class PackageBuilder
                     ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute
                     : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
             };
-            using var data = File.OpenRead(file);
+            using FileStream data = File.OpenRead(file);
             entry.DataStream = data;
             tar.WriteEntry(entry);
         }
@@ -258,13 +260,13 @@ internal static class PackageBuilder
     // Every package carries the notices (each redistributes .NET) and no source, debug files or packaging tooling; the directory holds exactly the expected set.
     private static void CheckNuget(string directory, string[] expected)
     {
-        var actual = Directory.EnumerateFiles(directory, "*.nupkg").Select(Path.GetFileName).Order(StringComparer.Ordinal);
+        IOrderedEnumerable<string?> actual = Directory.EnumerateFiles(directory, "*.nupkg").Select(Path.GetFileName).Order(StringComparer.Ordinal);
         if (!actual.SequenceEqual(expected.Order(StringComparer.Ordinal)))
             throw new InvalidDataException($"dotnet pack must produce exactly {string.Join(", ", expected)}.");
-        foreach (var name in expected)
+        foreach (string name in expected)
         {
-            using var archive = ZipFile.OpenRead(Path.Combine(directory, name));
-            foreach (var document in Documents.Concat(["LICENSES/DotNet.txt", "LICENSES/DotNet-ThirdParty.txt", "LICENSES/Npgsql.txt", "LICENSES/ModelContextProtocol.txt"]))
+            using ZipArchive archive = ZipFile.OpenRead(Path.Combine(directory, name));
+            foreach (string document in Documents.Concat(["LICENSES/DotNet.txt", "LICENSES/DotNet-ThirdParty.txt", "LICENSES/Npgsql.txt", "LICENSES/ModelContextProtocol.txt"]))
                 if (archive.GetEntry(document) is null)
                     throw new InvalidDataException($"NuGet package {name} is missing required notice {document}.");
             if (archive.Entries.Any(entry => entry.FullName.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) ||

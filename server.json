@@ -1,0 +1,263 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.codegiveness/postgresql-sharp-mcp",
+  "title": "postgresql-sharp-mcp",
+  "description": "PostgreSQL MCP server in C#/.NET: live database discovery, schema inspection, bounded read-only-by-default SQL, query plans and health checks.",
+  "version": "0.7.3",
+  "repository": {
+    "url": "https://github.com/codegiveness/postgresql-sharp-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@codegiveness/postgresql-sharp-mcp",
+      "version": "0.7.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "POSTGRES_CONNECTION_STRING",
+          "description": "One Npgsql key=value connection string (not a postgres:// URL). Creates the `primary` profile and enables live database discovery. Set this or POSTGRES_TARGETS/POSTGRES_TARGETS_FILE, not both.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "POSTGRES_TARGETS",
+          "description": "JSON object mapping profile names to bootstrap Npgsql connection strings. Takes precedence over POSTGRES_TARGETS_FILE; cannot be combined with POSTGRES_CONNECTION_STRING.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "POSTGRES_TARGETS_FILE",
+          "description": "Path to an owner-protected JSON profile file (same shape as POSTGRES_TARGETS). The file holds credentials; the path itself is not secret.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "POSTGRES_DATABASES",
+          "description": "Optional database lock: JSON array of unique physical database names the server may ever open.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "POSTGRES_DATABASE_LOCK_MODE",
+          "description": "Database lock mode: advisory (default; PostgreSQL grant findings are warnings) or strict (findings refuse startup). strict requires POSTGRES_DATABASES.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "advisory",
+          "choices": [
+            "advisory",
+            "strict"
+          ]
+        },
+        {
+          "name": "POSTGRES_REQUIRE_DATABASE_LOCK",
+          "description": "true makes a missing POSTGRES_DATABASES a startup error.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false",
+          "choices": [
+            "true",
+            "false"
+          ]
+        },
+        {
+          "name": "POSTGRES_ACCESS_MODE",
+          "description": "unrestricted (default when omitted) permits explicitly requested writes; restricted refuses writes.",
+          "isRequired": false,
+          "isSecret": false,
+          "choices": [
+            "unrestricted",
+            "restricted"
+          ]
+        },
+        {
+          "name": "POSTGRES_QUERY_TIMEOUT",
+          "description": "Per-call timeout in seconds (1-600).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "30"
+        },
+        {
+          "name": "POSTGRES_MAX_ROWS",
+          "description": "Maximum rows per result page (1-5000).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "1000"
+        },
+        {
+          "name": "POSTGRES_MAX_RESULT_BYTES",
+          "description": "Maximum bytes per result payload (4096-1048576).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "65536"
+        },
+        {
+          "name": "POSTGRES_MAX_CELL_CHARS",
+          "description": "Maximum characters per returned cell (1-16384).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "4096"
+        },
+        {
+          "name": "POSTGRES_POOL_SIZE",
+          "description": "Maximum physical connections per pool (1-32).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "8"
+        },
+        {
+          "name": "POSTGRES_MAX_CONCURRENT_CALLS",
+          "description": "Maximum concurrent database operations per process (1-64).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "16"
+        },
+        {
+          "name": "POSTGRES_LOG_LEVEL",
+          "description": "Diagnostic level written to stderr.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "warning",
+          "choices": [
+            "trace",
+            "debug",
+            "information",
+            "warning",
+            "error",
+            "critical",
+            "none"
+          ]
+        }
+      ]
+    },
+    {
+      "registryType": "nuget",
+      "registryBaseUrl": "https://api.nuget.org/v3/index.json",
+      "identifier": "codegiveness.postgresql-sharp-mcp",
+      "version": "0.7.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "POSTGRES_CONNECTION_STRING",
+          "description": "One Npgsql key=value connection string (not a postgres:// URL). Creates the `primary` profile and enables live database discovery. Set this or POSTGRES_TARGETS/POSTGRES_TARGETS_FILE, not both.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "POSTGRES_TARGETS",
+          "description": "JSON object mapping profile names to bootstrap Npgsql connection strings. Takes precedence over POSTGRES_TARGETS_FILE; cannot be combined with POSTGRES_CONNECTION_STRING.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "POSTGRES_TARGETS_FILE",
+          "description": "Path to an owner-protected JSON profile file (same shape as POSTGRES_TARGETS). The file holds credentials; the path itself is not secret.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "POSTGRES_DATABASES",
+          "description": "Optional database lock: JSON array of unique physical database names the server may ever open.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "POSTGRES_DATABASE_LOCK_MODE",
+          "description": "Database lock mode: advisory (default; PostgreSQL grant findings are warnings) or strict (findings refuse startup). strict requires POSTGRES_DATABASES.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "advisory",
+          "choices": [
+            "advisory",
+            "strict"
+          ]
+        },
+        {
+          "name": "POSTGRES_REQUIRE_DATABASE_LOCK",
+          "description": "true makes a missing POSTGRES_DATABASES a startup error.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false",
+          "choices": [
+            "true",
+            "false"
+          ]
+        },
+        {
+          "name": "POSTGRES_ACCESS_MODE",
+          "description": "unrestricted (default when omitted) permits explicitly requested writes; restricted refuses writes.",
+          "isRequired": false,
+          "isSecret": false,
+          "choices": [
+            "unrestricted",
+            "restricted"
+          ]
+        },
+        {
+          "name": "POSTGRES_QUERY_TIMEOUT",
+          "description": "Per-call timeout in seconds (1-600).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "30"
+        },
+        {
+          "name": "POSTGRES_MAX_ROWS",
+          "description": "Maximum rows per result page (1-5000).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "1000"
+        },
+        {
+          "name": "POSTGRES_MAX_RESULT_BYTES",
+          "description": "Maximum bytes per result payload (4096-1048576).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "65536"
+        },
+        {
+          "name": "POSTGRES_MAX_CELL_CHARS",
+          "description": "Maximum characters per returned cell (1-16384).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "4096"
+        },
+        {
+          "name": "POSTGRES_POOL_SIZE",
+          "description": "Maximum physical connections per pool (1-32).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "8"
+        },
+        {
+          "name": "POSTGRES_MAX_CONCURRENT_CALLS",
+          "description": "Maximum concurrent database operations per process (1-64).",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "16"
+        },
+        {
+          "name": "POSTGRES_LOG_LEVEL",
+          "description": "Diagnostic level written to stderr.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "warning",
+          "choices": [
+            "trace",
+            "debug",
+            "information",
+            "warning",
+            "error",
+            "critical",
+            "none"
+          ]
+        }
+      ]
+    }
+  ]
+}

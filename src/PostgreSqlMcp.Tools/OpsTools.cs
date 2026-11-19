@@ -14,13 +14,14 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 {
     [McpServerTool(Name = "analyze_db_health", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Current-database health summary or focused vacuum, index, constraints, sequences, replication, or blocking evidence. Results are paged; no changes are made.")]
-    public Task<CallToolResult> AnalyzeDbHealth(CancellationToken ct,
+    public Task<CallToolResult> AnalyzeDbHealth(
         [Description(ParameterText.Database)] string database,
         [Description("summary (default), vacuum, index, constraints, sequences, replication, or blocking.")] string section = "summary",
         [Description(ParameterText.SchemaFilter + " Applies to vacuum, index, constraints and sequences.")] string? schema = null,
         [Description(ParameterText.Limit)] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
-        [Description(ParameterText.Target)] string? target = null) =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) =>
         ToolReply.Run(database, async () =>
         {
             string sql = section.ToLowerInvariant() switch
@@ -37,7 +38,9 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
             QueryPage page = await executor.QueryAsync(database, sql, Filters(schema), limit, offset, ct: ct, target: target);
             return new
             {
-                database, section, result = page,
+                database,
+                section,
+                result = page,
                 notes = section.ToLowerInvariant() switch
                 {
                     "summary" => "Buffer hit ratio is cumulative since stats_reset, not a latency metric. Connection counts and transaction ages are limited to this database; hidden sessions may have unavailable fields.",
@@ -53,12 +56,13 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 
     [McpServerTool(Name = "get_top_queries", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Rank pg_stat_statements for the current database only. Requires an installed, preloaded extension at version 1.8 or newer (PostgreSQL 13+); toplevel is null before extension version 1.9 (PostgreSQL 14). Query text clipping is explicit.")]
-    public Task<CallToolResult> GetTopQueries(CancellationToken ct,
+    public Task<CallToolResult> GetTopQueries(
         [Description(ParameterText.Database)] string database,
         [Description("total_time (default), mean_time, calls, rows, or reads; descending.")] string order_by = "total_time",
         [Description("Page size; default 10, at most max_rows.")] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
-        [Description(ParameterText.Target)] string? target = null) =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) =>
         ToolReply.Run(database, async () =>
         {
             string order = order_by.ToLowerInvariant() switch
@@ -97,7 +101,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
                 try
                 {
                     QueryPage page = await session.QueryAsync(sql,
-                        new Dictionary<string, object?> { ["text_limit"] = options.MaxCellChars }, limit ?? Math.Min(10, options.MaxRows), offset, token);
+                        new Dictionary<string, object?> { ["text_limit"] = options.MaxCellChars }, limit ?? Math.Min(10, options.MaxRows), offset, ct: token);
                     return new { database, order_by, result = page, notes = "Statistics are cumulative and can reset or entries can be evicted. PostgreSQL hides other users' query text without appropriate privileges. Pagination re-executes against changing statistics, not a snapshot." + (hasToplevel ? "" : " toplevel is null because this pg_stat_statements version (older than 1.9, PostgreSQL 14) does not record it; update the extension to distinguish nested statements.") };
                 }
                 catch (PostgresException ex) when (ex.SqlState == "55000")
@@ -121,18 +125,24 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
 
     [McpServerTool(Name = "analyze_indexes", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Paged current-database index validity, usage, size and structurally duplicate evidence. Recommendations are contextual, never fabricated missing-index predictions.")]
-    public Task<CallToolResult> AnalyzeIndexes(CancellationToken ct,
+    public Task<CallToolResult> AnalyzeIndexes(
         [Description(ParameterText.Database)] string database,
         [Description(ParameterText.SchemaFilter)] string? schema = null,
         [Description("Exact, case-sensitive table name; omitted means all tables.")] string? table = null,
         [Description(ParameterText.Limit)] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
-        [Description(ParameterText.Target)] string? target = null) =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) =>
         ToolReply.Run(database, async () =>
         {
             QueryPage page = await executor.QueryAsync(database, IndexSql, Filters(schema, table), limit, offset, ct: ct, target: target);
-            return new { database, result = page, notes = IndexNotes,
-                evaluation = "Use explain_query on the actual workload. Supply candidate CREATE INDEX statements there to compare real planner costs through an already-installed hypopg extension. No indexes are created by these tools." };
+            return new
+            {
+                database,
+                result = page,
+                notes = IndexNotes,
+                evaluation = "Use explain_query on the actual workload. Supply candidate CREATE INDEX statements there to compare real planner costs through an already-installed hypopg extension. No indexes are created by these tools."
+            };
         });
 
     private const string IndexNotes = "Zero scans since stats_reset are evidence, not permission to drop an index. Primary/unique/exclusion constraints, foreign-key workloads, replicas and infrequent queries matter. Duplicate evidence compares full catalog structure, not workload interchangeability. PostgreSQL has no missing-index DMV; sequential scans can be optimal. Costs are planner estimates, not measured speedups.";
@@ -140,7 +150,7 @@ public sealed class OpsTools(SqlExecutor executor, ServerOptions options)
     private static Dictionary<string, object?> Filters(string? schema, string? table = null) =>
         new() { ["schema"] = schema, ["table"] = table };
 
-    private static string QuoteIdentifier(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+    private static string QuoteIdentifier(string value) => "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private const string SummarySql = """
         SELECT d.datname AS database_name, pg_database_size(d.datid) AS size_bytes,

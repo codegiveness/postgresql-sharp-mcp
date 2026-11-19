@@ -27,7 +27,7 @@ internal sealed class NpmRegistry : IAsyncDisposable
     private NpmRegistry(string url, IEnumerable<(string Name, JsonObject Manifest, string Tarball)> packages)
     {
         Url = url;
-        foreach (var (name, manifest, tarball) in packages)
+        foreach ((string name, JsonObject manifest, string tarball) in packages)
         {
             string version = manifest["version"].Text();
             string file = Path.GetFileName(tarball);
@@ -76,7 +76,7 @@ internal sealed class NpmRegistry : IAsyncDisposable
         await using var archive = new TarReader(gzip);
         while (await archive.GetNextEntryAsync() is { } entry)
             if (entry.Name == "package/package.json" && entry.DataStream is not null)
-                return JsonNode.Parse(entry.DataStream)!.AsObject();
+                return (await JsonNode.ParseAsync(entry.DataStream))!.AsObject();
         throw new VerificationException($"{Path.GetFileName(tarball)} has no package.json.");
     }
 

@@ -38,9 +38,9 @@ public static class ToolRegistration
 
     private static void Add<T>(IServiceCollection services, ServerOptions options) where T : class
     {
-        foreach (var method in typeof(T).GetMethods(BindingFlags.Instance | BindingFlags.Public))
+        foreach (MethodInfo method in typeof(T).GetMethods(BindingFlags.Instance | BindingFlags.Public))
         {
-            var attribute = method.GetCustomAttribute<McpServerToolAttribute>();
+            McpServerToolAttribute? attribute = method.GetCustomAttribute<McpServerToolAttribute>();
             if (attribute is null) continue;
             bool execute = attribute.Name == "execute_sql";
             string? description = Describe(attribute.Name!, method.GetCustomAttribute<DescriptionAttribute>()?.Description, options);
@@ -49,9 +49,12 @@ public static class ToolRegistration
                 r => ActivatorUtilities.CreateInstance(r.Services!, typeof(T)),
                 new McpServerToolCreateOptions
                 {
-                    Services = sp, Description = description,
+                    Services = sp,
+                    Description = description,
                     ReadOnly = !execute || !options.Unrestricted,
-                    Destructive = execute && options.Unrestricted, Idempotent = !execute, OpenWorld = false
+                    Destructive = execute && options.Unrestricted,
+                    Idempotent = !execute,
+                    OpenWorld = false
                 }));
         }
     }

@@ -84,17 +84,17 @@ internal static class ProcessRunner
         if (OperatingSystem.IsWindows() && Path.GetExtension(spec.File) is ".cmd" or ".bat")
         {
             string[] words = [spec.File, .. arguments];
-            if (!words.All(word => !word.Contains('"') && !word.Contains('%') && !word.Contains('!') && !word.Contains('\r') && !word.Contains('\n')))
+            if (!words.All(word => !word.Contains('"', StringComparison.Ordinal) && !word.Contains('%', StringComparison.Ordinal) && !word.Contains('!', StringComparison.Ordinal) && !word.Contains('\r', StringComparison.Ordinal) && !word.Contains('\n', StringComparison.Ordinal)))
                 throw new ArgumentException("Unsupported metacharacter in Windows command path or argument.");
-            info.FileName = System.Environment.GetEnvironmentVariable("ComSpec")
-                ?? Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System), "cmd.exe");
+            info.FileName = Environment.GetEnvironmentVariable("ComSpec")
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
             info.Arguments = "/d /s /c \"" + string.Join(" ", words.Select(word => "\"" + word + "\"")) + "\"";
         }
         else
             foreach (string argument in arguments) info.ArgumentList.Add(argument);
         if (spec.ClearEnvironment) info.Environment.Clear();
         if (spec.Environment is not null)
-            foreach (var (key, value) in spec.Environment)
+            foreach ((string key, string? value) in spec.Environment)
                 if (value is null) info.Environment.Remove(key);
                 else info.Environment[key] = value;
         var process = new Process { StartInfo = info };
@@ -118,6 +118,12 @@ internal static class ProcessRunner
     public static async Task<ProcessResult> RunAsync(ProcessSpec spec)
     {
         using Process process = Start(spec);
+        return await RunStartedAsync(process, spec);
+    }
+
+    // Separate from RunAsync so the process has one owner (above) and this method, which only borrows it, observes both drains before returning.
+    private static async Task<ProcessResult> RunStartedAsync(Process process, ProcessSpec spec)
+    {
         using var deadline = new CancellationTokenSource(spec.Timeout);
         Task<string> output = Drain(process, spec.Output, standardError: false, deadline.Token);
         Task<string> error = Drain(process, spec.Output, standardError: true, deadline.Token);
@@ -131,11 +137,11 @@ internal static class ProcessRunner
             }
             await process.WaitForExitAsync(deadline.Token);
             await drains;
-            string text = spec.Output.Apply(output.Result), diagnostics = spec.Output.Apply(error.Result);
+            string text = spec.Output.Apply(await output), diagnostics = spec.Output.Apply(await error);
             if (spec.Output.Echoes)
             {
-                Console.Write(text);
-                Console.Error.Write(diagnostics);
+                await Console.Out.WriteAsync(text);
+                await Console.Error.WriteAsync(diagnostics);
             }
             return new ProcessResult(process.ExitCode, text, diagnostics);
         }

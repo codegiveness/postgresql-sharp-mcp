@@ -76,7 +76,9 @@ internal static class Coverage
         {
             result = await ProcessRunner.RunAsync(new ProcessSpec(command.File, command.Arguments)
             {
-                Timeout = timeout, Output = OutputPolicy.Inherit, WorkingDirectory = directory
+                Timeout = timeout,
+                Output = OutputPolicy.Inherit,
+                WorkingDirectory = directory
             });
         }
         catch (TimeoutException) { throw new VerificationException($"{command.File} {command.Arguments[0]} exceeded its deadline."); }
@@ -88,7 +90,7 @@ internal static class Coverage
     /// <summary>Lists the files with the most unexecuted lines and their wholly unexecuted methods, so the next scenario targets real gaps.</summary>
     private static void Summarize(string cobertura)
     {
-        XDocument report = XDocument.Load(cobertura);
+        var report = XDocument.Load(cobertura);
         foreach (string name in Assemblies)
             Check.That(report.Descendants("package").Where(package => (string?)package.Attribute("name") == name)
                 .Descendants("line").Any(line => (int)line.Attribute("hits")! > 0),
@@ -97,10 +99,10 @@ internal static class Coverage
         foreach (XElement type in report.Descendants("class"))
         {
             string file = (string?)type.Attribute("filename") ?? "?";
-            if (!files.TryGetValue(file, out var entry)) files[file] = entry = ([], [], []);
+            if (!files.TryGetValue(file, out (HashSet<int> Lines, HashSet<int> Covered, SortedSet<string> Dead) entry)) files[file] = entry = ([], [], []);
             foreach (XElement method in type.Descendants("method"))
             {
-                var lines = method.Elements("lines").Elements("line").ToArray();
+                XElement[] lines = [.. method.Elements("lines").Elements("line")];
                 if (lines.Length > 0 && lines.All(line => (int?)line.Attribute("hits") == 0))
                     entry.Dead.Add($"{(string?)type.Attribute("name")}.{(string?)method.Attribute("name")}");
             }
@@ -112,7 +114,7 @@ internal static class Coverage
             }
         }
         Console.WriteLine("Least-covered files (unexecuted lines of lines):");
-        foreach (var (file, entry) in files.OrderByDescending(pair => pair.Value.Lines.Count - pair.Value.Covered.Count).Take(10))
+        foreach ((string file, (HashSet<int> Lines, HashSet<int> Covered, SortedSet<string> Dead) entry) in files.OrderByDescending(pair => pair.Value.Lines.Count - pair.Value.Covered.Count).Take(10))
         {
             int missed = entry.Lines.Count - entry.Covered.Count;
             if (missed == 0) break;

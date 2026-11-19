@@ -13,12 +13,12 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
     private readonly SemaphoreSlim _calls = new(options.MaxConcurrentCalls);
 
     public Task<QueryPage> QueryAsync(string database, string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, bool readOnly = true, CancellationToken ct = default, string? target = null, bool callerStatement = false,
-        IReadOnlyList<string?>? positional = null) =>
-        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, token, callerStatement, positional), readOnly, ct, target);
+        int? limit = null, int offset = 0, bool readOnly = true, string? target = null, bool callerStatement = false,
+        IReadOnlyList<string?>? positional = null, CancellationToken ct = default) =>
+        WithSessionAsync(database, (session, token) => session.QueryAsync(sql, parameters, limit, offset, callerStatement, positional, token), readOnly, target, ct);
 
     public async Task<T> WithSessionAsync<T>(string database, Func<SqlSession, CancellationToken, Task<T>> action,
-        bool readOnly = true, CancellationToken ct = default, string? target = null)
+        bool readOnly = true, string? target = null, CancellationToken ct = default)
     {
         DatabaseRegistry.DatabaseSelection selection = registry.Resolve(database, target, out string profile);
         if (!readOnly && !options.Unrestricted) throw new ToolException("read_only", "This server is in restricted access mode and refuses writes; use read_only=true.");
@@ -31,8 +31,8 @@ public sealed class SqlExecutor(ServerOptions options, DatabaseRegistry registry
         {
             await _calls.WaitAsync(token).ConfigureAwait(false); entered = true;
             source = await registry.AcquireAsync(selection, token).ConfigureAwait(false);
-            await using var connection = await OpenAsync(source, profile, selection.ConnectionString, token).ConfigureAwait(false);
-            await using var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+            await using NpgsqlConnection connection = await OpenAsync(source, profile, selection.ConnectionString, token).ConfigureAwait(false);
+            await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
             // Control statements are fixed server text. User SQL cannot end this transaction. The session sends them
             // in the same batch as its first statement, so setup costs no extra network round trip.
             var session = new SqlSession(database, connection, transaction, options, readOnly,
@@ -136,17 +136,20 @@ public sealed class SqlSession
     /// <summary>Marks this session's pooled connections for disposal instead of reuse.</summary>
     public void ClearPool() => NpgsqlConnection.ClearPool(connection);
 
-    /// <param name="callerStatement">The SQL came from the tool caller, so PostgreSQL error positions are reported relative to it.</param>
-    /// <param name="positional">Caller values for $1..$n (see <see cref="SqlParameters"/>); exclusive with named parameters.</param>
+    /// <summary>
+    /// Runs one statement and returns a bounded page. <paramref name="callerStatement"/> marks SQL that came from the tool caller, so PostgreSQL error
+    /// positions are reported relative to it; <paramref name="positional"/> holds caller values for $1..$n (see <see cref="SqlParameters"/>) and is
+    /// exclusive with named <paramref name="parameters"/>.
+    /// </summary>
     public async Task<QueryPage> QueryAsync(string sql, IReadOnlyDictionary<string, object?>? parameters = null,
-        int? limit = null, int offset = 0, CancellationToken ct = default, bool callerStatement = false, IReadOnlyList<string?>? positional = null)
+        int? limit = null, int offset = 0, bool callerStatement = false, IReadOnlyList<string?>? positional = null, CancellationToken ct = default)
     {
         sql = SqlGuard.Validate(sql, out string kind);
         string statement = sql;
         int prefixLength = 0;
         int rowLimit = limit ?? Math.Min(100, options.MaxRows);
         if (rowLimit < 1 || rowLimit > options.MaxRows) throw new ToolException("invalid_limit", $"limit must be 1..{options.MaxRows}.");
-        if (offset < 0 || offset > 1000000) throw new ToolException("invalid_offset", "offset must be 0..1000000. Prefer SQL keyset pagination for deep pages.");
+        if (offset is < 0 or > 1000000) throw new ToolException("invalid_offset", "offset must be 0..1000000. Prefer SQL keyset pagination for deep pages.");
         if (!readOnly && offset != 0) throw new ToolException("invalid_offset", "Write operations cannot be re-executed for pagination.");
         bool serverPage = readOnly && kind is "SELECT" or "WITH" or "VALUES" or "TABLE";
         if (serverPage)
@@ -165,7 +168,7 @@ public sealed class SqlSession
     {
         var command = new NpgsqlBatchCommand(sql);
         if (parameters is not null)
-            foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+            foreach ((string name, object? value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
         else if (positional is not null)
             SqlParameters.Bind(command.Parameters, positional);
         await using SessionReader result = await ExecuteReaderAsync([command], CommandBehavior.SequentialAccess, ct).ConfigureAwait(false);
@@ -184,7 +187,7 @@ public sealed class SqlSession
         var rowBuffer = new ArrayBufferWriter<byte>();
         using var rowWriter = new Utf8JsonWriter(rowBuffer);
         JsonSerializer.Serialize(rowWriter, columns, ToolReply.JsonOptions);
-        rowWriter.Flush();
+        await rowWriter.FlushAsync(ct).ConfigureAwait(false);
         int budget = options.MaxResultBytes - 2048 - rowBuffer.WrittenCount;
         if (budget < 256) throw new ToolException("result_too_wide", "Column metadata exceeds the result budget; select fewer columns.");
         var rows = new List<object?[]>(Math.Min(rowLimit, 128));
@@ -195,7 +198,7 @@ public sealed class SqlSession
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             if (rows.Count == rowLimit) { truncated = true; reason = "row_limit"; break; }
-            var row = new object?[columns.Length];
+            object?[] row = new object?[columns.Length];
             List<CellClip>? rowClips = null;
             for (int col = 0; col < row.Length; col++)
             {
@@ -219,7 +222,7 @@ public sealed class SqlSession
                 }
                 else if (fieldType == typeof(byte[]))
                 {
-                    using Stream stream = reader.GetStream(col);
+                    using Stream stream = await reader.GetStreamAsync(col, ct).ConfigureAwait(false);
                     int cap = Math.Min(options.MaxCellChars * 3 / 4, Math.Max(1, budget / 8));
                     byte[] buffer = ArrayPool<byte>.Shared.Rent(cap + 1);
                     try
@@ -248,8 +251,8 @@ public sealed class SqlSession
             rowBuffer.Clear();
             rowWriter.Reset(rowBuffer);
             JsonSerializer.Serialize(rowWriter, row, ToolReply.JsonOptions);
-            rowWriter.Flush();
-            int bytes = rowBuffer.WrittenCount + 1 + (rowClips?.Count ?? 0) * 32;
+            await rowWriter.FlushAsync(ct).ConfigureAwait(false);
+            int bytes = rowBuffer.WrittenCount + 1 + ((rowClips?.Count ?? 0) * 32);
             if (bytes > budget)
             {
                 if (rows.Count == 0) throw new ToolException("result_too_wide", "One row exceeds the result budget. Select fewer columns or shorten values in SQL.");

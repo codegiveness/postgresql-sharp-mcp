@@ -1,0 +1,32 @@
+name: Semantic PR title
+# Trigger choice: plain `pull_request`, not `pull_request_target`, so the job holds only a read-only token and fork pull requests
+# gain no privileged path. The check is C# in the repository verifier (the repository allows GitHub-owned actions only), and the
+# title reaches it through an environment variable, never through expression interpolation into a script.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  semantic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      RestoreLockedMode: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Restore locked verifier dependencies
+        run: dotnet restore tools/PostgreSqlMcp.Verify --locked-mode
+      - name: Require a Conventional Commit title (docs/git-workflow.md, Commits)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-restore -- pr-title

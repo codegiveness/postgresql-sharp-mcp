@@ -4,6 +4,11 @@
     <Project Path="src/PostgreSqlMcp.Tools/PostgreSqlMcp.Tools.csproj" />
     <Project Path="src/PostgreSqlMcp/PostgreSqlMcp.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PostgreSqlMcp.Core.Tests/PostgreSqlMcp.Core.Tests.csproj" />
+    <Project Path="tests/PostgreSqlMcp.Tools.Tests/PostgreSqlMcp.Tools.Tests.csproj" />
+    <Project Path="tests/PostgreSqlMcp.Verify.Tests/PostgreSqlMcp.Verify.Tests.csproj" />
+  </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/PostgreSqlMcp.Build/PostgreSqlMcp.Build.csproj" />
     <Project Path="tools/PostgreSqlMcp.Fuzz/PostgreSqlMcp.Fuzz.csproj" />

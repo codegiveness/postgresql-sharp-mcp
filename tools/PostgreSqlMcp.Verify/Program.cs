@@ -23,10 +23,22 @@ internal static class Program
                 await Coverage.RunAsync(root, coverageOptions);
             else if (args is ["sarif", "--baseline", var baseline, "--candidate", var candidate])
                 SarifGate.Run(baseline, candidate, Console.Out);
+            else if (args is ["install-tool", var toolName, "--output", var toolOutput])
+                Console.WriteLine($"Installed {await PinnedTools.InstallAsync(PinnedTools.Get(toolName), toolOutput)} (SHA-256 verified).");
+            else if (args is ["install-tool-regressions"])
+                await ToolInstallerRegressions.RunAsync();
+            else if (args is ["workflows"])
+                await SecurityScans.AuditWorkflowsAsync(root);
+            else if (args is ["secret-detectors"])
+                await SecurityScans.VerifySecretDetectorsAsync(root);
             else if (args is ["sarif-regressions"])
                 SarifRegression.Run();
             else if (args is ["release-regressions"])
                 ReleaseRegressions.Run();
+            else if (args is ["version"])
+                VersionCheck.Run(root);
+            else if (args is ["pr-title"])
+                PullRequestTitle.Run(Environment.GetEnvironmentVariable("PR_TITLE"));
             else if (args.Length > 0 && args[0] == "packages")
             {
                 string artifacts = Path.Combine(root, "artifacts", "packages");
@@ -53,13 +65,13 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions");
+                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions | version | pr-title (reads PR_TITLE) | " + PinnedTools.Usage + " | install-tool-regressions | workflows | secret-detectors");
             return 0;
         }
         catch (Exception ex)
         {
             // Unexpected parser/provider/process exceptions can embed inputs, including credentials.
-            Console.Error.WriteLine(ex is VerificationException ? ex.Message : $"Verification failed ({ex.GetType().Name}); sensitive exception details suppressed.");
+            await Console.Error.WriteLineAsync(ex is VerificationException ? ex.Message : $"Verification failed ({ex.GetType().Name}); sensitive exception details suppressed.");
             return 1;
         }
     }
@@ -87,7 +99,7 @@ internal static class Check
     public static JsonArray Array(this JsonNode? node) => node!.AsArray();
     public static IEnumerable<Dictionary<string, JsonNode?>> Rows(JsonNode page)
     {
-        string[] names = page["columns"].Array().Select(c => c!["name"].Text()).ToArray();
+        string[] names = [.. page["columns"].Array().Select(c => c!["name"].Text())];
         return page["rows"].Array().Select(row => names.Zip(row.Array()).ToDictionary(pair => pair.First, pair => pair.Second));
     }
 
@@ -151,12 +163,14 @@ internal static class Processes
     }
 }
 
-internal static class Unix
+internal static partial class Unix
 {
-    [DllImport("libc", SetLastError = true)]
-    private static extern int kill(int pid, int signal);
-    [DllImport("libc")]
-    private static extern uint geteuid();
+    [LibraryImport("libc", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial int kill(int pid, int signal);
+    [LibraryImport("libc")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial uint geteuid();
     public static bool IsRoot => !OperatingSystem.IsWindows() && geteuid() == 0;
     public static void Terminate(Process process) => Check.That(kill(process.Id, 15) == 0, "Could not deliver SIGTERM to native MCP process.");
 }

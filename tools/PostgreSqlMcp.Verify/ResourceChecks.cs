@@ -14,7 +14,7 @@ internal static class ResourceChecks
         await OutputPoliciesAsync();
         using var temporary = new TemporaryDirectory();
         string pidFile = Path.Combine(temporary.Path, "child.pid");
-        string quotedPath = "'" + pidFile.Replace("'", "'\"'\"'") + "'";
+        string quotedPath = "'" + pidFile.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
         try
         {
             // More input than a pipe can hold: the child intentionally never reads it.
@@ -52,7 +52,7 @@ internal static class ResourceChecks
                 new { payload = new string('x', 1_048_576) }), 35);
             McpClient connected = client;
             // Keep the harness responsive even if stdin disposal regresses to a synchronous flush.
-            Task disposing = Task.Run(async () => await connected.DisposeAsync());
+            var disposing = Task.Run(async () => await connected.DisposeAsync());
             await ExpectDeadlineAsync(disposing, 15);
             client = null;
             int pid = int.Parse(await File.ReadAllTextAsync(pidFile), CultureInfo.InvariantCulture);
@@ -71,9 +71,10 @@ internal static class ResourceChecks
     private static async Task OutputPoliciesAsync()
     {
         const string secret = "synthetic-credential-0123456789";
-        Task<ProcessResult> Run(OutputPolicy policy) => ProcessRunner.RunAsync(new("/bin/sh", ["-c", $"echo out:{secret}; echo err:{secret} >&2; exit 3"])
+        static Task<ProcessResult> Run(OutputPolicy policy) => ProcessRunner.RunAsync(new("/bin/sh", ["-c", $"echo out:{secret}; echo err:{secret} >&2; exit 3"])
         {
-            Timeout = TimeSpan.FromSeconds(10), Output = policy
+            Timeout = TimeSpan.FromSeconds(10),
+            Output = policy
         });
 
         TextWriter originalOut = Console.Out, originalError = Console.Error;

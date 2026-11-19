@@ -37,7 +37,7 @@ public sealed class ServerOptions
         {
             if (args[i] == "--validate") { validate = true; continue; }
             if (args[i] == "--require-database-lock") { requireLock = true; continue; }
-            int equals = args[i].IndexOf('=');
+            int equals = args[i].IndexOf('=', StringComparison.Ordinal);
             string key = equals < 0 ? args[i] : args[i][..equals];
             if (!allowed.Contains(key, StringComparer.Ordinal)) throw new ToolException("configuration", "Unknown option. Use --help for supported options.");
             string value = equals < 0
@@ -75,7 +75,7 @@ public sealed class ServerOptions
                 {
                     using var doc = JsonDocument.Parse(names);
                     allowedDatabases = [];
-                    foreach (var item in doc.RootElement.EnumerateArray())
+                    foreach (JsonElement item in doc.RootElement.EnumerateArray())
                     {
                         string db = item.GetString() ?? "";
                         if (!DatabaseRegistry.IsDatabaseName(db))
@@ -104,7 +104,7 @@ public sealed class ServerOptions
             {
                 using var doc = JsonDocument.Parse(json);
                 if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new ToolException("configuration", "Targets must be a JSON object of alias: connection-string pairs.");
-                foreach (var item in doc.RootElement.EnumerateObject())
+                foreach (JsonProperty item in doc.RootElement.EnumerateObject())
                     if (!targets.TryAdd(item.Name, item.Value.GetString() ?? ""))
                         throw new ToolException("configuration", "Duplicate target alias.");
             }
@@ -139,7 +139,7 @@ public sealed class ServerOptions
             // Lock-derived aliases of one connection string share a single login profile; only targets JSON/file defines several.
             profileCount = json is null ? 1 : targets.Count;
             if (profileCount is < 1 or > 32) throw new ToolException("configuration", "Configure 1..32 connection profiles in targets JSON/file.");
-            foreach (var (alias, connectionString) in targets.ToArray())
+            foreach ((string alias, string connectionString) in targets.ToArray())
             {
                 if (string.IsNullOrWhiteSpace(alias) || alias.Length > 128 || alias.Any(char.IsControl))
                     throw new ToolException("configuration", "Target aliases must be nonblank, <=128 characters, without control characters.");
@@ -173,14 +173,18 @@ public sealed class ServerOptions
         if (poolSize * profileCount > 256) throw new ToolException("configuration", "Connection profiles × POSTGRES_POOL_SIZE must not exceed 256.");
         return new ServerOptions
         {
-            Targets = new ReadOnlyDictionary<string, string>(targets), AllowedDatabases = allowedDatabases,
+            Targets = new ReadOnlyDictionary<string, string>(targets),
+            AllowedDatabases = allowedDatabases,
             StrictDatabaseLock = lockMode == "strict",
             Unrestricted = mode == "unrestricted",
             QueryTimeout = Number("QUERY_TIMEOUT", 30, 1, 600, "--query-timeout"),
-            MaxRows = Number("MAX_ROWS", 1000, 1, 5000), MaxResultBytes = Number("MAX_RESULT_BYTES", 65536, 4096, 1048576),
-            MaxCellChars = Number("MAX_CELL_CHARS", 4096, 1, 16384), PoolSize = poolSize,
+            MaxRows = Number("MAX_ROWS", 1000, 1, 5000),
+            MaxResultBytes = Number("MAX_RESULT_BYTES", 65536, 4096, 1048576),
+            MaxCellChars = Number("MAX_CELL_CHARS", 4096, 1, 16384),
+            PoolSize = poolSize,
             MaxConcurrentCalls = Number("MAX_CONCURRENT_CALLS", 16, 1, 64),
-            LogLevel = Value("--log-level", "LOG_LEVEL") ?? "warning", Validate = validate
+            LogLevel = Value("--log-level", "LOG_LEVEL") ?? "warning",
+            Validate = validate
         };
     }
 

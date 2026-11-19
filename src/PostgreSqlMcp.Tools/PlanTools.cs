@@ -19,14 +19,15 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
 {
     [McpServerTool(Name = "explain_query", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Real PostgreSQL JSON plan or compact summary. Optional ANALYZE executes inside READ ONLY. Supplied CREATE INDEX candidates use installed HypoPG in one session, compare estimated costs, and are always cleaned up; never permanent DDL.")]
-    public Task<CallToolResult> ExplainQuery(CancellationToken ct,
+    public Task<CallToolResult> ExplainQuery(
         [Description(ParameterText.Database)] string database,
         [Description(ParameterText.Sql)] string sql,
         [Description("summary (default): ranked major plan nodes. json: the complete planner JSON within the byte limit.")] string format = "summary",
         [Description("true executes the statement with EXPLAIN ANALYZE, BUFFERS inside a READ ONLY transaction; not combinable with indexes.")] bool analyze = false,
         [Description("Up to 16 hypothetical CREATE INDEX statements compared together through the installed hypopg extension.")] string[]? indexes = null,
         [Description(ParameterText.Target)] string? target = null,
-        [Description(ParameterText.Values)] JsonElement[]? parameters = null) =>
+        [Description(ParameterText.Values)] JsonElement[]? parameters = null,
+        CancellationToken ct = default) =>
         ToolReply.Run(database, async () =>
         {
             string statement = SqlGuard.Validate(sql);
@@ -37,14 +38,16 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
             string[] candidates = ValidateCandidates(indexes);
             if (analyze && candidates.Length != 0)
                 throw new ToolException("invalid_options", "HypoPG indexes only work with estimated EXPLAIN, not ANALYZE. Set analyze=false to evaluate candidates.");
-            return await executor.WithSessionAsync<object>(database, async (session, token) =>
+            return await executor.WithSessionAsync(database, async (session, token) =>
             {
                 if (candidates.Length == 0)
                 {
                     using JsonDocument plan = await ReadPlan(session, statement, values, analyze, token);
                     return new
                     {
-                        database, analyzed = analyze, format,
+                        database,
+                        analyzed = analyze,
+                        format,
                         plan = json ? (object)plan.RootElement.Clone() : Summarize(plan.RootElement),
                         notes = analyze
                             ? "ANALYZE executed the query in a READ ONLY transaction. Read-only transactions prevent database writes, not external side effects of privileged functions. Actual node times/rows are per-loop; planner costs are not milliseconds."
@@ -62,7 +65,8 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                 // Hypothetical indexes are connection-local memory, not transactional objects.
                 // A savepoint makes cleanup possible even after a planner/parser error aborts the transaction.
                 await ExecuteControl(session, "SAVEPOINT mcp_hypopg", token);
-                bool failed = false;
+                bool failed = false, cleanupFailed = false;
+                object report;
                 try
                 {
                     await ExecuteControl(session, reset, token);
@@ -101,9 +105,11 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                     using JsonDocument evaluated = await ReadPlan(session, statement, values, false, token);
                     PlanSummary before = Summarize(baseline.RootElement);
                     PlanSummary after = Summarize(evaluated.RootElement);
-                    return new
+                    report = new
                     {
-                        database, analyzed = false, format,
+                        database,
+                        analyzed = false,
+                        format,
                         baseline = json ? (object)baseline.RootElement.Clone() : before,
                         with_indexes = json ? (object)evaluated.RootElement.Clone() : after,
                         hypothetical_indexes = hypotheticalIndexes,
@@ -124,22 +130,11 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
                 }
                 finally
                 {
-                    using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    try
-                    {
-                        if (failed)
-                            await ExecuteControl(session, "ROLLBACK TO SAVEPOINT mcp_hypopg", cleanup.Token, 5);
-                        await ExecuteControl(session, reset, cleanup.Token, 5);
-                        await ExecuteControl(session, "RELEASE SAVEPOINT mcp_hypopg", cleanup.Token, 5);
-                    }
-                    catch
-                    {
-                        // Clearing marks checked-out connectors for disposal on return to the pool.
-                        session.ClearPool();
-                        if (!failed)
-                            throw new ToolException("hypopg_cleanup_failed", "Hypothetical index cleanup failed. The connection pool was cleared so this session cannot leak candidates to later calls.");
-                    }
+                    cleanupFailed = !await CleanUpHypothesesAsync(session, reset, failed);
                 }
+                if (cleanupFailed)
+                    throw new ToolException("hypopg_cleanup_failed", "Hypothetical index cleanup failed. The connection pool was cleared so this session cannot leak candidates to later calls.");
+                return report;
             }, ct: ct, target: target);
         });
 
@@ -149,7 +144,7 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
             return [];
         if (indexes.Length > 16)
             throw new ToolException("invalid_index", "Supply at most 16 hypothetical index candidates per comparison.");
-        var normalized = new string[indexes.Length];
+        string[] normalized = new string[indexes.Length];
         long bytes = 0;
         for (int i = 0; i < indexes.Length; i++)
         {
@@ -178,9 +173,9 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
         SessionReader result;
         try { result = await session.ExecuteReaderAsync([command], CommandBehavior.SequentialAccess, ct); }
         catch (PostgresException ex) when (ToolReply.MarkStatementPosition(ex, prefix.Length, sql)) { throw; }
-        await using var _ = result;
+        await using SessionReader _ = result;
         NpgsqlDataReader reader = result.Reader;
-        if (!await reader.ReadAsync(ct) || reader.IsDBNull(0))
+        if (!await reader.ReadAsync(ct) || await reader.IsDBNullAsync(0, ct))
             throw new ToolException("invalid_plan", "PostgreSQL returned no JSON plan.");
         using TextReader text = await reader.GetTextReaderAsync(0, ct);
         int max = options.MaxResultBytes;
@@ -219,7 +214,27 @@ public sealed partial class PlanTools(SqlExecutor executor, ServerOptions option
     private static Task ExecuteControl(SqlSession session, string sql, CancellationToken ct, int? timeout = null) =>
         session.ExecuteAsync(sql, ct, timeout);
 
-    private static string QuoteIdentifier(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+    /// <summary>Removes the hypothetical indexes and the savepoint; false means cleanup failed and the pool was cleared so nothing can leak to later calls.</summary>
+    private static async Task<bool> CleanUpHypothesesAsync(SqlSession session, string reset, bool failed)
+    {
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (failed)
+                await ExecuteControl(session, "ROLLBACK TO SAVEPOINT mcp_hypopg", cleanup.Token, 5);
+            await ExecuteControl(session, reset, cleanup.Token, 5);
+            await ExecuteControl(session, "RELEASE SAVEPOINT mcp_hypopg", cleanup.Token, 5);
+            return true;
+        }
+        catch
+        {
+            // Clearing marks checked-out connectors for disposal on return to the pool.
+            session.ClearPool();
+            return false;
+        }
+    }
+
+    private static string QuoteIdentifier(string value) => "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private static PlanSummary Summarize(JsonElement json)
     {

@@ -12,7 +12,7 @@ public static class SqlGuard
     public static string Validate(string sql, out string firstKeyword)
     {
         if (string.IsNullOrWhiteSpace(sql)) throw new ToolException("invalid_sql", "SQL is required.");
-        if (sql.Length > 131072 || sql.Contains('\0')) throw new ToolException("invalid_sql", "SQL must be <=131072 characters without NUL.");
+        if (sql.Length > 131072 || sql.Contains('\0', StringComparison.Ordinal)) throw new ToolException("invalid_sql", "SQL must be <=131072 characters without NUL.");
         int i = 0, terminal = -1;
         string? first = null;
         while (i < sql.Length)

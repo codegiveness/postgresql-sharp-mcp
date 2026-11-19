@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using PostgreSqlMcp.Core;
 using PostgreSqlMcp.Tools;
 
@@ -75,35 +76,35 @@ if (args.Contains("--version", StringComparer.Ordinal))
 }
 ServerOptions options;
 try { options = ServerOptions.Parse(args); }
-catch (ToolException ex) { Console.Error.WriteLine($"[startup] {ex.Message}"); return 1; }
-if (!Enum.TryParse<LogLevel>(options.LogLevel, true, out var logLevel) || !Enum.IsDefined(logLevel))
-{ Console.Error.WriteLine("[startup] Invalid log level."); return 1; }
+catch (ToolException ex) { await Console.Error.WriteLineAsync($"[startup] {ex.Message}"); return 1; }
+if (!Enum.TryParse(options.LogLevel, true, out LogLevel logLevel) || !Enum.IsDefined(logLevel))
+{ await Console.Error.WriteLineAsync("[startup] Invalid log level."); return 1; }
 ToolReply.Configure(options);
 // Warnings never block startup: they name configurations whose real exposure exceeds what tools advertise.
-foreach (string warning in SecurityWarnings.Tls(options)) Console.Error.WriteLine($"[warning] {warning}");
+foreach (string warning in SecurityWarnings.Tls(options)) await Console.Error.WriteLineAsync($"[warning] {warning}");
 static async Task<bool> CheckDatabaseLockAsync(ServerOptions options, DatabaseRegistry registry, SqlExecutor executor)
 {
     if (registry.AllowedDatabaseNames is null) return true;
     IReadOnlyList<string> findings = await DatabaseLockCheck.VerifyAsync(registry, executor);
     if (findings.Count == 0)
     {
-        Console.Error.WriteLine("[startup] Database lock verified: PostgreSQL grants confine every configured login to POSTGRES_DATABASES.");
+        await Console.Error.WriteLineAsync("[startup] Database lock verified: PostgreSQL grants confine every configured login to POSTGRES_DATABASES.");
         return true;
     }
     string prefix = options.StrictDatabaseLock ? "[startup]   " : "[warning] database lock (advisory): ";
     if (options.StrictDatabaseLock)
-        Console.Error.WriteLine("[startup] Refusing to start: the PostgreSQL check for the configured database lock (POSTGRES_DATABASES) failed and POSTGRES_DATABASE_LOCK_MODE is strict.");
-    foreach (string finding in findings.Take(32)) Console.Error.WriteLine(prefix + finding);
-    if (findings.Count > 32) Console.Error.WriteLine($"{prefix}... {findings.Count - 32} more findings.");
+        await Console.Error.WriteLineAsync("[startup] Refusing to start: the PostgreSQL check for the configured database lock (POSTGRES_DATABASES) failed and POSTGRES_DATABASE_LOCK_MODE is strict.");
+    foreach (string finding in findings.Take(32)) await Console.Error.WriteLineAsync(prefix + finding);
+    if (findings.Count > 32) await Console.Error.WriteLineAsync($"{prefix}... {findings.Count - 32} more findings.");
     if (!options.StrictDatabaseLock)
     {
         // In-process enforcement still rejects every database outside the list; only PostgreSQL-side confinement is missing.
-        Console.Error.WriteLine("[warning] database lock (advisory): PostgreSQL does not confine the configured login to POSTGRES_DATABASES (or the check " +
+        await Console.Error.WriteLineAsync("[warning] database lock (advisory): PostgreSQL does not confine the configured login to POSTGRES_DATABASES (or the check " +
             "could not confirm it), so SQL can still reach other databases. Tools still reject databases outside the list. To refuse startup " +
             "instead, set POSTGRES_DATABASE_LOCK_MODE=strict after hardening the role (SECURITY.md, Database lock hardening).");
         return true;
     }
-    Console.Error.WriteLine("[startup] Harden the role as described in SECURITY.md (Database lock hardening), then retry.");
+    await Console.Error.WriteLineAsync("[startup] Harden the role as described in SECURITY.md (Database lock hardening), then retry.");
     return false;
 }
 if (options.Validate)
@@ -113,7 +114,7 @@ if (options.Validate)
     bool ok = true;
     foreach (string target in registry.TargetNames)
     {
-        var result = await ToolReply.Run(target, async () =>
+        CallToolResult result = await ToolReply.Run(target, async () =>
         {
             // Validate through the database the server would actually open, never a bootstrap database outside the lock.
             // The report stays keyed by profile alias; its row names the database actually reached.
@@ -121,11 +122,11 @@ if (options.Validate)
             QueryPage page = await executor.QueryAsync(database, "SELECT current_database() AS database", limit: 1, target: target);
             return page with { Database = target };
         });
-        Console.Error.WriteLine(result.StructuredContent?.GetRawText());
+        await Console.Error.WriteLineAsync(result.StructuredContent?.GetRawText());
         ok &= result.IsError != true;
     }
     foreach (string warning in await SecurityWarnings.RolesAsync(registry, executor))
-        Console.Error.WriteLine($"[warning] {warning}");
+        await Console.Error.WriteLineAsync($"[warning] {warning}");
     ok &= await CheckDatabaseLockAsync(options, registry, executor);
     return ok ? 0 : 1;
 }
@@ -136,7 +137,7 @@ if (options.Validate)
     if (!await CheckDatabaseLockAsync(options, registry, executor)) return 1;
 }
 // Disable default file watchers/providers; stdout belongs exclusively to MCP.
-var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
+HostApplicationBuilder builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
 builder.Logging.SetMinimumLevel(logLevel).AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 // SDK diagnostics include complete JSON-RPC bodies, including SQL, parameters and results.
 // Provider diagnostics may also contain SQL or server-controlled exception text.
@@ -146,6 +147,6 @@ builder.Services.AddSingleton<DatabaseRegistry>();
 builder.Services.AddSingleton<SqlExecutor>();
 builder.Services.AddPostgreSqlTools(options);
 builder.Services.AddMcpServer(o => o.ServerInstructions = ToolRegistration.Instructions(options)).WithStdioServerTransport();
-using var host = builder.Build();
+using IHost host = builder.Build();
 await host.RunAsync();
 return 0;

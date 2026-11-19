@@ -1,0 +1,22 @@
+{
+  "app": "github-actions",
+  "commit": [
+    "verify",
+    "dependencies",
+    "Native installation (windows-latest)",
+    "Native installation (macos-latest)",
+    "gitleaks",
+    "container-security",
+    "sql-boundaries",
+    "version",
+    "unit-tests",
+    "workflow-audit",
+    "analyze (csharp, manual)",
+    "analyze (actions, none)"
+  ],
+  "pullRequest": [
+    "pull-request-analysis",
+    "semantic",
+    "dependency-review"
+  ]
+}

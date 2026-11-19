@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Binary assets: never normalize or diff as text.
+*.png binary
+
+# Fuzz seeds are byte-exact inputs (one contains a NUL byte); keep them untouched.
+tools/PostgreSqlMcp.Fuzz/corpus/** -text

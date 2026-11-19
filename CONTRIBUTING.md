@@ -36,6 +36,27 @@ Dependencies use current compatible stable releases verified against [official .
 
 ## Verify behavior
 
+### Pre-push checklist
+
+Run the rows your change touches before pushing, and put each command and its result in the pull request. The first four rows apply to every code change.
+
+| Command | Expected result |
+| --- | --- |
+| `dotnet build postgresql-sharp-mcp.slnx -c Release` | 0 warnings, 0 errors |
+| `dotnet test --solution postgresql-sharp-mcp.slnx -c Release` | All unit tests pass; no Docker needed |
+| `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore` | Exit 0; the full format check, not the style-only subset |
+| Roslyn LSP diagnostics on the changed files | 0 diagnostics at every severity, including hidden and info |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- version` | Exit 0: versions in `PostgreSqlMcp.csproj`, `npm/package.json` (including `optionalDependencies`) and `server.json` (top level and every `packages[].version`) agree and the major is 0 (CI job `version`, which also runs `release-regressions`) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- workflows` | Exit 0: actionlint and zizmor (offline) find nothing in `.github/workflows/` (CI job `workflow-audit`, which also runs `install-tool-regressions`) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- secret-detectors` | Exit 0: the custom `.gitleaks.toml` rules fire and the exact README allowlist holds (runs in CI job `gitleaks` before the history scan) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration` | Exit 0 against the disposable Docker fixture (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage` | Exit 0 at or above the coverage gate (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages`, then `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages` | Exit 0: every package and archive installs and runs |
+
+The unit tests (xunit.v3 on Microsoft Testing Platform, projects under `tests/`, no Docker) run in the CI job `unit-tests`. A language server such as Roslyn LSP, `csharp-ls` or C# Dev Kit opens `postgresql-sharp-mcp.slnx`; its diagnostics match the build, so a clean build with an editor diagnostic is still a failure to fix.
+
+Scanner tools used by CI (gitleaks, Trivy, zizmor, actionlint, shellcheck) are installed with `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- install-tool <name> --output <dir>` from SHA-256-pinned entries in `tools/PostgreSqlMcp.Verify/PinnedTools.cs`; bumping a tool means editing its row there. `install-tool-regressions` proves offline that tampered or unsafe archives are rejected. When `workflows` flags a pattern that is intentional, add a per-line `# zizmor: ignore[rule]` comment that states the reason.
+
 ```bash
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 ```
@@ -219,11 +240,11 @@ All maintained code is C# on .NET 10 with the SDK-default language version. The 
 **Enforced automatically.** The CI `verify` job fails a pull request that violates any of these, and the `main` ruleset requires that job:
 
 - The compiler: nullable reference types are on and every warning, including use of an obsolete API, is an error ([`Directory.Build.props`](Directory.Build.props)).
-- The C# rules in [`.editorconfig`](.editorconfig), checked by `dotnet format style`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
+- The C# rules in [`.editorconfig`](.editorconfig) and the analyzer settings of the build, checked by the full `dotnet format`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
 
 ```bash
-dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
-dotnet format style postgresql-sharp-mcp.slnx --no-restore   # applies the fixable ones
+dotnet format postgresql-sharp-mcp.slnx --verify-no-changes --no-restore
+dotnet format postgresql-sharp-mcp.slnx   # applies the fixable ones
 ```
 
 The same file sets UTF-8, LF line endings, four-space indentation (two for YAML, JSON, project files and Markdown), a final newline and no trailing whitespace for editors that read EditorConfig. The repository currently satisfies those settings, but they are not part of the automated check.
@@ -235,7 +256,9 @@ The same file sets UTF-8, LF line endings, four-space indentation (two for YAML,
 // SPDX-License-Identifier: MIT
 ```
 
-**Exceptions** must be rare and justified. Use a narrowly scoped `#pragma warning disable` or `[SuppressMessage]`, or an `.editorconfig` severity entry, with a comment saying why; reviewers treat it like any other change. No exceptions exist today. Do not weaken the compiler settings or the check to make a build pass.
+**Analyzer policy.** The build uses `AnalysisLevel=latest-all` and `EnforceCodeStyleInBuild=true`; `.editorconfig` sets `dotnet_analyzer_diagnostic.severity = warning` and warnings are errors, so the build fails on any analyzer diagnostic, including those that are info or hidden by default. A rule that does not fit the codebase is disabled explicitly in `.editorconfig` with a one-line reason, never silently. Roslyn LSP diagnostics on the files you changed must also be 0 at every severity.
+
+**Exceptions** must be rare and justified. Use a narrowly scoped `#pragma warning disable` or `[SuppressMessage]`, or an `.editorconfig` severity entry, with a comment saying why; reviewers treat it like any other change. Do not weaken the compiler settings or the check to make a build pass.
 
 ## Issues, pull requests and reviews
 
@@ -249,6 +272,25 @@ The same file sets UTF-8, LF line endings, four-space indentation (two for YAML,
 - **Conduct:** everyone taking part in issues, pull requests and discussions follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 Keep versions, affected help/docs and release notes consistent. Update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and bundled licenses when shipped dependencies change. Contributions are under the project's [MIT license](LICENSE); dependencies retain their own terms.
+
+### Architecture decision records
+
+Record a decision that is hard to reverse or easy to forget as an ADR in [docs/adr/](docs/adr/README.md): copy [the template](docs/adr/template.md), take the next number, add a row to the index and cite the commits, CHANGELOG entries or measurements that support it. Never rewrite an accepted ADR to change its decision; write a new one and mark the old one `Superseded by ADR-NNNN`. Use the terms in [CONTEXT.md](CONTEXT.md), and update that glossary in the same pull request when a term's meaning changes.
+
+### GitHub CLI recipes
+
+Always pass `-R codegiveness/postgresql-sharp-mcp` so a command never targets a fork or the wrong repository. Anything that writes to GitHub needs the authorization described in [What agents may do](docs/git-workflow.md#what-agents-may-do); never put credentials, connection strings, customer SQL or database output in an issue, comment or pull request.
+
+```bash
+R=codegiveness/postgresql-sharp-mcp
+gh issue create -R $R --title "fix: <summary>" --body-file <file>   # open an issue
+gh issue list -R $R --label needs-triage                            # list issues
+gh issue view <number> -R $R --comments                             # read one
+gh issue comment <number> -R $R --body-file <file>                  # comment
+gh pr create -R $R --draft --title "fix: <summary>" --body-file <file>
+gh pr view <number> -R $R --json state,statusCheckRollup
+gh pr checks <number> -R $R                                         # required and optional checks
+```
 
 ### Code review standards
 
@@ -279,6 +321,7 @@ Compatible fixes use a patch increment, such as **0.3.2 → 0.3.3**; reserve a m
 
 - **CI** runs database integration and package installation checks for pushes and pull requests and uploads generated packages for inspection.
 - **Release workflow** is manually dispatched from `main` for an existing `v<version>` tag reachable from `origin/main`; pushing a tag does not start publication. Read-only preflight compiles trusted release tooling from the immutable main workflow revision and validates the tag's commit. Read-only packaging checks out that commit and verifies version consistency and behavior. Checkout-free attestation and publishing jobs consume immutable artifact IDs with digest mismatches rejected; they do not compile or execute tag-source release tooling. npm stages through package-specific GitHub OIDC, without `NPM_TOKEN` or token fallback, and waits for Windows 2FA approval; NuGet uses its own matching OIDC policy with `NUGET_USERNAME`. Artifact creation, staging or a successful GitHub release alone does not prove registry publication.
+- **Release required-checks preflight** (`required-checks --sha <commit> [--policy-file p] [--wait-minutes 0-120]` in `tools/PostgreSqlMcp.Release`; needs `GH_TOKEN` and `GITHUB_REPOSITORY`) runs as the release job `required-checks` before packaging. [`.github/required-checks.json`](.github/required-checks.json) is the one home of the required-check list: `commit` checks must have succeeded on the tagged commit, and `pullRequest` checks are verified on the merged pull request's head only when that head's tree equals the tagged commit's tree. Anything missing, failed or pending fails closed. See [Branch protection on `main`](docs/git-workflow.md#branch-protection-on-main).
 - **Release re-runs never replace published bytes.** The GitHub job uploads only assets missing from the release (no `--clobber`). An existing asset, including `SHA256SUMS` and the `provenance.sigstore.json` attestation bundle, must be completely uploaded and have the same SHA-256 as the freshly built file, using GitHub's reported asset digest or, when absent, a downloaded copy; otherwise the job fails. The NuGet job (`release-tool nuget`) publishes the five per-RID packages first, waits until nuget.org lists each, and pushes the pointer package last, so the pointer never refers to a missing platform package. For each package it asks nuget.org whether the version exists. If not, it pushes without `--skip-duplicate`, so a concurrent push also fails. If so, it downloads the registry package and compares every entry's name and SHA-256 with the built package, ignoring only nuget.org's `.signature.p7s` repository countersignature (the registry's file bytes always differ from the local file because of it); any other difference fails. A failure means different bytes already exist under that version: a maintainer must delete the specific GitHub asset deliberately, or release a new version for NuGet. `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regressions` (also run by `integration`) checks these comparisons and the zip/tar.gz archive builders offline.
 - **Reproducible and non-reproducible assets.** Built from the same source, the five archives (fixed timestamps, owners, modes and entry order; the Linux/macOS tar.gz use GNU tar format because .NET's PAX writer names extended headers after the process ID), the six npm tarballs (main and platform packages), the six `.nupkg` files and the CycloneDX SBOM are byte-identical across rebuilds, and so is `SHA256SUMS`, which lists them. `tools/PostgreSqlMcp.Build` packs the `.nupkg` files with NuGet's supported `DeterministicTimestamp` property fixed to 1980-01-01 (the earliest ZIP time; an inherited `SOURCE_DATE_EPOCH` does not override it), so no entry carries the wall clock; the entry order and the `nuget.psmdcp` name are already stable. `release-tool sbom` replaces dotnet-CycloneDX's random `serialNumber` (the generator can only omit it) and wall-clock `timestamp` (no option) with the commit time of the checked-out release commit and a version 8 UUID derived from the SHA-256 of the BOM without its serial number. The provenance bundle is not reproducible: it is signed once per workflow run. Consequently, after a partial publication, re-run the failed jobs of the same workflow run (same artifacts, same digests) instead of dispatching a new run for the same tag: a new run rebuilds identical packages, but its provenance bundle differs from the published `provenance.sigstore.json` and fails closed. `release-regressions` checks the SBOM normalization and a double `dotnet pack` offline, and `packages --artifacts` requires the fixed timestamp on every entry of every built `.nupkg`.
 - **Dependency audit** checks direct and transitive NuGet packages against known advisories. This is not proof that all vulnerabilities are absent.
@@ -331,17 +374,17 @@ Enter the username at the prompt rather than copying a sibling secret. GitHub OI
 
 #### Dispatch the exact existing release
 
-Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.7.2`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
+Merge the reviewed release-tool/workflow changes to `main` before using them. Only dispatch after the account permissions, matching policies and the `v<version>` tag (for example `v0.7.3`) are ready. **Actions → Release → Run workflow** must select **main**. The equivalent commands below are alternatives; run only the intended target:
 
 ```powershell
 # Default all: GitHub Release + npm staging + NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.2 -f target=all
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.3 -f target=all
 # npm staging only; no GitHub Release or NuGet publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.2 -f target=npm
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.3 -f target=npm
 # NuGet publication only; no GitHub Release or npm staging.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.2 -f target=nuget
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.3 -f target=nuget
 # GitHub Release only; no registry staging/publication.
-gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.2 -f target=github
+gh workflow run release.yml --repo codegiveness/postgresql-sharp-mcp --ref main -f tag=v0.7.3 -f target=github
 ```
 
 `target` choices are `all`, `github`, `npm` and `nuget`, defaulting to `all`. Every target retains common preflight, package/installed-distribution verification and attestation. npm-only and NuGet-only jobs tolerate an intentionally skipped GitHub Release job **only for their dedicated target**; failed/canceled prerequisites cannot reach a publisher. In `all` mode both registry jobs require successful GitHub Release publication. The npm command stages the exact attested tarball using `npm stage publish`, never approves it or calls direct `npm publish`. Its successful summary means **staged, pending Windows 2FA approval**, not published.
@@ -352,21 +395,21 @@ For a failed current main-dispatched workflow, `gh run rerun <run-id> --failed -
 
 After the npm staging job succeeds, review each stage ID and intended `latest` tag. The job stages the five platform packages before the main package. Approve them in the same order, **platform packages first**, so the public main package never points at unpublished optional dependencies. Every public npm publication requires the maintainer's Windows 2FA approval. A successful dispatch, login, OIDC exchange or staging response is not approval.
 
-Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.7.2.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.7.2.tgz`:
+Repeat this review for each package, setting `$Package` and its tarball name `$Tarball` in turn: `@codegiveness/postgresql-sharp-mcp-<os>-<cpu>` with `codegiveness-postgresql-sharp-mcp-<os>-<cpu>-0.7.3.tgz` for the five platforms, and finally `@codegiveness/postgresql-sharp-mcp` with `codegiveness-postgresql-sharp-mcp-0.7.3.tgz`:
 
 ```powershell
 $Package = '@codegiveness/postgresql-sharp-mcp-win32-x64'
-$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.7.2.tgz'
+$Tarball = 'codegiveness-postgresql-sharp-mcp-win32-x64-0.7.3.tgz'
 npm.cmd stage list $Package --registry https://registry.npmjs.org/
-$StageId = Read-Host "Stage ID for $Package 0.7.2"
+$StageId = Read-Host "Stage ID for $Package 0.7.3"
 npm.cmd stage view $StageId --registry https://registry.npmjs.org/
 npm.cmd stage download $StageId --registry https://registry.npmjs.org/
 ```
 
-Confirm the stage is **`$Package@0.7.2`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.7.2 GitHub release:
+Confirm the stage is **`$Package@0.7.3`**, comes from the intended run and uses the intended dist-tag. Compare the downloaded staged tarball's SHA-256 against the attested release tarball before approval. For the 0.7.3 GitHub release:
 
 ```powershell
-gh release download v0.7.2 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
+gh release download v0.7.3 --repo codegiveness/postgresql-sharp-mcp --pattern $Tarball --dir release-verification
 gh attestation verify ./release-verification/$Tarball --repo codegiveness/postgresql-sharp-mcp --signer-workflow codegiveness/postgresql-sharp-mcp/.github/workflows/release.yml
 Get-FileHash ./release-verification/$Tarball -Algorithm SHA256
 $StagedTarball = Read-Host 'Path printed by npm stage download'
@@ -379,14 +422,14 @@ Only after that review, approve the exact stage:
 
 ```powershell
 npm.cmd stage approve $StageId --registry https://registry.npmjs.org/
-npm.cmd view "$Package@0.7.2" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
+npm.cmd view "$Package@0.7.3" version dist.integrity dist.tarball --registry https://registry.npmjs.org/
 npm.cmd view $Package dist-tags --registry https://registry.npmjs.org/
 ```
 
 After approving the main package last, check the public installation:
 
 ```powershell
-npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.7.2 '@codegiveness/postgresql-sharp-mcp@0.7.2' --version
+npx.cmd --yes --allow-scripts=@codegiveness/postgresql-sharp-mcp --cache ./release-verification/npm-cache-0.7.3 '@codegiveness/postgresql-sharp-mcp@0.7.3' --version
 ```
 Complete the command's **2FA/browser challenge on Windows** promptly; an expired or canceled challenge does not publish. npmjs.com's **Staged Packages → Approve** is an alternative with the same required 2FA, not an automated bypass. Approval cannot use workflow OIDC. Check public version, integrity/tarball equality and fresh-cache execution before announcing availability; check actual provenance evidence separately. A workstation-staged recovery must use the exact verified tarball with `npm.cmd stage publish ./release-verification/$Tarball --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org/` and the same review/2FA approval; it does not gain CI provenance. Do not restage a version already pending approval or already published.
 

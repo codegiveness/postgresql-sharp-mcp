@@ -131,6 +131,7 @@ The format follows [Conventional Commits](https://www.conventionalcommits.org/):
 - Use one type. If a change needs two (the old `docs+fix:` style), it is probably two pull requests; otherwise pick the one that matters to users.
 - Commits inside a branch may be small and informal; the squash discards them. Writing them in the same format still helps reviewers.
 - Never put credentials, connection strings, customer SQL or database output in a commit message, branch name, pull request or issue.
+- The pull request title becomes the squash commit, so the `semantic` workflow checks that every pull request title is a valid [Conventional Commit](https://www.conventionalcommits.org/) header (type from the table above, optional scope, optional `!`). Fix a failing `semantic` check by editing the title; no push is needed.
 
 ## Lifecycle of a change
 
@@ -171,6 +172,8 @@ Draft means "not ready to merge". The pull request template asks for the problem
 ### 5. CI
 
 Required checks run on every push to the pull request. Open the **Checks** tab when one fails, fix the cause in the branch and push again. Do not re-run a failed job until it passes without understanding why it failed, and never weaken a check to make it pass.
+
+Besides the existing checks, 0.7.3 adds `semantic` (the `semantic` workflow: pull request title format), `unit-tests` (`dotnet test --solution postgresql-sharp-mcp.slnx -c Release`, no Docker), `version` (project, npm and `server.json` versions agree and the major is 0; also runs `release-regressions`), `workflow-audit` (actionlint and zizmor over `.github/workflows/`) and `dependency-review` (the `dependency-review.yml` gate: new or changed dependencies with high-severity vulnerabilities fail the pull request; the license check is off because the dependency graph has no NuGet/npm license data). The same commands run locally as listed in the [pre-push checklist](../CONTRIBUTING.md#pre-push-checklist). The merge-blocking list lives in the `main` ruleset and in `.github/required-checks.json`, described under [Branch protection on `main`](#branch-protection-on-main).
 
 ### 6. Review
 
@@ -277,7 +280,7 @@ Publication follows [release.yml](../.github/workflows/release.yml). Pushing a t
    ```
 
    The tag must be `v<major>.<minor>.<patch>` (optionally `-<prerelease>`) and must point to a commit on `origin/main`; the workflow's preflight rejects anything else. A tag containing `-` produces a GitHub prerelease. Never move or delete a published release tag.
-4. **Dispatch the release from `main`** with the tag and a target (`all`, `github`, `npm` or `nuget`). The exact commands and target meanings are in CONTRIBUTING's [Dispatch the exact existing release](../CONTRIBUTING.md#dispatch-the-exact-existing-release).
+4. **Dispatch the release from `main`** with the tag and a target (`all`, `github`, `npm` or `nuget`). Before anything is packaged, the `required-checks` preflight verifies every check in [`.github/required-checks.json`](../.github/required-checks.json) for the tagged commit (see [Branch protection on `main`](#branch-protection-on-main)); a missing, failed or pending check stops the release. The exact commands and target meanings are in CONTRIBUTING's [Dispatch the exact existing release](../CONTRIBUTING.md#dispatch-the-exact-existing-release).
 5. **Approve npm on Windows** after staging, following [Approve each npm publication on Windows](../CONTRIBUTING.md#approve-each-npm-publication-on-windows).
 6. **Verify before announcing:** every job's result, the GitHub Release assets and attestations, and each registry's public endpoint.
 
@@ -299,6 +302,9 @@ GitHub Release notes are generated from merged pull requests and grouped by labe
 | `needs-triage` | New issue the maintainer has not reviewed yet (applied by the issue forms) |
 | `blocked` | Waiting on an external fact, access or decision; say what in a comment |
 | `agent-authored` | Written by an AI agent; review accordingly |
+| `needs-info` | Triage: the reporter must answer a question before work can start; say which in a comment |
+| `ready-for-agent` | Triage: specified well enough for an AI agent to take on within the authority in [What agents may do](#what-agents-may-do) |
+| `ready-for-human` | Triage: needs maintainer judgment or access; not for an agent to start on its own |
 | `good first issue`, `help wanted`, `question`, `duplicate`, `invalid`, `wontfix` | GitHub defaults, used as GitHub describes them |
 
 These labels were created on 2026-10-10. If one goes missing, recreate it; issue forms silently skip labels that do not exist:
@@ -312,6 +318,9 @@ gh label create release         -R $R --color 5319e7 --description "Versioning, 
 gh label create needs-triage    -R $R --color fbca04 --description "Not yet reviewed by the maintainer"
 gh label create blocked         -R $R --color 000000 --description "Waiting on an external fact, access or decision"
 gh label create agent-authored  -R $R --color c5def5 --description "Written by an AI agent; review accordingly"
+gh label create needs-info      -R $R --color d4c5f9 --description "Triage: waiting for information from the reporter"
+gh label create ready-for-agent -R $R --color 0e8a16 --description "Triage: specified well enough for an AI agent to take on"
+gh label create ready-for-human -R $R --color 0075ca --description "Triage: needs maintainer judgment or access"
 ```
 
 ## Stale-branch cleanup
@@ -378,9 +387,15 @@ The settings below were applied on 2026-10-10 with the maintainer's approval. Th
 
 ### Branch protection on `main`
 
-Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
+Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10. Its rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), the required checks below with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
+
+Required checks: `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security`, `sql-boundaries`, `semantic`, `version`, `unit-tests`, `workflow-audit` and `dependency-review`. The first eight were recorded on 2026-10-10; the rest were added for 0.7.3 with the maintainer's approval. The CodeQL `analyze (csharp, manual)` and `analyze (actions, none)` jobs run only on `main` (pull requests run `pull-request-analysis` instead), so the ruleset cannot require them; the release preflight does.
+
+[`.github/required-checks.json`](../.github/required-checks.json) is the one home of this list for the release workflow. Its `commit` checks must have succeeded on the tagged commit (`verify`, `dependencies`, both `Native installation` jobs, `gitleaks`, `container-security`, `sql-boundaries`, `version`, `unit-tests`, `workflow-audit`, `analyze (csharp, manual)` and `analyze (actions, none)`). Its `pullRequest` checks (`pull-request-analysis`, `semantic`, `dependency-review`) exist only on pull request heads, so the release preflight `required-checks --sha <commit>` verifies them on the merged pull request's head, and only when that head's tree equals the tagged commit's tree. A missing, failed or pending check fails the release closed. Change the list in the ruleset and in that file together.
 
 The `Integration (PostgreSQL <major>)` matrix jobs are not in that list, so none of them blocks a merge. That is deliberate for `Integration (PostgreSQL 19)`, which tests the PostgreSQL 19 beta and can fail because of upstream beta changes. Requiring it, or any other matrix job, is a ruleset change that only the repository owner can make.
+
+A check must have run on `main` at least once before it can be selected in the ruleset, and changing the ruleset needs the maintainer's explicit OK (see [What agents may do](#what-agents-may-do)).
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 

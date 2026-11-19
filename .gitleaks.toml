@@ -89,6 +89,64 @@ paths = ['''^tools/PostgreSqlMcp\.Verify/DatabaseLockChecks\.cs$''']
 regexTarget = "match"
 regexes = ['''^Password=\{Password\}$''']
 
+# Unit-test fixtures. The tests prove that connection strings, URLs and provider text containing a password are never echoed, so
+# each fixture must contain the full credential shape. Every entry names one exact file and the exact synthetic match text.
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic registry fixture password in unit tests, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/DatabaseRegistryTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=synthetic-pw$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic option-parsing fixture password in unit tests, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/ServerOptionsTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=synthetic-pw$''']
+
+[[allowlists]]
+targetRules = ["postgresql-uri-password"]
+description = "Synthetic postgres:// URL fixtures that must be rejected without echoing the password, not credentials"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/ServerOptionsTests\.cs$''']
+regexTarget = "match"
+regexes = ['''(?i)^postgres(?:ql)?://reader:synthetic-secret-value@db\.example\.test/app$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic TLS warning fixture password that warnings must never print, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/SecurityWarningsTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=synthetic-secret-value$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic TLS failure fixture password that explanations must never print, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/TlsPolicyTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=synthetic-secret-value$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic provider error text interpolating a disposable test constant, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Core\.Tests/ToolReplyTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^password=\{Secret\}$''']
+
+[[allowlists]]
+targetRules = ["npgsql-keyword-password", "sqlserver-keyword-password"]
+description = "Synthetic tool registration fixture password in unit tests, not a credential"
+condition = "AND"
+paths = ['''^tests/PostgreSqlMcp\.Tools\.Tests/ToolRegistrationTests\.cs$''']
+regexTarget = "match"
+regexes = ['''^Password=synthetic-pw$''']
+
 # Default rules still run. Only these exact disposable values may be suppressed
 # if the generic provider-independent rule also recognizes them.
 [[allowlists]]

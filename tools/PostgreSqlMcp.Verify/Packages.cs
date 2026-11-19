@@ -18,13 +18,13 @@ internal static class Packages
     public static async Task RunAsync(string root, string artifacts, string? targetsFile, bool installationOnly)
     {
         JsonNode metadata = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "npm", "package.json")))!;
-        XDocument project = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
+        var project = XDocument.Load(Path.Combine(root, "src", "PostgreSqlMcp", "PostgreSqlMcp.csproj"));
         string version = project.Descendants("Version").Single().Value;
         string packageId = project.Descendants("PackageId").Single().Value;
         string npmName = metadata["name"].Text();
         Check.That(metadata["version"].Text() == version, "npm and NuGet package versions disagree.");
         string tarball = Path.Combine(artifacts, NpmPlatform.TarballName(npmName, version));
-        string[] platformTarballs = NpmPlatform.All.Select(platform => Path.Combine(artifacts, NpmPlatform.TarballName(platform.PackageName(npmName), version))).ToArray();
+        string[] platformTarballs = [.. NpmPlatform.All.Select(platform => Path.Combine(artifacts, NpmPlatform.TarballName(platform.PackageName(npmName), version)))];
         string[] nupkgs = [.. NuGetTool.FileNames(packageId, version).Select(name => Path.Combine(artifacts, name))];
         string config = Path.Combine(artifacts, "NuGet.Config");
         Check.That(File.Exists(tarball) && platformTarballs.All(File.Exists) && nupkgs.All(File.Exists) && File.Exists(config),
@@ -41,7 +41,7 @@ internal static class Packages
         Check.That(int.Parse(nodeVersion.Output.Trim().TrimStart('v').Split('.')[0], System.Globalization.CultureInfo.InvariantCulture) >= 22, "Node >=22 is required for package verification.");
         using var temporary = new TemporaryDirectory();
         string stage = temporary.Path;
-        var environment = Processes.CleanEnvironment();
+        Dictionary<string, string> environment = Processes.CleanEnvironment();
         string dotnetHost = File.ResolveLinkTarget(dotnet, returnFinalTarget: true)?.FullName ?? dotnet;
         environment["DOTNET_ROOT"] = environment.GetValueOrDefault("DOTNET_ROOT") ?? Path.GetDirectoryName(dotnetHost)!;
         environment["DOTNET_NOLOGO"] = "1";
@@ -52,7 +52,7 @@ internal static class Packages
         string toolHome = Path.Combine(stage, "tools");
         string globalHome = Path.Combine(stage, "npm-global");
         string npxHome = Path.Combine(stage, "npx");
-        var (isolatedNpm, isolatedNpx, noDotnet) = CreateNpmEnvironment(npm, npx, node, stage, environment);
+        (Command isolatedNpm, Command isolatedNpx, Dictionary<string, string>? noDotnet) = CreateNpmEnvironment(npm, npx, node, stage, environment);
         Dictionary<string, string> localEnvironment = ConsumerEnvironment(noDotnet, stage, "local");
         Dictionary<string, string> globalEnvironment = ConsumerEnvironment(noDotnet, stage, "global");
         Dictionary<string, string> npxEnvironment = ConsumerEnvironment(noDotnet, stage, "npx");
@@ -63,8 +63,8 @@ internal static class Packages
         Directory.CreateDirectory(npxHome);
         // Install by name from a loopback registry holding only the built tarballs, so npm resolves
         // the optional platform packages exactly as from npmjs.org; nothing reaches a public registry.
-        await using var registry = await NpmRegistry.StartAsync(platformTarballs.Prepend(tarball));
-        foreach (var consumer in new[] { localEnvironment, globalEnvironment, npxEnvironment })
+        await using NpmRegistry registry = await NpmRegistry.StartAsync(platformTarballs.Prepend(tarball));
+        foreach (Dictionary<string, string>? consumer in new[] { localEnvironment, globalEnvironment, npxEnvironment })
             consumer["npm_config_registry"] = registry.Url;
         string spec = npmName + "@" + version;
         NpmPlatform platform = CurrentPlatform();
@@ -75,8 +75,8 @@ internal static class Packages
         }));
         // Installation scripts must run: copying the matching platform's self-contained apphost is part of the consumer contract.
         await Processes.RunAsync(NpmInstall(isolatedNpm, npmHome, spec), localEnvironment, timeout: 600);
-        string[] installed = Directory.EnumerateDirectories(Path.Combine(npmHome, "node_modules", npmName.Split('/')[0]))
-            .Select(directory => npmName.Split('/')[0] + "/" + Path.GetFileName(directory)).Order(StringComparer.Ordinal).ToArray();
+        string[] installed = [.. Directory.EnumerateDirectories(Path.Combine(npmHome, "node_modules", npmName.Split('/')[0]))
+            .Select(directory => npmName.Split('/')[0] + "/" + Path.GetFileName(directory)).Order(StringComparer.Ordinal)];
         Check.That(installed.SequenceEqual(new[] { npmName, platform.PackageName(npmName) }.Order(StringComparer.Ordinal)),
             $"npm installed [{string.Join(", ", installed)}]; expected only the main package and the {platform.Rid} platform package.");
         Console.WriteLine($"PASS npm selected only {platform.PackageName(npmName)} from the five platform packages");
@@ -105,7 +105,8 @@ internal static class Packages
         Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=" + npmName,
             "--package=" + spec, "--", "postgresql-sharp-mcp")
             // A fresh npx cache downloads and installs the package and its runtime before initialization.
-            with { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 600 };
+            with
+        { WorkingDirectory = npxHome, InitializationTimeoutSeconds = 600 };
         var commands = new (string Name, Command Command, Dictionary<string, string> Environment, string? Native)[]
         {
             ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
@@ -116,12 +117,12 @@ internal static class Packages
         // Exercise actual apphosts too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), localEnvironment);
         await Processes.RunAsync(new(globalNative, "--help"), globalEnvironment);
-        await using var fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
+        await using PostgresFixture? fixture = targetsFile is null && !installationOnly ? new PostgresFixture() : null;
         if (fixture is not null)
             await fixture.StartAsync();
         await using (var unavailable = new UnavailableEndpoint())
         {
-            foreach (var (name, command, commandEnvironment, nativeCommand) in commands)
+            foreach ((string name, Command command, Dictionary<string, string>? commandEnvironment, string? nativeCommand) in commands)
             {
                 var configured = new Dictionary<string, string>(commandEnvironment)
                 {
@@ -184,12 +185,10 @@ internal static class Packages
     private static NpmPlatform CurrentPlatform()
     {
         string os = OperatingSystem.IsWindows() ? "win32" : OperatingSystem.IsMacOS() ? "darwin" : "linux";
-        string cpu = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
-        {
-            System.Runtime.InteropServices.Architecture.X64 => "x64",
-            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
-            var other => throw new VerificationException($"No npm platform package for {other}.")
-        };
+        System.Runtime.InteropServices.Architecture architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture;
+        string cpu = architecture == System.Runtime.InteropServices.Architecture.X64 ? "x64" :
+            architecture == System.Runtime.InteropServices.Architecture.Arm64 ? "arm64" :
+            throw new VerificationException($"No npm platform package for {architecture}.");
         return NpmPlatform.All.SingleOrDefault(platform => platform.Os == os && platform.Cpu == cpu)
             ?? throw new VerificationException($"No npm platform package for {os}-{cpu}.");
     }
@@ -307,12 +306,12 @@ internal static class Packages
     }
 
     // npm may also emit its own notices on stderr; structured server reports remain JSON lines.
-    private static JsonNode[] Reports(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-        .Where(line => line.StartsWith('{')).Select(line => JsonNode.Parse(line)!).ToArray();
+    private static JsonNode[] Reports(string text) => [.. text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Where(line => line is ['{', ..]).Select(line => JsonNode.Parse(line)!)];
 
     private static async Task VerifyMcpAsync(Command command, Dictionary<string, string> environment, string[] aliases, bool terminate = false, bool query = false, PostgresFixture? fixture = null)
     {
-        await using var client = await McpClient.StartAsync(command, environment);
+        await using McpClient client = await McpClient.StartAsync(command, environment);
         JsonArray tools = (await client.RequestAsync("tools/list", new { }))["result"]!["tools"].Array();
         Check.That(tools.Any(tool => tool!["name"].Text() == "list_databases"), "Installed package lost list_databases tool.");
         if (!query)
@@ -330,7 +329,7 @@ internal static class Packages
                 while (true)
                 {
                     JsonNode page = (await client.OkAsync("list_databases", new { target = alias, limit = 2, offset }))["databases"]!;
-                    foreach (var row in Check.Rows(page))
+                    foreach (Dictionary<string, JsonNode?> row in Check.Rows(page))
                     {
                         discovered.Add(row["name"].Text());
                         if (row["is_current"].Flag())
@@ -350,7 +349,7 @@ internal static class Packages
             if (fixture is not null)
             {
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-                    new[] { new[] { "tenant_b", "B_ONLY" } }, "Installed single-seed package did not select a discovered physical database.");
+                    ExpectedRows.TenantBWithBOnly, "Installed single-seed package did not select a discovered physical database.");
                 string database = "package_after_start_" + Guid.NewGuid().ToString("N");
                 await fixture.CreateDatabaseAsync(database);
                 Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Any(row => row["name"].Text() == database),
@@ -359,13 +358,13 @@ internal static class Packages
                     new[] { new[] { database, "DYNAMIC_ONLY" } }, "Installed package could not select a database created after startup.");
                 await client.FailsAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')" }, "postgresql_error", "25006");
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
-                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package committed a default read-only mutation.");
+                    ExpectedRows.BOnly, "Installed environment-only package committed a default read-only mutation.");
                 await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "INSERT INTO marker VALUES ('PACKAGE_WRITE')", read_only = false });
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker ORDER BY value" }))["rows"],
-                    new[] { new[] { "B_ONLY" }, new[] { "PACKAGE_WRITE" } }, "Installed environment-only package write opt-in did not commit.");
+                    ExpectedRows.BOnlyThenPackageWrite, "Installed environment-only package write opt-in did not commit.");
                 await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "DELETE FROM marker WHERE value='PACKAGE_WRITE'", read_only = false });
                 Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
-                    new[] { new[] { "B_ONLY" } }, "Installed environment-only package write cleanup did not commit.");
+                    ExpectedRows.BOnly, "Installed environment-only package write cleanup did not commit.");
             }
         }
         await client.StopAsync(terminate);
@@ -376,22 +375,22 @@ internal static class Packages
     {
         JsonNode targets = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
         Check.That(targets is JsonObject, "Optional package fixture targets must be an alias-to-connection-string object.");
-        foreach (var target in targets.AsObject())
+        foreach (KeyValuePair<string, JsonNode?> target in targets.AsObject())
         {
             var builder = new DbConnectionStringBuilder { ConnectionString = target.Value.Text() };
             string? host = builder.TryGetValue("Host", out object? configuredHost) ? Convert.ToString(configuredHost, System.Globalization.CultureInfo.InvariantCulture) : null;
             Check.That(host is "127.0.0.1" or "localhost" or "::1", "Optional package database-query smoke is limited to explicit loopback disposable fixtures.");
         }
         Check.That(targets.AsObject().Count > 0, "Optional fixture targets cannot be empty.");
-        return targets.AsObject().Select(target => target.Key).ToArray();
+        return [.. targets.AsObject().Select(target => target.Key)];
     }
 
     private static void VerifyLocalSource(string config, string artifacts)
     {
-        XDocument document = XDocument.Load(config);
+        var document = XDocument.Load(config);
         XElement? sources = document.Root?.Element("packageSources");
         Check.That(sources is not null && sources.Elements("clear").Any(), "NuGet verification configuration must clear inherited package sources.");
-        XElement[] additions = sources!.Elements("add").ToArray();
+        XElement[] additions = [.. sources!.Elements("add")];
         Check.That(additions.Length == 1, "NuGet verification must use exactly one local artifact source.");
         string source = additions[0].Attribute("value")?.Value ?? "";
         Check.That(!Uri.TryCreate(source, UriKind.Absolute, out Uri? uri) || uri.IsFile, "NuGet verification source must not access a network feed.");
@@ -403,14 +402,14 @@ internal static class Packages
     private static async Task VerifyArchivesAsync(string root, string tarball, string[] platformTarballs, string[] nupkgs, string packageId, string npmName, string version)
     {
         HashSet<string> legal = ["LICENSE", "THIRD-PARTY-NOTICES.md", .. Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt").Select(file => "LICENSES/" + Path.GetFileName(file))];
-        byte[][] workspacePaths = new[] { root, root.Replace('\\', '/'), root.Replace('/', '\\') }.Distinct().Select(Encoding.UTF8.GetBytes).ToArray();
+        byte[][] workspacePaths = [.. new[] { root, root.Replace('\\', '/'), root.Replace('/', '\\') }.Distinct().Select(Encoding.UTF8.GetBytes)];
         HashSet<string> main = await TarNamesAsync(tarball, workspacePaths);
         Check.That(legal.All(name => main.Contains("package/" + name)), "npm artifact lost legal notices.");
         // The main package carries only the seed apphost; every runtime ships in exactly one platform package.
         HashSet<string> mainFiles = ["package/package.json", "package/bin/postgresql-sharp-mcp.exe", "package/README.md", "package/SECURITY.md",
             "package/CONTRIBUTING.md", .. legal.Select(name => "package/" + name)];
         Check.That(main.SetEquals(mainFiles), $"npm main package has unexpected entries: {string.Join(", ", main.Except(mainFiles).Take(5))}.");
-        foreach (var (platform, platformTarball) in NpmPlatform.All.Zip(platformTarballs))
+        foreach ((NpmPlatform platform, string platformTarball) in NpmPlatform.All.Zip(platformTarballs))
         {
             HashSet<string> names = await TarNamesAsync(platformTarball, workspacePaths);
             Check.That(legal.All(name => names.Contains("package/" + name)), $"npm {platform.Rid} package lost legal notices.");
@@ -425,12 +424,12 @@ internal static class Packages
         }
         foreach (string nupkg in nupkgs)
         {
-            using ZipArchive archive = ZipFile.OpenRead(nupkg);
+            await using ZipArchive archive = await ZipFile.OpenReadAsync(nupkg);
             Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), $"NuGet artifact {Path.GetFileName(nupkg)} lost legal notices.");
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
                 Check.That(entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime, $"NuGet entry {entry.FullName} carries a build-time stamp, so the package is not reproducible.");
-                using Stream stream = entry.Open();
+                await using Stream stream = await entry.OpenAsync();
                 await VerifyNoWorkspacePathAsync(stream, workspacePaths);
             }
         }
@@ -441,39 +440,46 @@ internal static class Packages
     // The pointer only names the RID packages; each RID package is a self-contained publish with an executable entry point, never a framework-dependent one.
     private static void VerifyToolPackages(string[] nupkgs, string packageId, string version)
     {
-        foreach (string nupkg in nupkgs)
+        foreach (string nupkg in nupkgs) VerifyToolPackage(nupkg, packageId, version);
+    }
+
+    private static void VerifyToolPackage(string nupkg, string packageId, string version)
+    {
+        string id = Path.GetFileName(nupkg)[..^(version.Length + ".nupkg".Length + 1)];
+        string? rid = NuGetTool.Rids.SingleOrDefault(candidate => id == packageId + "." + candidate);
+        Check.That(rid is not null || id == packageId, $"Unexpected NuGet package {id}.");
+        using ZipArchive archive = ZipFile.OpenRead(nupkg);
+        XElement nuspec = XDocument.Parse(ReadEntry(archive, id, id + ".nuspec")).Root!;
+        XNamespace ns = nuspec.Name.Namespace;
+        Check.That(nuspec.Element(ns + "metadata")!.Element(ns + "version")!.Value == version, $"{id} has the wrong version.");
+        string type = nuspec.Descendants(ns + "packageType").Single().Attribute("name")!.Value;
+        if (rid is null)
         {
-            string id = Path.GetFileName(nupkg)[..^(version.Length + ".nupkg".Length + 1)];
-            string? rid = NuGetTool.Rids.SingleOrDefault(candidate => id == packageId + "." + candidate);
-            Check.That(rid is not null || id == packageId, $"Unexpected NuGet package {id}.");
-            using ZipArchive archive = ZipFile.OpenRead(nupkg);
-            string Text(string name) => new StreamReader((archive.GetEntry(name) ?? throw new VerificationException($"{id} lacks {name}.")).Open()).ReadToEnd();
-            XElement nuspec = XDocument.Parse(Text(id + ".nuspec")).Root!;
-            XNamespace ns = nuspec.Name.Namespace;
-            Check.That(nuspec.Element(ns + "metadata")!.Element(ns + "version")!.Value == version, $"{id} has the wrong version.");
-            string type = nuspec.Descendants(ns + "packageType").Single().Attribute("name")!.Value;
-            if (rid is null)
-            {
-                Check.That(type == "DotnetTool", "The pointer package must be a DotnetTool.");
-                Check.That(archive.Entries.Where(entry => entry.FullName.StartsWith("tools/", StringComparison.Ordinal)).Select(entry => entry.FullName).SequenceEqual(["tools/any/any/DotnetToolSettings.xml"]),
-                    "The pointer package must contain only its tool settings, no implementation.");
-                XElement[] listed = [.. XDocument.Parse(Text("tools/any/any/DotnetToolSettings.xml")).Descendants("RuntimeIdentifierPackage")];
-                Check.That(listed.Select(item => item.Attribute("RuntimeIdentifier")!.Value + "=" + item.Attribute("Id")!.Value).Order(StringComparer.Ordinal)
-                    .SequenceEqual(NuGetTool.Rids.Select(candidate => candidate + "=" + packageId + "." + candidate).Order(StringComparer.Ordinal)),
-                    "The pointer package must list exactly the five RID packages (and no framework-dependent fallback).");
-                continue;
-            }
-            Check.That(type == "DotnetToolRidPackage", $"{id} must be a DotnetToolRidPackage.");
-            string root = $"tools/any/{rid}/";
-            string executable = NpmPlatform.All.Single(platform => platform.Rid == rid).Executable("PostgreSqlMcp");
-            XElement command = XDocument.Parse(Text(root + "DotnetToolSettings.xml")).Descendants("Command").Single();
-            Check.That(command.Attribute("Name")!.Value == "postgresql-sharp-mcp" && command.Attribute("EntryPoint")!.Value == executable && command.Attribute("Runner")!.Value == "executable",
-                $"{id} must start its own {executable} apphost.");
-            Check.That(archive.GetEntry(root + executable) is not null && archive.GetEntry(root + "PostgreSqlMcp.dll") is not null, $"{id} lost its server.");
-            Check.That(Text(root + "PostgreSqlMcp.runtimeconfig.json").Contains("includedFrameworks", StringComparison.Ordinal),
-                $"{id} is not self-contained: its runtime configuration does not include the .NET runtime.");
-            Check.That(archive.Entries.Any(entry => entry.FullName.StartsWith(root + "System.Private.CoreLib.", StringComparison.Ordinal)), $"{id} does not bundle the .NET runtime.");
+            Check.That(type == "DotnetTool", "The pointer package must be a DotnetTool.");
+            Check.That(archive.Entries.Where(entry => entry.FullName.StartsWith("tools/", StringComparison.Ordinal)).Select(entry => entry.FullName).SequenceEqual(["tools/any/any/DotnetToolSettings.xml"]),
+                "The pointer package must contain only its tool settings, no implementation.");
+            XElement[] listed = [.. XDocument.Parse(ReadEntry(archive, id, "tools/any/any/DotnetToolSettings.xml")).Descendants("RuntimeIdentifierPackage")];
+            Check.That(listed.Select(item => item.Attribute("RuntimeIdentifier")!.Value + "=" + item.Attribute("Id")!.Value).Order(StringComparer.Ordinal)
+                .SequenceEqual(NuGetTool.Rids.Select(candidate => candidate + "=" + packageId + "." + candidate).Order(StringComparer.Ordinal)),
+                "The pointer package must list exactly the five RID packages (and no framework-dependent fallback).");
+            return;
         }
+        Check.That(type == "DotnetToolRidPackage", $"{id} must be a DotnetToolRidPackage.");
+        string root = $"tools/any/{rid}/";
+        string executable = NpmPlatform.All.Single(platform => platform.Rid == rid).Executable("PostgreSqlMcp");
+        XElement command = XDocument.Parse(ReadEntry(archive, id, root + "DotnetToolSettings.xml")).Descendants("Command").Single();
+        Check.That(command.Attribute("Name")!.Value == "postgresql-sharp-mcp" && command.Attribute("EntryPoint")!.Value == executable && command.Attribute("Runner")!.Value == "executable",
+            $"{id} must start its own {executable} apphost.");
+        Check.That(archive.GetEntry(root + executable) is not null && archive.GetEntry(root + "PostgreSqlMcp.dll") is not null, $"{id} lost its server.");
+        Check.That(ReadEntry(archive, id, root + "PostgreSqlMcp.runtimeconfig.json").Contains("includedFrameworks", StringComparison.Ordinal),
+            $"{id} is not self-contained: its runtime configuration does not include the .NET runtime.");
+        Check.That(archive.Entries.Any(entry => entry.FullName.StartsWith(root + "System.Private.CoreLib.", StringComparison.Ordinal)), $"{id} does not bundle the .NET runtime.");
+    }
+
+    private static string ReadEntry(ZipArchive archive, string id, string name)
+    {
+        using var reader = new StreamReader((archive.GetEntry(name) ?? throw new VerificationException($"{id} lacks {name}.")).Open());
+        return reader.ReadToEnd();
     }
 
     private static async Task<HashSet<string>> TarNamesAsync(string tarball, byte[][] workspacePaths)

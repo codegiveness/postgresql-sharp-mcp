@@ -48,13 +48,13 @@ internal sealed class TlsFixture : IAsyncDisposable
         await Processes.RunAsync(new("docker", "cp", directory, name + ":/"));
         // TLS is configured through ALTER SYSTEM, not the command line, so a scenario can later turn it off with a reload.
         string initialization = Path.Combine(files.Path, "tls.sql");
-        File.WriteAllText(initialization, "ALTER SYSTEM SET ssl = on;\nALTER SYSTEM SET ssl_cert_file = '/tls/server.crt';\nALTER SYSTEM SET ssl_key_file = '/tls/server.key';\n");
+        await File.WriteAllTextAsync(initialization, "ALTER SYSTEM SET ssl = on;\nALTER SYSTEM SET ssl_cert_file = '/tls/server.crt';\nALTER SYSTEM SET ssl_key_file = '/tls/server.key';\n");
         await Processes.RunAsync(new("docker", "cp", initialization, name + ":/docker-entrypoint-initdb.d/tls.sql"));
         await Processes.RunAsync(new("docker", "exec", name, "touch", "/tmp/certificates-ready"));
         bool ready = false;
         for (int attempt = 0; attempt < 60; attempt++)
         {
-            var result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"), expected: null);
+            ProcessResult result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"), expected: null);
             if (result.ExitCode == 0) { ready = true; break; }
             await Task.Delay(TimeSpan.FromSeconds(1));
         }
@@ -62,7 +62,7 @@ internal sealed class TlsFixture : IAsyncDisposable
         await Processes.RunAsync(new("docker", "exec", "-i", name, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres"),
             input: $"CREATE ROLE mcp_reader LOGIN PASSWORD '{Password}';");
         string endpoint = (await Processes.RunAsync(new("docker", "port", name, "5432/tcp"))).Output.Trim();
-        LoopbackPort = int.Parse(endpoint[(endpoint.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
+        LoopbackPort = int.Parse(endpoint[(endpoint.AsSpan().LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
         File.Copy(Path.Combine(directory, "ca.pem"), CaFile);
     }
 
@@ -90,13 +90,13 @@ internal sealed class TlsFixture : IAsyncDisposable
     private static void WriteCertificates(string directory, IPAddress bridge)
     {
         DateTimeOffset from = DateTimeOffset.UtcNow.AddMinutes(-5), until = from.AddHours(2);
-        using ECDsa caKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var caKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var caRequest = new CertificateRequest("CN=postgresql-sharp-mcp verifier CA", caKey, HashAlgorithmName.SHA256);
         caRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         caRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
         using X509Certificate2 ca = caRequest.CreateSelfSigned(from, until);
 
-        using ECDsa serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var serverRequest = new CertificateRequest("CN=postgresql-sharp-mcp verifier server", serverKey, HashAlgorithmName.SHA256);
         serverRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         serverRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));

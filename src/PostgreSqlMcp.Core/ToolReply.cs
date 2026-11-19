@@ -130,13 +130,18 @@ public static class ToolReply
     private static CallToolResult Error(string database, string code, string message, string? sqlState, Diagnostic? diagnostic)
     {
         // Bound diagnostics; provider-controlled text is limited to the fields Diagnostics() allows.
-        var value = JsonSerializer.SerializeToElement(new
+        JsonElement value = JsonSerializer.SerializeToElement(new
         {
             database = Clip(database, 128),
             error = new
             {
-                code, message = Clip(message, 768), sql_state = sqlState, position = diagnostic?.Position,
-                server_message = diagnostic?.ServerMessage, server_hint = diagnostic?.ServerHint, constraint = diagnostic?.Constraint
+                code,
+                message = Clip(message, 768),
+                sql_state = sqlState,
+                position = diagnostic?.Position,
+                server_message = diagnostic?.ServerMessage,
+                server_hint = diagnostic?.ServerHint,
+                constraint = diagnostic?.Constraint
             }
         }, JsonOptions);
         return Result(value, true);
@@ -144,7 +149,8 @@ public static class ToolReply
     private static string Clip(string value, int max) => value.Length <= max ? value : value[..max] + "… [truncated]";
     private static CallToolResult Result(JsonElement value, bool error, string? text = null) => new()
     {
-        IsError = error, StructuredContent = value,
+        IsError = error,
+        StructuredContent = value,
         Content = [new TextContentBlock { Text = text ?? value.GetRawText() }]
     };
 }
