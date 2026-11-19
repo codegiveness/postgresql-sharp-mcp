@@ -20,6 +20,10 @@ internal static class ReleaseRegressions
         NuGetPayloadComparison();
         ToolPackageNames();
         SbomReproducibility();
+        TagGrammar();
+        VersionConsistency();
+        RequiredCheckEvaluation();
+        RequiredCheckPolling().GetAwaiter().GetResult();
         PackReproducibility().GetAwaiter().GetResult();
     }
 
@@ -211,5 +215,140 @@ internal static class ReleaseRegressions
         using ZipArchive package = ZipFile.OpenRead(first);
         Check.That(package.Entries.Count > 0 && package.Entries.All(entry => entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime),
             "Every .nupkg entry must carry the fixed timestamp.");
+    }
+
+    private static void TagGrammar()
+    {
+        foreach (string valid in new[] { "v0.7.3", "v0.8.0-rc.1", "v10.20.30", "v0.7.3-alpha-2" })
+            Check.That(ProductVersion.IsReleaseTag(valid), $"Release tag {valid} must be accepted.");
+        foreach (string invalid in new[] { "", "0.7.3", "v0.7", "v0.7.3.1", "v0.7.3\n", " v0.7.3", "v0.7.3 ", "v0.7.3+build", "v0.7.3-", "v0.7.x", "V0.7.3", "refs/tags/v0.7.3", "v0.7.3-rc..1" })
+            Check.That(!ProductVersion.IsReleaseTag(invalid), $"Release tag '{invalid.ReplaceLineEndings("\\n")}' must be rejected.");
+    }
+
+    // The application, npm and MCP registry manifests repeat one version; any disagreement, and any leave from the 0.x line, must be named.
+    private static void VersionConsistency()
+    {
+        using TemporaryDirectory temporary = new();
+        int counter = 0;
+        string Tree(string project, string npm, string optional, string? server, string package)
+        {
+            string root = Directory.CreateDirectory(Path.Combine(temporary.Path, "tree" + ++counter)).FullName;
+            Directory.CreateDirectory(Path.Combine(root, "src", "PostgreSqlMcp"));
+            Directory.CreateDirectory(Path.Combine(root, "npm"));
+            File.WriteAllText(Path.Combine(root, ProductVersion.ProjectFile), $"<Project><PropertyGroup><Version>{project}</Version></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, ProductVersion.NpmManifest),
+                $$$"""{"name":"@scope/app","version":"{{{npm}}}","optionalDependencies":{"@scope/app-linux-x64":"{{{optional}}}","@scope/app-win32-x64":"{{{project}}}"}}""");
+            if (server is not null)
+                File.WriteAllText(Path.Combine(root, ProductVersion.ServerManifest),
+                    $$$"""{"version":"{{{server}}}","packages":[{"identifier":"@scope/app","version":"{{{package}}}"},{"identifier":"scope.app","version":"{{{project}}}"}]}""");
+            return root;
+        }
+        IReadOnlyList<string> Problems(string root) => ProductVersion.Inconsistencies(root);
+        void Names(string description, IReadOnlyList<string> problems, string expected) =>
+            Check.That(problems.Count == 1 && problems[0].Contains(expected, StringComparison.Ordinal), $"{description} must be reported as exactly one problem naming '{expected}', got: {string.Join("; ", problems)}");
+
+        Check.That(Problems(Tree("0.7.3", "0.7.3", "0.7.3", "0.7.3", "0.7.3")).Count == 0, "Consistent 0.x manifests must pass.");
+        Check.That(Problems(Tree("0.8.0-rc.1", "0.8.0-rc.1", "0.8.0-rc.1", "0.8.0-rc.1", "0.8.0-rc.1")).Count == 0, "A consistent 0.x prerelease must pass.");
+        Names("An npm version mismatch", Problems(Tree("0.7.3", "0.7.2", "0.7.3", "0.7.3", "0.7.3")), ProductVersion.NpmManifest + " version");
+        Names("A platform optionalDependency mismatch", Problems(Tree("0.7.3", "0.7.3", "0.7.2", "0.7.3", "0.7.3")), "@scope/app-linux-x64");
+        Names("A server.json version mismatch", Problems(Tree("0.7.3", "0.7.3", "0.7.3", "0.7.2", "0.7.3")), ProductVersion.ServerManifest + " version");
+        Names("A server.json package version mismatch", Problems(Tree("0.7.3", "0.7.3", "0.7.3", "0.7.3", "0.7.2")), "packages[0] (@scope/app)");
+        Names("A missing server.json", Problems(Tree("0.7.3", "0.7.3", "0.7.3", null, "0.7.3")), ProductVersion.ServerManifest + " is missing");
+
+        var major = Problems(Tree("1.0.0", "1.0.0", "1.0.0", "1.0.0", "1.0.0"));
+        Names("Major 1 with every manifest consistent", major, "stays on 0.x");
+        Names("A malformed application version", Problems(Tree("0.7", "0.7", "0.7", "0.7", "0.7")), "is not <major>.<minor>.<patch>");
+        Check.That(Problems(Tree("1.0.0", "0.9.0", "1.0.0", "1.0.0", "1.0.0")).Count == 2, "A mismatch and a major violation must both be reported, not just the first.");
+
+        string noPackages = Tree("0.7.3", "0.7.3", "0.7.3", "0.7.3", "0.7.3");
+        File.WriteAllText(Path.Combine(noPackages, ProductVersion.ServerManifest), """{"version":"0.7.3"}""");
+        Names("A server.json without packages", Problems(noPackages), "has no packages array");
+        string noOptional = Tree("0.7.3", "0.7.3", "0.7.3", "0.7.3", "0.7.3");
+        File.WriteAllText(Path.Combine(noOptional, ProductVersion.NpmManifest), """{"name":"@scope/app","version":"0.7.3"}""");
+        Names("An npm manifest without optionalDependencies", Problems(noOptional), "optionalDependencies");
+
+        string? repository = RepositoryRoot.Find();
+        if (repository is not null && File.Exists(Path.Combine(repository, ProductVersion.ServerManifest)))
+            Check.That(Problems(repository).Count == 0, "The repository's own manifests must be consistent.");
+    }
+
+    private static CheckRun Run(long id, string name, string status, string? conclusion, string app = "github-actions") => new(id, name, status, conclusion, app);
+
+    private static void RequiredCheckEvaluation()
+    {
+        string[] required = ["build", "lint"];
+        (IReadOnlyList<string> Pending, IReadOnlyList<string> Failed) Evaluate(params CheckRun[] runs) => RequiredChecks.Evaluate("github-actions", required, runs);
+
+        var (greenPending, greenFailed) = Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", "completed", "success"), Run(3, "unrelated", "completed", "failure"));
+        Check.That(greenPending.Count == 0 && greenFailed.Count == 0, "Success must pass and checks that are not required must be ignored.");
+        var (lenientPending, lenientFailed) = Evaluate(Run(1, "build", "completed", "skipped"), Run(2, "lint", "completed", "neutral"));
+        Check.That(lenientPending.Count == 0 && lenientFailed.Count == 0, "Skipped and neutral conclusions must pass.");
+
+        Check.That(Evaluate(Run(1, "build", "completed", "success")) is { Pending: [var missing], Failed: [] } && missing.StartsWith("lint ", StringComparison.Ordinal),
+            "A required check that never reported must be pending, never green.");
+        foreach (string conclusion in new[] { "failure", "cancelled", "timed_out", "action_required", "stale", "startup_failure" })
+            Check.That(Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", "completed", conclusion)) is { Failed: [var failure] } && failure.Contains(conclusion, StringComparison.Ordinal),
+                $"Conclusion {conclusion} must fail the gate.");
+        Check.That(Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", "completed", null)).Failed.Count == 1, "A completed run without a conclusion must fail.");
+        foreach (string status in new[] { "queued", "in_progress", "waiting", "pending" })
+            Check.That(Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", status, null)) is { Pending.Count: 1, Failed.Count: 0 }, $"Status {status} must be pending.");
+
+        Check.That(Evaluate(Run(1, "build", "completed", "failure"), Run(5, "build", "completed", "success"), Run(2, "lint", "completed", "success")) is { Pending: [], Failed: [] },
+            "A successful re-run must supersede an earlier failure.");
+        Check.That(Evaluate(Run(1, "build", "completed", "success"), Run(5, "build", "completed", "failure"), Run(2, "lint", "completed", "success")).Failed.Count == 1,
+            "A failed re-run must supersede an earlier success.");
+        Check.That(Evaluate(Run(1, "build", "completed", "success"), Run(5, "build", "in_progress", null), Run(2, "lint", "completed", "success")).Pending.Count == 1,
+            "A newer unfinished re-run must make the check pending, not green.");
+        Check.That(Evaluate(Run(1, "build", "completed", "success", "other-app"), Run(2, "lint", "completed", "success")).Pending.Count == 1,
+            "A success reported under the same name by a different app must not satisfy the check.");
+        Check.That(Evaluate(Run(1, "build", "completed", "failure"), Run(9, "build", "completed", "success", "other-app"), Run(2, "lint", "completed", "success")).Failed.Count == 1,
+            "A newer run by a different app must not supersede the trusted app's failure.");
+
+        string valid = """{"app":"github-actions","commit":["a","b"],"pullRequest":["c"]}""";
+        Check.That(RequiredCheckPolicy.Parse(valid) is { App: "github-actions", Commit.Count: 2, PullRequest.Count: 1 }, "A valid required-checks policy must parse.");
+        foreach (string invalid in new[]
+        {
+            "[]", """{"commit":["a"]}""", """{"app":"","commit":["a"]}""", """{"app":"x","commit":[]}""", """{"app":"x"}""",
+            """{"app":"x","commit":["a","a"]}""", """{"app":"x","commit":["a"],"pullRequest":["a"]}""", """{"app":"x","commit":[" a"]}""",
+            """{"app":"x","commit":[""]}""", """{"app":"x","commit":"a"}""", """{"app":"x","commit":["a"],"extra":1}""", """{"app":"x","commit":[1]}"""
+        })
+        {
+            try { RequiredCheckPolicy.Parse(invalid); }
+            catch (InvalidOperationException) { continue; }
+            throw new VerificationException("A malformed required-checks policy was accepted: " + invalid);
+        }
+        string? repository = RepositoryRoot.Find();
+        if (repository is not null)
+            Check.That(RequiredCheckPolicy.Parse(File.ReadAllText(Path.Combine(repository, RequiredChecks.PolicyFile))).Commit.Count > 0, "The repository's required-checks policy must parse.");
+    }
+
+    private static async Task RequiredCheckPolling()
+    {
+        string[] required = ["build"];
+        TimeSpan tick = TimeSpan.FromMilliseconds(2);
+        int fetches = 0;
+        Func<Task<IReadOnlyList<CheckRun>>> Sequence(params string?[] conclusions) => () =>
+        {
+            string? conclusion = conclusions[Math.Min(fetches++, conclusions.Length - 1)];
+            IReadOnlyList<CheckRun> runs = [Run(1, "build", conclusion is null ? "in_progress" : "completed", conclusion)];
+            return Task.FromResult(runs);
+        };
+
+        await RequiredChecks.RequireAsync("test", "github-actions", required, Sequence(null, null, "success"), TimeSpan.FromSeconds(30), tick);
+        Check.That(fetches == 3, "Polling must continue until the pending check completes.");
+
+        fetches = 0;
+        await Fails("a failure while polling", () => RequiredChecks.RequireAsync("test", "github-actions", required, Sequence(null, "failure", "success"), TimeSpan.FromSeconds(30), tick));
+        Check.That(fetches == 2, "A failure must end polling immediately.");
+
+        fetches = 0;
+        await Fails("a check that stays pending past the wait", () => RequiredChecks.RequireAsync("test", "github-actions", required, Sequence((string?)null), TimeSpan.FromMilliseconds(30), tick));
+        Check.That(fetches > 1, "Polling must retry until the wait elapses.");
+
+        fetches = 0;
+        await Fails("a pending check without a wait", () => RequiredChecks.RequireAsync("test", "github-actions", required, Sequence((string?)null), TimeSpan.Zero, tick));
+        Check.That(fetches == 1, "Without a wait there must be exactly one evaluation.");
+
+        await Fails("a missing check", () => RequiredChecks.RequireAsync("test", "github-actions", required, () => Task.FromResult<IReadOnlyList<CheckRun>>([]), TimeSpan.Zero, tick));
     }
 }

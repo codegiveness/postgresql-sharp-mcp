@@ -98,3 +98,23 @@ jobs:
       - run: dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages
       - name: Install and exercise native entrypoints without a database service
         run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages --installation-only
+  # Fast, Docker-free: the application, npm and MCP registry manifests must repeat one 0.x version, and the offline release regressions
+  # (tag grammar, version mismatch, required-check gate) must hold. Required for merging and for releasing.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RestoreLockedMode: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Restore locked verifier dependencies
+        run: dotnet restore tools/PostgreSqlMcp.Verify --locked-mode
+      - name: Check version consistency and the 0.x policy
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-restore -- version
+      - name: Run offline release regressions
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-restore -- release-regressions

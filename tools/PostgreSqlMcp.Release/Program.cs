@@ -6,7 +6,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 
 return await Release.RunAsync(args);
 
@@ -14,13 +13,12 @@ internal static class Release
 {
     private const string NuGetPackageId = "codegiveness.postgresql-sharp-mcp";
     private static readonly string[] Rids = ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"];
-    private const string TagPattern = @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z";
 
     public static async Task<int> RunAsync(string[] args)
     {
         try
         {
-            if (args.Length == 0) throw new InvalidOperationException("Expected validate-tag, metadata, context, archives, sbom, github, npm, nuget, or require-secret command.");
+            if (args.Length == 0) throw new InvalidOperationException("Expected validate-tag, required-checks, metadata, context, archives, sbom, github, npm, nuget, or require-secret command.");
             string command = args[0];
             string tag = Environment.GetEnvironmentVariable("RELEASE_TAG") ?? "";
             if (command == "require-secret")
@@ -36,12 +34,17 @@ internal static class Release
                 await ValidateTagAsync(root, tag);
                 return 0;
             }
+            if (command == "required-checks")
+            {
+                await RequiredChecks.RunAsync(root, args);
+                return 0;
+            }
             var metadata = publication ? ReadPublicationContext(args) : ReadMetadata(root);
             switch (command)
             {
                 case "metadata":
                 case "context":
-                    if (!Regex.IsMatch(tag, TagPattern, RegexOptions.CultureInvariant) || tag != "v" + metadata.Version)
+                    if (!ProductVersion.IsReleaseTag(tag) || tag != "v" + metadata.Version)
                         throw new InvalidOperationException("Release tag must match the application and npm package versions.");
                     if (command == "context")
                     {
@@ -97,7 +100,7 @@ internal static class Release
 
     private static async Task ValidateTagAsync(string root, string tag)
     {
-        if (!Regex.IsMatch(tag, TagPattern, RegexOptions.CultureInvariant))
+        if (!ProductVersion.IsReleaseTag(tag))
             throw new InvalidOperationException("Release tag must be v<major>.<minor>.<patch> with an optional prerelease suffix.");
         var revision = await CaptureAsync("git", ["rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"], root);
         if (revision.ExitCode != 0)
@@ -112,8 +115,7 @@ internal static class Release
 
     private static (string Version, string NpmName) ReadMetadata(string root)
     {
-        var project = XDocument.Load(Path.Combine(root, "src/PostgreSqlMcp/PostgreSqlMcp.csproj"));
-        string version = project.Descendants("Version").Single().Value;
+        string version = ProductVersion.ReadProject(root);
         using var npm = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "npm/package.json")));
         if (npm.RootElement.GetProperty("version").GetString() != version) throw new InvalidOperationException("Application and npm versions differ.");
         return (version, npm.RootElement.GetProperty("name").GetString()!);
@@ -133,7 +135,7 @@ internal static class Release
         using var document = JsonDocument.Parse(File.ReadAllText(args[2]));
         string version = document.RootElement.GetProperty("version").GetString() ?? "";
         string name = document.RootElement.GetProperty("npmName").GetString() ?? "";
-        if (!Regex.IsMatch("v" + version, TagPattern, RegexOptions.CultureInvariant) ||
+        if (!ProductVersion.IsReleaseTag("v" + version) ||
             !Regex.IsMatch(name, @"\A(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*\z", RegexOptions.CultureInvariant))
             throw new InvalidOperationException("Publication context must contain a valid release version and npm package name.");
         return (version, name);
