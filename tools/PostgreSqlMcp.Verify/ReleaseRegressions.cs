@@ -18,8 +18,18 @@ internal static class ReleaseRegressions
         AssetPlanning().GetAwaiter().GetResult();
         ArchiveReproducibility();
         NuGetPayloadComparison();
+        ToolPackageNames();
         SbomReproducibility();
         PackReproducibility().GetAwaiter().GetResult();
+    }
+
+    // The pointer package names the RID packages, so a registry must hold them first: publication order is every RID package, then the pointer.
+    private static void ToolPackageNames()
+    {
+        string[] names = [.. NuGetTool.FileNames("tool", "1.2.3")];
+        Check.That(names.Length == 6 && names[^1] == "tool.1.2.3.nupkg" && names[..^1].All(name => Regex.IsMatch(name, @"\Atool\.(win|linux|osx)-(x64|arm64)\.1\.2\.3\.nupkg\z")),
+            "The .NET tool must be one pointer package, published last, plus one package per RID.");
+        Check.That(names.Distinct().Count() == names.Length && NuGetTool.PackageIds("tool").Count() == names.Length, "Tool package ids must be unique and match the file names.");
     }
 
     private static LocalAsset Built(string name, string content) =>
@@ -132,17 +142,17 @@ internal static class ReleaseRegressions
                 using (var writer = new StreamWriter(zip.CreateEntry(entry).Open(), Encoding.UTF8)) writer.Write(content);
             return path;
         }
-        string local = Package("local.nupkg", ("tool.nuspec", "spec"), ("tools/net10.0/any/app.dll", "binary"));
+        string local = Package("local.nupkg", ("tool.nuspec", "spec"), ("tools/net11.0/any/app.dll", "binary"));
 
-        Check.That(NuGetRegistry.ComparePayload(local, Package("same.nupkg", ("tools/net10.0/any/app.dll", "binary"), ("tool.nuspec", "spec"))).Count == 0,
+        Check.That(NuGetRegistry.ComparePayload(local, Package("same.nupkg", ("tools/net11.0/any/app.dll", "binary"), ("tool.nuspec", "spec"))).Count == 0,
             "Identical payloads in a different entry order must match.");
-        Check.That(NuGetRegistry.ComparePayload(local, Package("signed.nupkg", ("tool.nuspec", "spec"), ("tools/net10.0/any/app.dll", "binary"), (".signature.p7s", "repository countersignature"))).Count == 0,
+        Check.That(NuGetRegistry.ComparePayload(local, Package("signed.nupkg", ("tool.nuspec", "spec"), ("tools/net11.0/any/app.dll", "binary"), (".signature.p7s", "repository countersignature"))).Count == 0,
             "The nuget.org repository signature must not count as a payload difference.");
-        Check.That(NuGetRegistry.ComparePayload(local, Package("changed.nupkg", ("tool.nuspec", "spec"), ("tools/net10.0/any/app.dll", "rebuilt"))) is [var changed] && changed.Contains("app.dll", StringComparison.Ordinal),
+        Check.That(NuGetRegistry.ComparePayload(local, Package("changed.nupkg", ("tool.nuspec", "spec"), ("tools/net11.0/any/app.dll", "rebuilt"))) is [var changed] && changed.Contains("app.dll", StringComparison.Ordinal),
             "A rebuilt entry under the same version must be reported.");
         Check.That(NuGetRegistry.ComparePayload(local, Package("missing.nupkg", ("tool.nuspec", "spec"))).Count == 1,
             "An entry missing from the registry package must be reported.");
-        Check.That(NuGetRegistry.ComparePayload(local, Package("extra.nupkg", ("tool.nuspec", "spec"), ("tools/net10.0/any/app.dll", "binary"), ("tools/extra.dll", "x"))).Count == 1,
+        Check.That(NuGetRegistry.ComparePayload(local, Package("extra.nupkg", ("tool.nuspec", "spec"), ("tools/net11.0/any/app.dll", "binary"), ("tools/extra.dll", "x"))).Count == 1,
             "An entry only in the registry package must be reported.");
     }
 
@@ -181,7 +191,7 @@ internal static class ReleaseRegressions
         using TemporaryDirectory temporary = new();
         string project = Directory.CreateDirectory(Path.Combine(temporary.Path, "probe")).FullName;
         File.WriteAllText(Path.Combine(project, "Probe.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Probe</PackageId><Version>1.0.0</Version></PropertyGroup></Project>");
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework><PackageId>Probe</PackageId><Version>1.0.0</Version></PropertyGroup></Project>");
         File.WriteAllText(Path.Combine(project, "Probe.cs"), "internal sealed class Probe { }");
         string dotnet = Processes.FindExecutable("dotnet");
 

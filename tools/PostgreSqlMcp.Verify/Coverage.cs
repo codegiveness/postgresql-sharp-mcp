@@ -41,7 +41,7 @@ internal static class Coverage
 
         string solution = Path.Combine(root, "postgresql-sharp-mcp.slnx");
         // The server output directory holds all three assemblies (project references are copied locally), so one directory is instrumented.
-        string server = Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net10.0");
+        string server = Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net11.0");
         await Run(new("dotnet", "build", solution, "-c", "Release"), root, TimeSpan.FromMinutes(5));
         await Run(new("dotnet", "tool", "restore"), root, TimeSpan.FromMinutes(5));
         if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
