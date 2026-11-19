@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:11.0@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea AS build
 WORKDIR /source
-COPY global.json Directory.Build.props Directory.Packages.props postgresql-sharp-mcp.slnx ./
+COPY .editorconfig global.json Directory.Build.props Directory.Packages.props postgresql-sharp-mcp.slnx ./
 COPY src/ ./src/
 COPY README.md SECURITY.md CONTRIBUTING.md LICENSE THIRD-PARTY-NOTICES.md ./
 COPY LICENSES/ ./LICENSES/
