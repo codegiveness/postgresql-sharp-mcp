@@ -19,17 +19,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Build the repository verifier
+        run: dotnet build tools/PostgreSqlMcp.Verify -c Release -p:RestoreLockedMode=true --nologo
       - name: Install checksum-verified Trivy
-        working-directory: ${{ runner.temp }}
+        # Version, URL and SHA-256 are pinned in tools/PostgreSqlMcp.Verify/PinnedTools.cs (official v0.76.1
+        # release and trivy_0.76.1_checksums.txt); no install script, and a mismatch fails closed.
         run: |
-          # Official v0.76.1 release and trivy_0.76.1_checksums.txt; no install script.
-          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 \
-            --output trivy.tar.gz \
-            https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
-          printf '%s  %s\n' 'c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0' 'trivy.tar.gz' | sha256sum --check --strict
-          mkdir -p trivy-bin
-          tar -xzf trivy.tar.gz -C trivy-bin trivy
-          ./trivy-bin/trivy --version
+          dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-build -- install-tool trivy --output "$RUNNER_TEMP/trivy-bin"
+          "$RUNNER_TEMP/trivy-bin/trivy" --version
       - name: Build the actual application image
         run: docker build --pull --tag postgresql-sharp-mcp:security .
       - name: Gate OS and application vulnerabilities

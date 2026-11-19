@@ -26,3 +26,21 @@ jobs:
           dotnet restore postgresql-sharp-mcp.slnx --locked-mode --force
           -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low
           -p:TreatWarningsAsErrors=true
+  workflow-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Build the repository verifier
+        run: dotnet build tools/PostgreSqlMcp.Verify -c Release -p:RestoreLockedMode=true --nologo
+      - name: Prove the installer rejects tampered archives
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-build -- install-tool-regressions
+      - name: Audit workflows with actionlint (including ShellCheck) and zizmor
+        # Pinned, SHA-256-verified tools; zizmor runs offline with the regular persona. Intentional patterns need
+        # a per-line `zizmor: ignore[rule]` comment that states the reason.
+        run: dotnet run --project tools/PostgreSqlMcp.Verify -c Release --no-build -- workflows
