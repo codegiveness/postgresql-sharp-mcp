@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.4 - 2026-11-19
+
+Maintenance release. No tool, parameter, environment variable, CLI flag, targets-file, output or database-access behavior changes; configurations that work with 0.7.3 work unchanged, and the package file sets are unchanged.
+
+- **CodeQL action 4.39.3:** the CodeQL `init`, `analyze` and `upload-sarif` steps and the Scorecard SARIF upload use `github/codeql-action` 4.39.3 (#93), pinned to its verified commit `33d7b85`.
+- **Release approval:** the `release` environment now requires the maintainer to approve each deployment (self-review allowed) before publishing jobs receive OIDC credentials. CONTRIBUTING, the git workflow and the security posture describe it (#94).
+
 ## 0.7.3 - 2026-11-19
 
 Repository-engineering release that adopts the testing, quality, CI and release-gate practices of the sibling [mssql-mcp](https://github.com/codegiveness/mssql-mcp) project. No tool, parameter, environment variable, CLI flag, targets-file, output or database-access behavior changes; configurations that work with 0.7.2 work unchanged, and the package file sets are unchanged.

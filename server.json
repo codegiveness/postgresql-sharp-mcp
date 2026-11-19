@@ -3,7 +3,7 @@
   "name": "io.github.codegiveness/postgresql-sharp-mcp",
   "title": "postgresql-sharp-mcp",
   "description": "PostgreSQL MCP server in C#/.NET: live database discovery, schema inspection, bounded read-only-by-default SQL, query plans and health checks.",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "repository": {
     "url": "https://github.com/codegiveness/postgresql-sharp-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@codegiveness/postgresql-sharp-mcp",
-      "version": "0.7.3",
+      "version": "0.7.4",
       "transport": {
         "type": "stdio"
       },
@@ -138,7 +138,7 @@
       "registryType": "nuget",
       "registryBaseUrl": "https://api.nuget.org/v3/index.json",
       "identifier": "codegiveness.postgresql-sharp-mcp",
-      "version": "0.7.3",
+      "version": "0.7.4",
       "transport": {
         "type": "stdio"
       },
