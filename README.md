@@ -150,7 +150,7 @@ For **npx**, use this JSON for a new file. If the file already has other servers
 }
 ```
 
-For a **.NET tool**, replace `command` with `"postgresql-sharp-mcp"` and remove `args`; the client must inherit the tools directory on PATH. Alternatively, use the absolute tool path (`/home/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on Linux, `/Users/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on macOS, or `"C:\\Users\\YOUR_USER\\.dotnet\\tools\\postgresql-sharp-mcp.exe"` in Windows JSON).
+For a **.NET tool**, replace `command` with `"postgresql-sharp-mcp"` and remove `args`; the client must inherit the tools directory on PATH. Alternatively, use the absolute tool path (`/home/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on Linux, `/Users/YOUR_USER/.dotnet/tools/postgresql-sharp-mcp` on macOS). Since 0.7.2 the .NET tool is self-contained, and on Windows the .NET SDK installs its command as `postgresql-sharp-mcp.cmd`, not an `.exe`. A client that starts commands without a shell (many Node.js-based clients) cannot launch a `.cmd` file, so on Windows prefer npx or the standalone archive's `PostgreSqlMcp.exe`. Use `"C:\\Users\\YOUR_USER\\.dotnet\\tools\\postgresql-sharp-mcp.cmd"` only with a client that launches through a shell.
 
 For a **standalone archive**, remove `args` and use the **absolute executable path**, not the folder or archive:
 

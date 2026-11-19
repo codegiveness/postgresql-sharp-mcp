@@ -85,10 +85,19 @@ internal static class Packages
             globalEnvironment, timeout: 600, directory: globalHome);
         await VerifyMissingPlatformFailsAsync(isolatedNpm, stage, spec, npmName, ConsumerEnvironment(noDotnet, stage, "omit-optional"), registry.Url);
         // The installing SDK needs a RID-specific-tool-capable version; the installed tool must then run without any .NET installation.
-        // The install runs from a local feed with POSTGRES_* removed, so its diagnostics carry no credentials and are reported on failure.
+        // SDK 10/11 resolve a shell-shim apphost for every install, and for a self-contained tool (framework folder "any") on a non-x64
+        // Mac they download microsoft.netcore.app.host.osx-x64 although an executable-runner tool only gets a symlink. Consumers get that
+        // package from nuget.org; this offline install offers the copy packing already restored into the global packages folder.
+        ProcessResult locals = await Processes.RunAsync(new(dotnet, "nuget", "locals", "global-packages", "--list"), environment);
+        string globalPackages = locals.Output.Trim()["global-packages:".Length..].Trim();
+        Check.That(Directory.Exists(globalPackages), "dotnet nuget locals did not report an existing global packages folder.");
+        // The install runs from local feeds with POSTGRES_* removed, so its diagnostics carry no credentials and are reported on failure.
         ProcessResult toolInstall = await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
-            "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, expected: null, timeout: 120);
+            "--tool-path", toolHome, "--configfile", config, "--add-source", globalPackages, "--no-cache"), environment, expected: null, timeout: 120);
         Check.That(toolInstall.ExitCode == 0, $"dotnet tool install exited with status {toolInstall.ExitCode}:\n{toolInstall.Output}\n{toolInstall.Error}");
+        // An executable-runner tool's command is a symlink on Unix and a .cmd file on Windows; the self-contained apphost sits in the store.
+        string toolNative = Directory.EnumerateFiles(Path.Combine(toolHome, ".store"), OperatingSystem.IsWindows() ? "PostgreSqlMcp.exe" : "PostgreSqlMcp",
+            SearchOption.AllDirectories).Single();
         string native = InstalledNpmCommand(npmHome, npmName, global: false, out string npmBin);
         string globalNative = InstalledNpmCommand(globalHome, npmName, global: true, out string globalBin);
         Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=" + npmName,
@@ -100,7 +109,7 @@ internal static class Packages
             ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
             ("npm global (no .NET)", new(globalBin) { WorkingDirectory = globalHome }, globalEnvironment, globalNative),
             ("npx fresh cache (no .NET)", npxCommand, npxEnvironment, null),
-            ("NuGet (no .NET)", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.exe" : "postgresql-sharp-mcp")), nugetEnvironment, null)
+            ("NuGet (no .NET)", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.cmd" : "postgresql-sharp-mcp")), nugetEnvironment, toolNative)
         };
         // Exercise actual apphosts too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), localEnvironment);
