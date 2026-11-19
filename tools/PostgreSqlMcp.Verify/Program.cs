@@ -23,6 +23,14 @@ internal static class Program
                 await Coverage.RunAsync(root, coverageOptions);
             else if (args is ["sarif", "--baseline", var baseline, "--candidate", var candidate])
                 SarifGate.Run(baseline, candidate, Console.Out);
+            else if (args is ["install-tool", var toolName, "--output", var toolOutput])
+                Console.WriteLine($"Installed {await PinnedTools.InstallAsync(PinnedTools.Get(toolName), toolOutput)} (SHA-256 verified).");
+            else if (args is ["install-tool-regressions"])
+                await ToolInstallerRegressions.RunAsync();
+            else if (args is ["workflows"])
+                await SecurityScans.AuditWorkflowsAsync(root);
+            else if (args is ["secret-detectors"])
+                await SecurityScans.VerifySecretDetectorsAsync(root);
             else if (args is ["sarif-regressions"])
                 SarifRegression.Run();
             else if (args is ["release-regressions"])
@@ -53,7 +61,7 @@ internal static class Program
                 await Packages.RunAsync(root, artifacts, targetsFile, installationOnly);
             }
             else
-                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions");
+                throw new VerificationException("Usage: integration [--no-build] | coverage [--output directory] [--threshold line-percent] | packages [--artifacts directory] [--targets-file disposable-targets.json | --installation-only] | sarif --baseline directory --candidate directory | sarif-regressions | release-regressions | " + PinnedTools.Usage + " | install-tool-regressions | workflows | secret-detectors");
             return 0;
         }
         catch (Exception ex)

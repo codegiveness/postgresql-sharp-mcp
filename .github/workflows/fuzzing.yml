@@ -23,10 +23,25 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '11.0.x'
+      - name: Restore the cross-run fuzz corpus
+        # Every run, including pull requests, starts from the newest corpus saved by a main-branch run.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/fuzz/corpus
+          key: fuzz-corpus-${{ hashFiles('tools/PostgreSqlMcp.Fuzz/packages.lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ hashFiles('tools/PostgreSqlMcp.Fuzz/packages.lock.json') }}-
       - name: Replay regressions and fuzz instrumented SQL boundaries
         env:
           FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '300' || '60' }}
         run: dotnet run --project tools/PostgreSqlMcp.Fuzz -c Release -p:RestoreLockedMode=true -- campaign "$FUZZ_SECONDS"
+      - name: Save the grown fuzz corpus
+        # Only trusted main-branch runs write the shared corpus; pull requests can read but never poison it.
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/fuzz/corpus
+          key: fuzz-corpus-${{ hashFiles('tools/PostgreSqlMcp.Fuzz/packages.lock.json') }}-${{ github.run_id }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -35,4 +50,4 @@ jobs:
             artifacts/fuzz/corpus
             artifacts/fuzz/crashes
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
