@@ -6,5 +6,6 @@
   <ItemGroup>
     <Compile Include="..\Shared\ProcessRunner.cs" Link="Shared\ProcessRunner.cs" />
     <Compile Include="..\Shared\NpmPlatforms.cs" Link="Shared\NpmPlatforms.cs" />
+    <Compile Include="..\Shared\NuGetTool.cs" Link="Shared\NuGetTool.cs" />
   </ItemGroup>
 </Project>

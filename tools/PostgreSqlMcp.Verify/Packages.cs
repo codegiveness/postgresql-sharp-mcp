@@ -25,11 +25,13 @@ internal static class Packages
         Check.That(metadata["version"].Text() == version, "npm and NuGet package versions disagree.");
         string tarball = Path.Combine(artifacts, NpmPlatform.TarballName(npmName, version));
         string[] platformTarballs = NpmPlatform.All.Select(platform => Path.Combine(artifacts, NpmPlatform.TarballName(platform.PackageName(npmName), version))).ToArray();
-        string nupkg = Path.Combine(artifacts, packageId + "." + version + ".nupkg");
+        string[] nupkgs = [.. NuGetTool.FileNames(packageId, version).Select(name => Path.Combine(artifacts, name))];
         string config = Path.Combine(artifacts, "NuGet.Config");
-        Check.That(File.Exists(tarball) && platformTarballs.All(File.Exists) && File.Exists(nupkg) && File.Exists(config),
-            "Generate the npm package, its five platform packages, the NuGet package and local-only NuGet.Config before package verification.");
-        await VerifyArchivesAsync(root, tarball, platformTarballs, nupkg, npmName, version);
+        Check.That(File.Exists(tarball) && platformTarballs.All(File.Exists) && nupkgs.All(File.Exists) && File.Exists(config),
+            "Generate the npm package, its five platform packages, the NuGet pointer and five per-RID packages and local-only NuGet.Config before package verification.");
+        Check.That(project.Descendants("ToolPackageRuntimeIdentifiers").Single().Value.Split(';').Order(StringComparer.Ordinal).SequenceEqual(NuGetTool.Rids.Order(StringComparer.Ordinal)),
+            "PostgreSqlMcp.csproj ToolPackageRuntimeIdentifiers must be exactly the npm platform RIDs.");
+        await VerifyArchivesAsync(root, tarball, platformTarballs, nupkgs, packageId, npmName, version);
         VerifyLocalSource(config, artifacts);
         string npm = Processes.FindExecutable("npm");
         string npx = Processes.FindExecutable("npx");
@@ -54,6 +56,8 @@ internal static class Packages
         Dictionary<string, string> localEnvironment = ConsumerEnvironment(noDotnet, stage, "local");
         Dictionary<string, string> globalEnvironment = ConsumerEnvironment(noDotnet, stage, "global");
         Dictionary<string, string> npxEnvironment = ConsumerEnvironment(noDotnet, stage, "npx");
+        // The self-contained NuGet tool must run with no dotnet on PATH and no DOTNET_ROOT, exactly like the npm packages.
+        Dictionary<string, string> nugetEnvironment = ConsumerEnvironment(noDotnet, stage, "nuget");
         Directory.CreateDirectory(npmHome);
         Directory.CreateDirectory(globalHome);
         Directory.CreateDirectory(npxHome);
@@ -80,8 +84,22 @@ internal static class Packages
             "--allow-scripts=" + npmName, "--no-audit", "--no-fund", "--ignore-scripts=false", spec),
             globalEnvironment, timeout: 600, directory: globalHome);
         await VerifyMissingPlatformFailsAsync(isolatedNpm, stage, spec, npmName, ConsumerEnvironment(noDotnet, stage, "omit-optional"), registry.Url);
-        await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
-            "--tool-path", toolHome, "--configfile", config, "--no-cache"), environment, timeout: 120);
+        // The installing SDK needs a RID-specific-tool-capable version; the installed tool must then run without any .NET installation.
+        // SDK 10/11 resolve a shell-shim apphost for every install, and for a self-contained tool (framework folder "any") on a non-x64
+        // Mac they download microsoft.netcore.app.host.osx-x64 although an executable-runner tool only gets a symlink. Consumers get that
+        // package from nuget.org; this offline install offers the copy packing already restored into the global packages folder.
+        // Ask with the caller's environment: `environment` points NUGET_PACKAGES at an empty isolated cache for the consumer install.
+        ProcessResult locals = await Processes.RunAsync(new(dotnet, "nuget", "locals", "global-packages", "--list"), Processes.CleanEnvironment());
+        string globalPackages = locals.Output.Split('\n').Select(line => line.Trim())
+            .Where(line => line.StartsWith("global-packages:", StringComparison.Ordinal)).Select(line => line["global-packages:".Length..].Trim()).SingleOrDefault() ?? "";
+        Check.That(Directory.Exists(globalPackages), $"dotnet nuget locals did not report an existing global packages folder: {locals.Output.Trim()}");
+        // The install runs from local feeds with POSTGRES_* removed, so its diagnostics carry no credentials and are reported on failure.
+        ProcessResult toolInstall = await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
+            "--tool-path", toolHome, "--configfile", config, "--add-source", globalPackages, "--no-cache"), environment, expected: null, timeout: 120);
+        Check.That(toolInstall.ExitCode == 0, $"dotnet tool install exited with status {toolInstall.ExitCode}:\n{toolInstall.Output}\n{toolInstall.Error}");
+        // An executable-runner tool's command is a symlink on Unix and a .cmd file on Windows; the self-contained apphost sits in the store.
+        string toolNative = Directory.EnumerateFiles(Path.Combine(toolHome, ".store"), OperatingSystem.IsWindows() ? "PostgreSqlMcp.exe" : "PostgreSqlMcp",
+            SearchOption.AllDirectories).Single();
         string native = InstalledNpmCommand(npmHome, npmName, global: false, out string npmBin);
         string globalNative = InstalledNpmCommand(globalHome, npmName, global: true, out string globalBin);
         Command npxCommand = isolatedNpx.With("-y", "--allow-scripts=" + npmName,
@@ -93,7 +111,7 @@ internal static class Packages
             ("npm local (no .NET)", new(npmBin) { WorkingDirectory = npmHome }, localEnvironment, native),
             ("npm global (no .NET)", new(globalBin) { WorkingDirectory = globalHome }, globalEnvironment, globalNative),
             ("npx fresh cache (no .NET)", npxCommand, npxEnvironment, null),
-            ("NuGet", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.exe" : "postgresql-sharp-mcp")), environment, null)
+            ("NuGet (no .NET)", new(Path.Combine(toolHome, OperatingSystem.IsWindows() ? "postgresql-sharp-mcp.cmd" : "postgresql-sharp-mcp")), nugetEnvironment, toolNative)
         };
         // Exercise actual apphosts too, rather than accepting only cmd-shim success on Windows.
         await Processes.RunAsync(new(native, "--help"), localEnvironment);
@@ -155,7 +173,7 @@ internal static class Packages
                     await VerifyMcpAsync(new(installedNative), configured, ["primary"]);
             }
         }
-        Console.WriteLine("Package verification passed; local and global npm installs and fresh-cache npx from a loopback registry (platform package selection, CLI/MCP without .NET), NuGet, native commands and shutdown verified.");
+        Console.WriteLine("Package verification passed; local and global npm installs and fresh-cache npx from a loopback registry (platform package selection, CLI/MCP without .NET), the self-contained NuGet tool (CLI/MCP without .NET), native commands and shutdown verified.");
         if (installationOnly)
             Console.WriteLine("Installation-only mode: live database discovery/query/write scenarios were not run; use default package verification for that coverage.");
     }
@@ -382,7 +400,7 @@ internal static class Packages
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal), "NuGet source does not match the requested artifact directory.");
     }
 
-    private static async Task VerifyArchivesAsync(string root, string tarball, string[] platformTarballs, string nupkg, string npmName, string version)
+    private static async Task VerifyArchivesAsync(string root, string tarball, string[] platformTarballs, string[] nupkgs, string packageId, string npmName, string version)
     {
         HashSet<string> legal = ["LICENSE", "THIRD-PARTY-NOTICES.md", .. Directory.EnumerateFiles(Path.Combine(root, "LICENSES"), "*.txt").Select(file => "LICENSES/" + Path.GetFileName(file))];
         byte[][] workspacePaths = new[] { root, root.Replace('\\', '/'), root.Replace('/', '\\') }.Distinct().Select(Encoding.UTF8.GetBytes).ToArray();
@@ -405,9 +423,10 @@ internal static class Packages
                 && manifest["libc"]?.AsArray().Single().Text() == platform.Libc && manifest["scripts"] is null,
                 $"npm {platform.Rid} package manifest does not select exactly {platform.Os}-{platform.Cpu} or declares scripts.");
         }
-        using (ZipArchive archive = ZipFile.OpenRead(nupkg))
+        foreach (string nupkg in nupkgs)
         {
-            Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), "NuGet artifact lost legal notices.");
+            using ZipArchive archive = ZipFile.OpenRead(nupkg);
+            Check.That(legal.IsSubsetOf(archive.Entries.Select(entry => entry.FullName)), $"NuGet artifact {Path.GetFileName(nupkg)} lost legal notices.");
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
                 Check.That(entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime, $"NuGet entry {entry.FullName} carries a build-time stamp, so the package is not reproducible.");
@@ -415,7 +434,46 @@ internal static class Packages
                 await VerifyNoWorkspacePathAsync(stream, workspacePaths);
             }
         }
-        Console.WriteLine("PASS npm main/platform package contents, NuGet legal notices and build-machine path confidentiality");
+        VerifyToolPackages(nupkgs, packageId, version);
+        Console.WriteLine("PASS npm main/platform package contents, NuGet pointer and per-RID packages, legal notices and build-machine path confidentiality");
+    }
+
+    // The pointer only names the RID packages; each RID package is a self-contained publish with an executable entry point, never a framework-dependent one.
+    private static void VerifyToolPackages(string[] nupkgs, string packageId, string version)
+    {
+        foreach (string nupkg in nupkgs)
+        {
+            string id = Path.GetFileName(nupkg)[..^(version.Length + ".nupkg".Length + 1)];
+            string? rid = NuGetTool.Rids.SingleOrDefault(candidate => id == packageId + "." + candidate);
+            Check.That(rid is not null || id == packageId, $"Unexpected NuGet package {id}.");
+            using ZipArchive archive = ZipFile.OpenRead(nupkg);
+            string Text(string name) => new StreamReader((archive.GetEntry(name) ?? throw new VerificationException($"{id} lacks {name}.")).Open()).ReadToEnd();
+            XElement nuspec = XDocument.Parse(Text(id + ".nuspec")).Root!;
+            XNamespace ns = nuspec.Name.Namespace;
+            Check.That(nuspec.Element(ns + "metadata")!.Element(ns + "version")!.Value == version, $"{id} has the wrong version.");
+            string type = nuspec.Descendants(ns + "packageType").Single().Attribute("name")!.Value;
+            if (rid is null)
+            {
+                Check.That(type == "DotnetTool", "The pointer package must be a DotnetTool.");
+                Check.That(archive.Entries.Where(entry => entry.FullName.StartsWith("tools/", StringComparison.Ordinal)).Select(entry => entry.FullName).SequenceEqual(["tools/any/any/DotnetToolSettings.xml"]),
+                    "The pointer package must contain only its tool settings, no implementation.");
+                XElement[] listed = [.. XDocument.Parse(Text("tools/any/any/DotnetToolSettings.xml")).Descendants("RuntimeIdentifierPackage")];
+                Check.That(listed.Select(item => item.Attribute("RuntimeIdentifier")!.Value + "=" + item.Attribute("Id")!.Value).Order(StringComparer.Ordinal)
+                    .SequenceEqual(NuGetTool.Rids.Select(candidate => candidate + "=" + packageId + "." + candidate).Order(StringComparer.Ordinal)),
+                    "The pointer package must list exactly the five RID packages (and no framework-dependent fallback).");
+                continue;
+            }
+            Check.That(type == "DotnetToolRidPackage", $"{id} must be a DotnetToolRidPackage.");
+            string root = $"tools/any/{rid}/";
+            string executable = NpmPlatform.All.Single(platform => platform.Rid == rid).Executable("PostgreSqlMcp");
+            XElement command = XDocument.Parse(Text(root + "DotnetToolSettings.xml")).Descendants("Command").Single();
+            Check.That(command.Attribute("Name")!.Value == "postgresql-sharp-mcp" && command.Attribute("EntryPoint")!.Value == executable && command.Attribute("Runner")!.Value == "executable",
+                $"{id} must start its own {executable} apphost.");
+            Check.That(archive.GetEntry(root + executable) is not null && archive.GetEntry(root + "PostgreSqlMcp.dll") is not null, $"{id} lost its server.");
+            Check.That(Text(root + "PostgreSqlMcp.runtimeconfig.json").Contains("includedFrameworks", StringComparison.Ordinal),
+                $"{id} is not self-contained: its runtime configuration does not include the .NET runtime.");
+            Check.That(archive.Entries.Any(entry => entry.FullName.StartsWith(root + "System.Private.CoreLib.", StringComparison.Ordinal)), $"{id} does not bundle the .NET runtime.");
+        }
     }
 
     private static async Task<HashSet<string>> TarNamesAsync(string tarball, byte[][] workspacePaths)

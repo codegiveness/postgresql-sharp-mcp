@@ -1,6 +1,6 @@
 # Architecture
 
-postgresql-sharp-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server written in C#/.NET 10. An MCP client (an AI assistant or coding agent) starts it as a local child process and talks to it over **stdio**. The server turns nine tool calls into bounded PostgreSQL queries and returns structured JSON. This document describes the high-level design; [SECURITY.md](../SECURITY.md) states the guarantees and limits and [docs/assurance-case.md](assurance-case.md) argues why they hold. Names below are source files; read the code for details.
+postgresql-sharp-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server written in C#/.NET 11. An MCP client (an AI assistant or coding agent) starts it as a local child process and talks to it over **stdio**. The server turns nine tool calls into bounded PostgreSQL queries and returns structured JSON. This document describes the high-level design; [SECURITY.md](../SECURITY.md) states the guarantees and limits and [docs/assurance-case.md](assurance-case.md) argues why they hold. Names below are source files; read the code for details.
 
 Checked against the source of release 0.5.0 (commit `64c55c7`) on 2026-10-11. The TLS and database-lock descriptions below reflect the 0.7.0 defaults (Prefer TLS, advisory database lock) and have not yet been rechecked against a tagged release.
 

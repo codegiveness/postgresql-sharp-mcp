@@ -12,6 +12,7 @@ return await Release.RunAsync(args);
 
 internal static class Release
 {
+    private const string NuGetPackageId = "codegiveness.postgresql-sharp-mcp";
     private static readonly string[] Rids = ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"];
     private const string TagPattern = @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z";
 
@@ -175,13 +176,14 @@ internal static class Release
     private static string[] ArtifactFiles(string root, (string Version, string NpmName) metadata)
     {
         string[] archives = Rids.Select(rid => Path.Combine(root, "artifacts/archives", "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"))).ToArray();
-        string nuget = Path.Combine(root, "artifacts/packages", "codegiveness.postgresql-sharp-mcp." + metadata.Version + ".nupkg");
+        // The pointer package and one self-contained package per RID.
+        string[] nuget = NuGetTool.FileNames(NuGetPackageId, metadata.Version).Select(name => Path.Combine(root, "artifacts/packages", name)).ToArray();
         // Platform packages first: the main package's optionalDependencies point at them.
         string[] npm = NpmPackages(metadata.NpmName).Select(name => Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, metadata.Version))).ToArray();
         string sbom = Path.Combine(root, "artifacts/sbom/bom.json");
-        string[] files = [.. archives, nuget, .. npm, sbom];
+        string[] files = [.. archives, .. nuget, .. npm, sbom];
         if (files.Any(file => !File.Exists(file)))
-            throw new InvalidOperationException("Expected five archives, the current NuGet package, the npm package and its five platform packages, and the application SBOM.");
+            throw new InvalidOperationException("Expected five archives, the NuGet tool pointer and its five per-RID packages, the npm package and its five platform packages, and the application SBOM.");
         return files;
     }
 
@@ -224,29 +226,41 @@ internal static class Release
 
     private static async Task PublishNuGetAsync(string root, string version)
     {
-        const string PackageId = "codegiveness.postgresql-sharp-mcp";
         string apiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY") ?? "";
         if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("NUGET_API_KEY is required.");
-        string package = Path.Combine(root, "artifacts/packages", PackageId + "." + version + ".nupkg");
-        if (!File.Exists(package)) throw new InvalidOperationException("The current NuGet package is missing.");
+        // Publication order: every RID package, then the pointer. The pointer only names the RID packages, so a user must never be able to
+        // install it before they are all available.
+        string[] ids = [.. NuGetTool.PackageIds(NuGetPackageId)];
+        string[] ridIds = ids[..^1];
+        string pointerId = ids[^1];
+        string PackagePath(string id) => Path.Combine(root, "artifacts/packages", id + "." + version + ".nupkg");
+        if (ids.Any(id => !File.Exists(PackagePath(id)))) throw new InvalidOperationException("A current NuGet tool package is missing.");
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        if (await NuGetRegistry.HasVersionAsync(http, PackageId, version))
+        foreach (string id in ridIds) await PublishNuGetPackageAsync(http, id, version, PackagePath(id), apiKey, root);
+        // nuget.org validates a pushed package before it is listed; wait for that so the pointer never references a RID package that is not yet installable.
+        foreach (string id in ridIds) await NuGetRegistry.WaitForVersionAsync(http, id, version, TimeSpan.FromMinutes(20));
+        await PublishNuGetPackageAsync(http, pointerId, version, PackagePath(pointerId), apiKey, root);
+    }
+
+    private static async Task PublishNuGetPackageAsync(HttpClient http, string id, string version, string package, string apiKey, string root)
+    {
+        if (await NuGetRegistry.HasVersionAsync(http, id, version))
         {
             // Versions are immutable: a duplicate is success only if it is this exact payload.
             string registry = Path.Combine(Directory.CreateTempSubdirectory("postgresql-nuget-").FullName, "registry.nupkg");
             try
             {
-                await NuGetRegistry.DownloadAsync(http, PackageId, version, registry);
+                await NuGetRegistry.DownloadAsync(http, id, version, registry);
                 var differences = NuGetRegistry.ComparePayload(package, registry);
                 if (differences.Count > 0)
-                    throw new InvalidOperationException($"NuGet {version} already exists with a different payload ({string.Join("; ", differences.Take(5))}); refusing to treat it as published.");
+                    throw new InvalidOperationException($"NuGet {id} {version} already exists with a different payload ({string.Join("; ", differences.Take(5))}); refusing to treat it as published.");
             }
             finally { Directory.Delete(Path.GetDirectoryName(registry)!, true); }
-            await SummaryAsync($"NuGet {version} already exists with an identical payload (repository signature ignored); not republished.\n");
+            await SummaryAsync($"NuGet {id} {version} already exists with an identical payload (repository signature ignored); not republished.\n");
             return;
         }
         await RunAsync("dotnet", ["nuget", "push", package, "--source", "https://api.nuget.org/v3/index.json", "--api-key", apiKey], root);
-        await SummaryAsync($"NuGet {version} pushed.\n");
+        await SummaryAsync($"NuGet {id} {version} pushed.\n");
     }
 
     // The attest job's Sigstore bundle is published so provenance can be verified from the release itself.

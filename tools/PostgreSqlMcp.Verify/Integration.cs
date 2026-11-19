@@ -17,7 +17,7 @@ internal static class Integration
         ReleaseRegressions.Run();
         await using var fixture = new PostgresFixture();
         await fixture.StartAsync();
-        var command = new Command("dotnet", Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net10.0", "PostgreSqlMcp.dll"));
+        var command = new Command("dotnet", Path.Combine(root, "src", "PostgreSqlMcp", "bin", "Release", "net11.0", "PostgreSqlMcp.dll"));
         string connection = $"Host=127.0.0.1;Port={fixture.Port};Username=mcp_reader;Password=reader-disposable;Database=";
         var targets = new Dictionary<string, string>
         {

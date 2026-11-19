@@ -39,8 +39,8 @@ internal static class PackageBuilder
             if (metadata.RootElement.GetProperty("version").GetString() != version)
                 throw new InvalidDataException("npm/package.json version must match PostgreSqlMcp.csproj Version.");
             CheckPlatformDependencies(metadata.RootElement, packageName, version);
-            var nugetName = $"{packageId}.{version}.nupkg";
-            if (Path.GetFileName(NpmPlatform.TarballName(packageName, version)) != NpmPlatform.TarballName(packageName, version) || Path.GetFileName(nugetName) != nugetName)
+            string[] nugetNames = [.. NuGetTool.FileNames(packageId, version)];
+            if (Path.GetFileName(NpmPlatform.TarballName(packageName, version)) != NpmPlatform.TarballName(packageName, version) || nugetNames.Any(name => Path.GetFileName(name) != name))
                 throw new InvalidDataException("Package names must not contain filesystem paths.");
 
             temporary = Directory.CreateTempSubdirectory("postgresql-mcp-package-").FullName;
@@ -85,12 +85,13 @@ internal static class PackageBuilder
             var mainTarball = Path.Combine(temporary, NpmPlatform.TarballName(packageName, version));
             CreateTarball(main, mainTarball);
 
+            // One pack writes the pointer package and a self-contained package per RID; the project restores those RIDs only for `pack`.
             var packed = Path.Combine(temporary, "nuget");
             await DotnetAsync(stage, "pack", server, "-c", "Release", "-o", packed, $"-p:DeterministicTimestamp={PackageTimestamp}");
-            var nupkg = Path.Combine(packed, nugetName);
-            CheckNuget(nupkg);
+            CheckNuget(packed, nugetNames);
+            var nupkgs = nugetNames.Select(name => Path.Combine(packed, name));
             Directory.CreateDirectory(output);
-            foreach (var artifact in tarballs.Prepend(mainTarball).Append(nupkg))
+            foreach (var artifact in tarballs.Prepend(mainTarball).Concat(nupkgs))
             {
                 var destination = Path.Combine(output, Path.GetFileName(artifact));
                 CopyFile(artifact, destination);
@@ -254,15 +255,22 @@ internal static class PackageBuilder
         }
     }
 
-    private static void CheckNuget(string path)
+    // Every package carries the notices (each redistributes .NET) and no source, debug files or packaging tooling; the directory holds exactly the expected set.
+    private static void CheckNuget(string directory, string[] expected)
     {
-        using var archive = ZipFile.OpenRead(path);
-        foreach (var document in Documents.Concat(["LICENSES/DotNet.txt", "LICENSES/DotNet-ThirdParty.txt", "LICENSES/Npgsql.txt", "LICENSES/ModelContextProtocol.txt"]))
-            if (archive.GetEntry(document) is null)
-                throw new InvalidDataException($"NuGet package is missing required notice {document}.");
-        if (archive.Entries.Any(entry => entry.FullName.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) ||
-            entry.FullName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || entry.FullName.Contains("PostgreSqlMcp.NpmInstall", StringComparison.Ordinal) ||
-            entry.FullName.Contains("PostgreSqlMcp.Build", StringComparison.Ordinal)))
-            throw new InvalidDataException("NuGet package contains source/debug files or packaging tooling.");
+        var actual = Directory.EnumerateFiles(directory, "*.nupkg").Select(Path.GetFileName).Order(StringComparer.Ordinal);
+        if (!actual.SequenceEqual(expected.Order(StringComparer.Ordinal)))
+            throw new InvalidDataException($"dotnet pack must produce exactly {string.Join(", ", expected)}.");
+        foreach (var name in expected)
+        {
+            using var archive = ZipFile.OpenRead(Path.Combine(directory, name));
+            foreach (var document in Documents.Concat(["LICENSES/DotNet.txt", "LICENSES/DotNet-ThirdParty.txt", "LICENSES/Npgsql.txt", "LICENSES/ModelContextProtocol.txt"]))
+                if (archive.GetEntry(document) is null)
+                    throw new InvalidDataException($"NuGet package {name} is missing required notice {document}.");
+            if (archive.Entries.Any(entry => entry.FullName.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) ||
+                entry.FullName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || entry.FullName.Contains("PostgreSqlMcp.NpmInstall", StringComparison.Ordinal) ||
+                entry.FullName.Contains("PostgreSqlMcp.Build", StringComparison.Ordinal)))
+                throw new InvalidDataException($"NuGet package {name} contains source/debug files or packaging tooling.");
+        }
     }
 }

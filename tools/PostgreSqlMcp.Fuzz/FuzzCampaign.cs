@@ -38,7 +38,8 @@ internal static class FuzzCampaign
             await RunProcessAsync(root, "dotnet", 180, "tool", "restore");
             await RunProcessAsync(root, "dotnet", 300, "publish", Path.Combine(project, "PostgreSqlMcp.Fuzz.csproj"),
                 "--configuration", "Release", "--no-self-contained", "-p:RestoreLockedMode=true", "--output", target);
-            await RunProcessAsync(root, "dotnet", 60, "tool", "run", "sharpfuzz", "--",
+            // SharpFuzz.CommandLine targets net10.0 only; with just the .NET 11 runtime installed it must roll forward to it.
+            await RunProcessAsync(root, "dotnet", 60, new Dictionary<string, string?> { ["DOTNET_ROLL_FORWARD"] = "Major" }, "tool", "run", "sharpfuzz", "--",
                 Path.Combine(target, "PostgreSqlMcp.Core.dll"), "PostgreSqlMcp.Core.SqlGuard");
 
             string assembly = Path.Combine(target, "PostgreSqlMcp.Fuzz.dll");
@@ -92,12 +93,16 @@ internal static class FuzzCampaign
         }
     }
 
-    private static async Task RunProcessAsync(string root, string executable, int timeoutSeconds, params string[] arguments)
+    private static Task RunProcessAsync(string root, string executable, int timeoutSeconds, params string[] arguments) =>
+        RunProcessAsync(root, executable, timeoutSeconds, null, arguments);
+
+    private static async Task RunProcessAsync(string root, string executable, int timeoutSeconds, IReadOnlyDictionary<string, string?>? environment, params string[] arguments)
     {
         // libFuzzer and dotnet progress stays live on the console.
         var result = await ProcessRunner.RunAsync(new ProcessSpec(executable, arguments)
         {
             WorkingDirectory = root,
+            Environment = environment,
             Timeout = TimeSpan.FromSeconds(timeoutSeconds),
             Output = OutputPolicy.Inherit
         });
