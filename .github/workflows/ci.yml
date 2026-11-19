@@ -9,6 +9,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # Pure unit tests (xunit.v3 on Microsoft Testing Platform): no Docker, no database. The coverage gate in the verify job measures
+  # only the shipped server assemblies under the integration scenarios, so these tests do not affect it.
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RestoreLockedMode: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.x'
+      - name: Restore locked dependencies
+        run: dotnet restore postgresql-sharp-mcp.slnx --locked-mode
+      - name: Run unit tests
+        run: dotnet test --solution postgresql-sharp-mcp.slnx -c Release --no-restore
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
