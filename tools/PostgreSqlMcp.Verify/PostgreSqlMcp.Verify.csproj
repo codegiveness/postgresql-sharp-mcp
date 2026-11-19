@@ -7,6 +7,9 @@
     <PackageReference Include="FsCheck" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="PostgreSqlMcp.Verify.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Release publication logic exercised offline by release-regressions. -->
     <Compile Include="..\PostgreSqlMcp.Release\ReleaseAssets.cs" Link="Release\ReleaseAssets.cs" />
     <Compile Include="..\PostgreSqlMcp.Release\ReleaseArchive.cs" Link="Release\ReleaseArchive.cs" />

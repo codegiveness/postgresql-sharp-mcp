@@ -1,3 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup><ProjectReference Include="../PostgreSqlMcp.Core/PostgreSqlMcp.Core.csproj" /></ItemGroup>
+  <ItemGroup><InternalsVisibleTo Include="PostgreSqlMcp.Tools.Tests" /></ItemGroup>
 </Project>

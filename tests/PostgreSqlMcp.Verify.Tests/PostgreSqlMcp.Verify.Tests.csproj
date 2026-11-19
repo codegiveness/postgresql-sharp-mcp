@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Verify compiles the Release helpers (SbomNormalizer, ReleaseAssets, ReleaseArchive) from source, so one reference covers both tools. -->
+    <ProjectReference Include="../../tools/PostgreSqlMcp.Verify/PostgreSqlMcp.Verify.csproj" />
+  </ItemGroup>
+</Project>
