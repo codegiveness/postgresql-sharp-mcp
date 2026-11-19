@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Release runs without a deployment reviewer:** the `release` environment's required reviewer (0.7.4 entry) was removed on 2026-11-19, so a dispatched release no longer waits for **Review deployments**. It duplicated npm's staged-package approval, which remains the human publication step, next to the `required-checks` preflight. The 0.7.4 packages were published by a run without the reviewer.
+
 ## 0.7.4 - 2026-11-19
 
 Maintenance release. No tool, parameter, environment variable, CLI flag, targets-file, output or database-access behavior changes; configurations that work with 0.7.3 work unchanged, and the package file sets are unchanged.

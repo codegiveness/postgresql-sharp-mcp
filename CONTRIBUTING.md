@@ -340,7 +340,7 @@ Only authorized maintainers may push release tags, publish packages or change re
 
 Release-tool changes do not replace immutable shipped artifacts; each release publishes a new version from its own `v<version>` tag.
 
-Use this repository's `release` GitHub environment. Its deployment policy permits the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. Since 2026-11-19 (after the 0.7.3 release) the environment also requires a reviewer, **codegiveness**, with self-review allowed: every job that uses the environment waits until the maintainer approves the deployment under **Actions → the run → Review deployments**, a deliberate human click before any OIDC credential is issued. npm's human approval is a separate registry-side 2FA gate. Do not transfer credentials from another repository or depend on a sibling job. Never put credentials in source, command history, issues or pull requests.
+Use this repository's `release` GitHub environment. Its deployment policy permits the **main branch only**, not `v*` tags; the workflow validates the supplied tag separately. The environment has no required reviewer, so a dispatched run publishes without waiting: the human gates are the dispatch itself, the `required-checks` preflight (every check in `.github/required-checks.json` green on the tagged commit) and npm's staged-package approval, a separate registry-side 2FA step. A reviewer was tried on 2026-11-19 and removed the same day because it duplicated the npm approval and left release runs waiting. Do not transfer credentials from another repository or depend on a sibling job. Never put credentials in source, command history, issues or pull requests.
 
 #### npm package trust and Windows setup
 
