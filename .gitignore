@@ -11,3 +11,18 @@ artifacts/
 *.user
 .scratch/
 __pycache__/
+
+# Local AI coding assistant state and MCP client config (may hold connection strings). Never commit.
+# Shared instruction files AGENTS.md and CLAUDE.md are tracked project source.
+.claude/
+CLAUDE.local.md
+.mcp.json
+.opencode*
+opencode.json*
+.codex*
+.cursor/
+.aider*
+.continue/
+.windsurf/
+.codegraph/
+.omo/

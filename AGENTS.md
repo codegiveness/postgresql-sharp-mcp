@@ -22,17 +22,29 @@ This is a short, tool-neutral orientation for any coding agent working on this r
 | `npm/` | Source `package.json` of the npm main package (built by the builder; do not install it directly) |
 | `docs/` | Architecture, assurance, security posture, roadmap and the git workflow |
 
+## Read first
+
+Before changing anything, skim these in order. Each is short and states what you must not break.
+
+1. [CLAUDE.md](CLAUDE.md): the binding rules.
+2. [CONTEXT.md](CONTEXT.md): the project's vocabulary; use its preferred terms and avoid its listed synonyms.
+3. [docs/adr/](docs/adr/README.md): decisions already made (releases, CodeQL gate, TLS and lock defaults, packaging, C#-only automation, test and analyzer policy). Do not reverse one silently; write a new ADR that supersedes it.
+4. [docs/architecture.md](docs/architecture.md): components and request flow.
+5. [docs/assurance-case.md](docs/assurance-case.md): the security claims your change must keep true.
+6. [SECURITY.md](SECURITY.md): guarantees, hardening and the private vulnerability route.
+
 ## Build, test and verify
 
 Prerequisites, versions and the full verification guide are in [CONTRIBUTING.md](CONTRIBUTING.md). The common commands, run from the repository root:
 
 ```bash
 dotnet build postgresql-sharp-mcp.slnx -c Release
+dotnet test --solution postgresql-sharp-mcp.slnx -c Release
+dotnet format postgresql-sharp-mcp.slnx --verify-no-changes
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
-dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
 ```
 
-`integration` builds the application and runs real MCP calls against a disposable PostgreSQL Docker fixture, so it needs Docker. Other checks, each described under [Verify behavior](CONTRIBUTING.md#verify-behavior) and [Build and install package artifacts](CONTRIBUTING.md#build-and-install-package-artifacts):
+`integration` builds the application and runs real MCP calls against a disposable PostgreSQL Docker fixture, so it needs Docker. The unit tests need no Docker. Other checks, each described under [Verify behavior](CONTRIBUTING.md#verify-behavior) and [Build and install package artifacts](CONTRIBUTING.md#build-and-install-package-artifacts):
 
 ```bash
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- sarif-regressions
@@ -42,6 +54,29 @@ dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifac
 ```
 
 Documentation-only changes need link and command review instead of database runs. Say which commands you ran and what they showed.
+
+### Pre-push checklist
+
+Run the rows your change touches before you push, and report each command and its result. A row marked "All changes" applies to every code change.
+
+| Command | Expected result | When |
+| --- | --- | --- |
+| `dotnet build postgresql-sharp-mcp.slnx -c Release` | 0 warnings, 0 errors | All changes |
+| `dotnet test --solution postgresql-sharp-mcp.slnx -c Release` | All unit tests pass; no Docker needed | All changes |
+| `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes` | Exit 0, no files reformatted (full format, not style-only) | All changes |
+| Roslyn LSP diagnostics on the changed files | 0 diagnostics at every severity, including hidden and info | All changes |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- version` | Exit 0: project, npm, platform and `server.json` versions agree and major is 0 | Version or package metadata changes |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- workflows` | Exit 0: workflow audit passes | Changes under `.github/workflows/` |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- secret-detectors` | Exit 0: every detector self-test passes | Changes to secret scanning or its fixtures |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration` | Exit 0 against the disposable Docker fixture | Runtime, SQL, configuration or tool changes (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage` | Exit 0 at or above the coverage gate | Runtime changes (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages`, then `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages` | Exit 0: the six NuGet packages, npm tarballs and archives install and run | Packaging, dependency or release changes |
+
+The `version`, `workflows` and `secret-detectors` commands are added by the 0.7.3 repository-engineering change set; if your checkout does not contain them yet, skip those rows. Expected results for the Docker-backed rows are those described in [Verify behavior](CONTRIBUTING.md#verify-behavior).
+
+## Language server (LSP)
+
+Roslyn LSP, `csharp-ls` and C# Dev Kit open `postgresql-sharp-mcp.slnx`. With the analyzer settings in the repository's build files, the diagnostics your editor or agent shows match the build and `dotnet format`. Query the language server for definitions, references, hover and diagnostics instead of text searching C#, and check the changed files before you push.
 
 ## Key constraints
 
@@ -56,6 +91,7 @@ Documentation-only changes need link and command review instead of database runs
 ## Where to read more
 
 - Rules that bind agents: [CLAUDE.md](CLAUDE.md)
-- Branches, worktrees, commits, pull requests, releases: [docs/git-workflow.md](docs/git-workflow.md)
+- Vocabulary: [CONTEXT.md](CONTEXT.md); decisions: [docs/adr/](docs/adr/README.md); documentation index: [docs/README.md](docs/README.md)
+- Branches, worktrees, commits, pull requests, required checks, releases: [docs/git-workflow.md](docs/git-workflow.md)
 - Build, verify, package and release details: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Vulnerability reports go through [SECURITY.md](SECURITY.md), never a public issue.

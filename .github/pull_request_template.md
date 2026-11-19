@@ -25,3 +25,5 @@
 - [ ] Affected docs, help and `CHANGELOG.md` updated
 - [ ] No credentials, real connection strings, customer SQL or database results anywhere in the change or this description
 - [ ] Workflow changes (if any) pin actions to full commit SHAs and keep least-privilege permissions
+- [ ] Ran the rows of the [pre-push checklist](https://github.com/codegiveness/postgresql-sharp-mcp/blob/main/CONTRIBUTING.md#pre-push-checklist) that this change touches and listed the results under Evidence
+- [ ] Read the [ADRs](https://github.com/codegiveness/postgresql-sharp-mcp/tree/main/docs/adr) that apply; a change that reverses one adds a new ADR that supersedes it

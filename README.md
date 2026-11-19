@@ -361,6 +361,8 @@ After publication, get a global npm command with `npm install --global --allow-s
 
 For a source build, use `dotnet` as MCP `command` and the absolute path to `PostgreSqlMcp.dll` as the first `args` item. Keep nonsensitive settings and launch the client from the prepared shell. Self-contained builds still need native OS libraries; Debian/Ubuntu GSS/Kerberos may require `libgssapi-krb5-2`.
 
+The repository's [`server.json`](server.json) describes the npm and NuGet packages and their environment variables in the [MCP registry](https://modelcontextprotocol.io/registry/about) format. It is metadata for clients and registries; it does not itself publish or register anything.
+
 **Docker (build from source).** No container image is published to a registry, so build one from a clone of this repository (the [Dockerfile](Dockerfile) is at its root):
 
 ```sh

@@ -36,6 +36,25 @@ Dependencies use current compatible stable releases verified against [official .
 
 ## Verify behavior
 
+### Pre-push checklist
+
+Run the rows your change touches before pushing, and put each command and its result in the pull request. The first four rows apply to every code change.
+
+| Command | Expected result |
+| --- | --- |
+| `dotnet build postgresql-sharp-mcp.slnx -c Release` | 0 warnings, 0 errors |
+| `dotnet test --solution postgresql-sharp-mcp.slnx -c Release` | All unit tests pass; no Docker needed |
+| `dotnet format postgresql-sharp-mcp.slnx --verify-no-changes` | Exit 0; the full format check, not the style-only subset |
+| Roslyn LSP diagnostics on the changed files | 0 diagnostics at every severity, including hidden and info |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- version` | Exit 0: project, npm, platform-package and `server.json` versions agree, major is 0 (CI job `version`) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- workflows` | Exit 0: workflow audit passes (CI job `workflow-audit`) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- secret-detectors` | Exit 0: every secret-detector self-test passes |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration` | Exit 0 against the disposable Docker fixture (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- coverage` | Exit 0 at or above the coverage gate (needs Docker) |
+| `dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages`, then `dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages` | Exit 0: every package and archive installs and runs |
+
+The unit tests run in the CI job `unit-tests`. The `version`, `workflows` and `secret-detectors` commands arrive with the 0.7.3 repository-engineering change set; skip a row whose command your checkout does not contain yet. A language server such as Roslyn LSP, `csharp-ls` or C# Dev Kit opens `postgresql-sharp-mcp.slnx`; its diagnostics match the build, so a clean build with an editor diagnostic is still a failure to fix.
+
 ```bash
 dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
 ```
@@ -219,11 +238,11 @@ All maintained code is C# on .NET 10 with the SDK-default language version. The 
 **Enforced automatically.** The CI `verify` job fails a pull request that violates any of these, and the `main` ruleset requires that job:
 
 - The compiler: nullable reference types are on and every warning, including use of an obsolete API, is an error ([`Directory.Build.props`](Directory.Build.props)).
-- The C# rules in [`.editorconfig`](.editorconfig), checked by `dotnet format style`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
+- The C# rules in [`.editorconfig`](.editorconfig) and the analyzer settings of the build, checked by the full `dotnet format`: no unused `using` directives, `using` directives outside the namespace, file-scoped namespaces, explicit accessibility modifiers, PascalCase types and members, and an `I` prefix on interfaces.
 
 ```bash
-dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
-dotnet format style postgresql-sharp-mcp.slnx --no-restore   # applies the fixable ones
+dotnet format postgresql-sharp-mcp.slnx --verify-no-changes
+dotnet format postgresql-sharp-mcp.slnx   # applies the fixable ones
 ```
 
 The same file sets UTF-8, LF line endings, four-space indentation (two for YAML, JSON, project files and Markdown), a final newline and no trailing whitespace for editors that read EditorConfig. The repository currently satisfies those settings, but they are not part of the automated check.
@@ -249,6 +268,25 @@ The same file sets UTF-8, LF line endings, four-space indentation (two for YAML,
 - **Conduct:** everyone taking part in issues, pull requests and discussions follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 Keep versions, affected help/docs and release notes consistent. Update [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and bundled licenses when shipped dependencies change. Contributions are under the project's [MIT license](LICENSE); dependencies retain their own terms.
+
+### Architecture decision records
+
+Record a decision that is hard to reverse or easy to forget as an ADR in [docs/adr/](docs/adr/README.md): copy [the template](docs/adr/template.md), take the next number, add a row to the index and cite the commits, CHANGELOG entries or measurements that support it. Never rewrite an accepted ADR to change its decision; write a new one and mark the old one `Superseded by ADR-NNNN`. Use the terms in [CONTEXT.md](CONTEXT.md), and update that glossary in the same pull request when a term's meaning changes.
+
+### GitHub CLI recipes
+
+Always pass `-R codegiveness/postgresql-sharp-mcp` so a command never targets a fork or the wrong repository. Anything that writes to GitHub needs the authorization described in [What agents may do](docs/git-workflow.md#what-agents-may-do); never put credentials, connection strings, customer SQL or database output in an issue, comment or pull request.
+
+```bash
+R=codegiveness/postgresql-sharp-mcp
+gh issue create -R $R --title "fix: <summary>" --body-file <file>   # open an issue
+gh issue list -R $R --label needs-triage                            # list issues
+gh issue view <number> -R $R --comments                             # read one
+gh issue comment <number> -R $R --body-file <file>                  # comment
+gh pr create -R $R --draft --title "fix: <summary>" --body-file <file>
+gh pr view <number> -R $R --json state,statusCheckRollup
+gh pr checks <number> -R $R                                         # required and optional checks
+```
 
 ### Code review standards
 

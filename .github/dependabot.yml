@@ -1,10 +1,19 @@
 version: 2
+
+# Every ecosystem waits 7 days after an upstream release before proposing it: hijacked releases and tags are usually
+# detected and pulled within days. Security updates are not delayed. Explicit labels replace Dependabot's defaults, so
+# each entry lists `dependencies` plus its ecosystem label from docs/git-workflow.md.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+      - github_actions
     commit-message:
       prefix: build
       include: scope
@@ -17,6 +26,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+      - .NET
     commit-message:
       prefix: build
       include: scope
@@ -25,6 +39,17 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    # Base images stay on the .NET 11 line; a major move is a deliberate build change.
+    ignore:
+      - dependency-name: dotnet/sdk
+        update-types: ["version-update:semver-major"]
+      - dependency-name: dotnet/runtime
+        update-types: ["version-update:semver-major"]
+    labels:
+      - dependencies
+      - docker
     commit-message:
       prefix: build
       include: scope
@@ -33,6 +58,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    # global.json stays on the .NET 11 SDK line; a major move is a deliberate build change.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    labels:
+      - dependencies
+      - .NET
     commit-message:
       prefix: build
       include: scope

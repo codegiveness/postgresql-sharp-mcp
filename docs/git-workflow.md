@@ -131,6 +131,7 @@ The format follows [Conventional Commits](https://www.conventionalcommits.org/):
 - Use one type. If a change needs two (the old `docs+fix:` style), it is probably two pull requests; otherwise pick the one that matters to users.
 - Commits inside a branch may be small and informal; the squash discards them. Writing them in the same format still helps reviewers.
 - Never put credentials, connection strings, customer SQL or database output in a commit message, branch name, pull request or issue.
+- The pull request title becomes the squash commit, so the `semantic` workflow checks that every pull request title is a valid [Conventional Commit](https://www.conventionalcommits.org/) header (type from the table above, optional scope, optional `!`). Fix a failing `semantic` check by editing the title; no push is needed.
 
 ## Lifecycle of a change
 
@@ -171,6 +172,8 @@ Draft means "not ready to merge". The pull request template asks for the problem
 ### 5. CI
 
 Required checks run on every push to the pull request. Open the **Checks** tab when one fails, fix the cause in the branch and push again. Do not re-run a failed job until it passes without understanding why it failed, and never weaken a check to make it pass.
+
+The checks introduced with 0.7.3, besides the existing ones, are `semantic` (pull request title format), `unit-tests` (`dotnet test --solution postgresql-sharp-mcp.slnx -c Release`, no Docker), `version` (project, npm and `server.json` versions agree and the major is 0), `workflow-audit` (static audit of `.github/workflows/`) and `dependency-review` (new or changed dependencies in the pull request). Treat all five as required: the same commands run locally as listed in the [pre-push checklist](../CONTRIBUTING.md#pre-push-checklist). Whether GitHub blocks the merge on them depends on the `main` ruleset, which is described under [Branch protection on `main`](#branch-protection-on-main).
 
 ### 6. Review
 
@@ -299,6 +302,9 @@ GitHub Release notes are generated from merged pull requests and grouped by labe
 | `needs-triage` | New issue the maintainer has not reviewed yet (applied by the issue forms) |
 | `blocked` | Waiting on an external fact, access or decision; say what in a comment |
 | `agent-authored` | Written by an AI agent; review accordingly |
+| `needs-info` | Triage: the reporter must answer a question before work can start; say which in a comment |
+| `ready-for-agent` | Triage: specified well enough for an AI agent to take on within the authority in [What agents may do](#what-agents-may-do) |
+| `ready-for-human` | Triage: needs maintainer judgment or access; not for an agent to start on its own |
 | `good first issue`, `help wanted`, `question`, `duplicate`, `invalid`, `wontfix` | GitHub defaults, used as GitHub describes them |
 
 These labels were created on 2026-10-10. If one goes missing, recreate it; issue forms silently skip labels that do not exist:
@@ -312,6 +318,9 @@ gh label create release         -R $R --color 5319e7 --description "Versioning, 
 gh label create needs-triage    -R $R --color fbca04 --description "Not yet reviewed by the maintainer"
 gh label create blocked         -R $R --color 000000 --description "Waiting on an external fact, access or decision"
 gh label create agent-authored  -R $R --color c5def5 --description "Written by an AI agent; review accordingly"
+gh label create needs-info      -R $R --color d4c5f9 --description "Triage: waiting for information from the reporter"
+gh label create ready-for-agent -R $R --color 0e8a16 --description "Triage: specified well enough for an AI agent to take on"
+gh label create ready-for-human -R $R --color 0075ca --description "Triage: needs maintainer judgment or access"
 ```
 
 ## Stale-branch cleanup
@@ -381,6 +390,8 @@ The settings below were applied on 2026-10-10 with the maintainer's approval. Th
 Ruleset 24841771, **main: pull requests and required checks**, replaced the classic branch protection on 2026-10-10 with the same rules: pull request required (zero approvals, stale approvals dismissed, conversations resolved, squash as the only allowed merge method), required checks `verify`, `dependencies`, `Native installation (windows-latest)`, `Native installation (macos-latest)`, `pull-request-analysis`, `gitleaks`, `container-security` and `sql-boundaries` with up-to-date branches, no force pushes and no deletion. It has no bypass actors, so the rules apply to administrators too. The `release` environment accepts deployments from `main` only.
 
 The `Integration (PostgreSQL <major>)` matrix jobs are not in that list, so none of them blocks a merge. That is deliberate for `Integration (PostgreSQL 19)`, which tests the PostgreSQL 19 beta and can fail because of upstream beta changes. Requiring it, or any other matrix job, is a ruleset change that only the repository owner can make.
+
+The paragraphs above record the ruleset as applied on 2026-10-10. The checks `semantic`, `unit-tests`, `version`, `workflow-audit` and `dependency-review` are not in that record: adding them to the ruleset's required checks is a settings change that needs the maintainer's explicit OK (see [What agents may do](#what-agents-may-do)), and a check must have run on `main` at least once before it can be selected.
 
 ### 1. Squash-only merging, branch auto-delete and the update button
 
