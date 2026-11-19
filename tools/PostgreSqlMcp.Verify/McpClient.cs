@@ -44,7 +44,8 @@ internal sealed class McpClient : IAsyncDisposable
         {
             JsonNode initialized = await client.RequestAsync("initialize", new
             {
-                protocolVersion = "2025-06-18", capabilities = new { },
+                protocolVersion = "2025-06-18",
+                capabilities = new { },
                 clientInfo = new { name = "postgresql-sharp-mcp-verifier", version = "1" }
             }, command.InitializationTimeoutSeconds);
             Check.That(initialized["result"]?["serverInfo"] is not null, "MCP initialize did not return server information.");
@@ -68,7 +69,7 @@ internal sealed class McpClient : IAsyncDisposable
             {
                 JsonNode message = JsonNode.Parse(line) ?? throw new VerificationException("Empty JSON-RPC response.");
                 Check.That(message["jsonrpc"].Text() == "2.0", "Non-protocol output on MCP stdout.");
-                if (message["id"] is JsonValue id && id.TryGetValue<int>(out int number) && pending.TryRemove(number, out var completion))
+                if (message["id"] is JsonValue id && id.TryGetValue(out int number) && pending.TryRemove(number, out TaskCompletionSource<JsonNode>? completion))
                     completion.TrySetResult(message);
             }
         }
@@ -82,7 +83,7 @@ internal sealed class McpClient : IAsyncDisposable
         }
         finally
         {
-            foreach (var completion in pending.Values) completion.TrySetException(failure);
+            foreach (TaskCompletionSource<JsonNode> completion in pending.Values) completion.TrySetException(failure);
         }
     }
 
@@ -155,14 +156,14 @@ internal sealed class McpClient : IAsyncDisposable
 
     public async Task<JsonNode> OkAsync(string tool, object? arguments = null)
     {
-        var (error, data) = await CallAsync(tool, arguments);
+        (bool error, JsonNode data) = await CallAsync(tool, arguments);
         Check.That(!error, $"Expected successful tool result: {tool}. Captured arguments/results suppressed.");
         return data;
     }
 
     public async Task<JsonNode> FailsAsync(string tool, object arguments, string? code = null, string? state = null)
     {
-        var (error, data) = await CallAsync(tool, arguments);
+        (bool error, JsonNode data) = await CallAsync(tool, arguments);
         Check.That(error, $"Expected tool failure: {tool}.");
         // Codes are fixed server identifiers, never provider text, so the observed one is safe to report.
         if (code is not null) Check.That(data["error"]?["code"].Text() == code, $"Unexpected error code from {tool}; expected {code}, got {data["error"]?["code"]?.Text() ?? "none"}.");

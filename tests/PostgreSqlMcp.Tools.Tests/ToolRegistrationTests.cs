@@ -29,7 +29,9 @@ public sealed class ToolRegistrationTests
     private static ServerOptions Options(bool unrestricted = true, string[]? lockedTo = null, bool strict = false) => new()
     {
         Targets = new ReadOnlyDictionary<string, string>(new Dictionary<string, string> { ["primary"] = Connection }),
-        Unrestricted = unrestricted, AllowedDatabases = lockedTo, StrictDatabaseLock = strict
+        Unrestricted = unrestricted,
+        AllowedDatabases = lockedTo,
+        StrictDatabaseLock = strict
     };
 
     private static Dictionary<string, Tool> Describe(ServerOptions options)
@@ -211,7 +213,9 @@ public sealed class ToolRegistrationTests
         var options = new ServerOptions
         {
             Targets = new ReadOnlyDictionary<string, string>(new Dictionary<string, string> { ["primary"] = Connection }),
-            MaxRows = 250, MaxResultBytes = 8192, QueryTimeout = 12
+            MaxRows = 250,
+            MaxResultBytes = 8192,
+            QueryTimeout = 12
         };
 
         Assert.Contains("Results are bounded to 250 rows and 8192 bytes per call; statements time out after 12s.", ToolRegistration.Instructions(options), StringComparison.Ordinal);

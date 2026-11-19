@@ -34,7 +34,8 @@ internal static class SecurityScans
             new Command(actionlint, ["-shellcheck", shellcheck, "-no-color", .. workflows]) { WorkingDirectory = root }, expected: null);
         ProcessResult audit = await Processes.RunAsync(
             new Command(zizmor, ["--offline", "--strict-collection", "--persona=regular", "--quiet", "--no-progress", "--color=never",
-                "--render-links=never", ".github/workflows"]) { WorkingDirectory = root }, expected: null);
+                "--render-links=never", ".github/workflows"])
+            { WorkingDirectory = root }, expected: null);
         // Workflow findings quote only workflow source, which is public repository content.
         Console.WriteLine($"actionlint {PinnedTools.Get("actionlint").Version} (exit {lint.ExitCode}):");
         Console.WriteLine(lint.Output + lint.Error);
@@ -80,7 +81,7 @@ internal static class SecurityScans
         using var work = new TemporaryDirectory();
         string gitleaks = await PinnedTools.InstallAsync(PinnedTools.Get("gitleaks"), Path.Combine(work.Path, "bin"));
         string files = Path.Combine(work.Path, "files");
-        foreach (var (name, (content, _)) in fixtures)
+        foreach ((string name, (string content, string[] _)) in fixtures)
         {
             string path = Path.Combine(files, name);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -91,7 +92,8 @@ internal static class SecurityScans
         ProcessResult result = await Processes.RunAsync(
             new Command(gitleaks, "dir", ".", "--config", config, "--redact=100", "--no-banner", "--no-color", "--log-level=error",
                 "--ignore-gitleaks-allow", "--gitleaks-ignore-path", work.Path, "--exit-code", "23",
-                "--report-format", "json", "--report-path", report) { WorkingDirectory = files },
+                "--report-format", "json", "--report-path", report)
+            { WorkingDirectory = files },
             expected: null);
         // Raw scanner output is never shown: it could echo fixture lines.
         Check.That(result.ExitCode == 23, $"gitleaks exited with status {result.ExitCode}; expected 23 (findings present). Output suppressed.");
@@ -107,7 +109,7 @@ internal static class SecurityScans
         }
 
         var problems = new List<string>();
-        foreach (var (name, (_, rules)) in fixtures)
+        foreach ((string name, (string _, string[]? rules)) in fixtures)
         {
             string found = string.Join(",", actual.TryGetValue(name, out SortedSet<string>? ids) ? ids : []);
             string expected = string.Join(",", rules.Order(StringComparer.Ordinal));

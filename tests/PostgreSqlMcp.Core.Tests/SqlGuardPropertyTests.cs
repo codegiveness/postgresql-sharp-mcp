@@ -33,7 +33,7 @@ public sealed class SqlGuardPropertyTests
 
     // The double-quote fragment is doubled, which is how a quoted identifier carries a quote.
     private static readonly Gen<string> QuotedIdentifier =
-        from body in Pieces(Inert.Where(piece => piece != "''").Append("\"\"").ToArray(), 4) select $"\"{body}\"";
+        from body in Pieces([.. Inert.Where(piece => piece != "''"), "\"\""], 4) select $"\"{body}\"";
 
     private static readonly Gen<string> DollarQuoted =
         from tag in Gen.Elements("", "t", "_a1", "body")
@@ -85,7 +85,10 @@ public sealed class SqlGuardPropertyTests
 
     [Property(MaxTest = Runs, EndSize = MaxSize, Replay = Seed)]
     public Property Comments_around_a_valid_statement_never_change_acceptance() =>
-        Prop.ForAll(Arb.From(from lead in Comments from statement in Statement from semicolon in Gen.Elements(false, true) from trail in Comments
+        Prop.ForAll(Arb.From(from lead in Comments
+                             from statement in Statement
+                             from semicolon in Gen.Elements(false, true)
+                             from trail in Comments
                              select (lead, statement, semicolon, trail)), input =>
         {
             (string lead, string statement, bool semicolon, string trail) = input;
@@ -101,7 +104,11 @@ public sealed class SqlGuardPropertyTests
 
     [Property(MaxTest = Runs, EndSize = MaxSize, Replay = Seed)]
     public Property A_second_statement_is_always_rejected() =>
-        Prop.ForAll(Arb.From(from lead in Comments from first in Statement from between in Comments from second in Statement from closing in Gen.Elements("", ";")
+        Prop.ForAll(Arb.From(from lead in Comments
+                             from first in Statement
+                             from between in Comments
+                             from second in Statement
+                             from closing in Gen.Elements("", ";")
                              select (lead, first, between, second, closing)), input =>
         {
             (string lead, string first, string between, string second, string closing) = input;
@@ -127,7 +134,8 @@ public sealed class SqlGuardPropertyTests
 
     [Property(MaxTest = Runs, EndSize = MaxSize, Replay = Seed)]
     public Property Control_keywords_are_rejected_in_any_case_behind_comments() =>
-        Prop.ForAll(Arb.From(from lead in Comments from keyword in Gen.Elements(ControlKeywords)
+        Prop.ForAll(Arb.From(from lead in Comments
+                             from keyword in Gen.Elements(ControlKeywords)
                              from flips in Gen.ArrayOf(Gen.Elements(true, false), 16)
                              from rest in Gen.Elements("", " x", " TRANSACTION", " SELECT 1")
                              select (lead, keyword, flips, rest)), input =>

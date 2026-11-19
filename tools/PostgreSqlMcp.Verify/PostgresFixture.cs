@@ -60,7 +60,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
         bool ready = false;
         for (int attempt = 0; attempt < 60; attempt++)
         {
-            var result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"), expected: null);
+            ProcessResult result = await Processes.RunAsync(new("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"), expected: null);
             if (result.ExitCode == 0) { ready = true; break; }
             await Task.Delay(TimeSpan.FromSeconds(1));
         }
@@ -72,7 +72,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
         await Processes.RunAsync(new("docker", "exec", name, "apt-get", "update", "-qq"), timeout: 180);
         await Processes.RunAsync(new("docker", "exec", name, "apt-get", "install", "-y", "-qq", $"postgresql-{Major}-hypopg={HypoPgVersion}"), timeout: 180);
         string endpoint = (await Processes.RunAsync(new("docker", "port", name, "5432/tcp"))).Output.Trim();
-        Port = int.Parse(endpoint[(endpoint.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
+        Port = int.Parse(endpoint[(endpoint.AsSpan().LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
         await SeedAsync();
     }
 
@@ -107,7 +107,7 @@ internal sealed class PostgresFixture : IAsyncDisposable
             REVOKE CONNECT ON DATABASE tenant_denied FROM PUBLIC;
             GRANT CONNECT ON DATABASE tenant_a, tenant_b TO mcp_reader, mcp_writer;
             """);
-        foreach (var (database, marker) in new[] { ("tenant_a", "A_ONLY"), ("tenant_b", "B_ONLY") })
+        foreach ((string database, string marker) in new[] { ("tenant_a", "A_ONLY"), ("tenant_b", "B_ONLY") })
             await SqlAsync(database, $$"""
                 CREATE TABLE marker(value text NOT NULL);
                 INSERT INTO marker VALUES ('{{marker}}');

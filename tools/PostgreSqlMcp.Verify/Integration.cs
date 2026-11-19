@@ -21,13 +21,15 @@ internal static class Integration
         string connection = $"Host=127.0.0.1;Port={fixture.Port};Username=mcp_reader;Password=reader-disposable;Database=";
         var targets = new Dictionary<string, string>
         {
-            ["a"] = connection + "tenant_a", ["b"] = connection + "tenant_b",
+            ["a"] = connection + "tenant_a",
+            ["b"] = connection + "tenant_b",
             ["a_copy"] = $"Database=tenant_a;Password=reader-disposable;Username=mcp_reader;Port={fixture.Port};Host=127.0.0.1",
-            ["denied"] = connection + "tenant_denied", ["missing"] = connection + "does_not_exist",
+            ["denied"] = connection + "tenant_denied",
+            ["missing"] = connection + "does_not_exist",
             ["bad_auth"] = connection.Replace("reader-disposable", "wrong", StringComparison.Ordinal) + "tenant_a",
             ["offline"] = "Host=127.0.0.1;Port=1;Username=mcp_reader;Password=reader-disposable;Database=tenant_a;Timeout=1"
         };
-        var environment = Processes.CleanEnvironment();
+        Dictionary<string, string> environment = Processes.CleanEnvironment();
         environment["POSTGRES_TARGETS"] = JsonSerializer.Serialize(targets);
         environment["POSTGRES_ACCESS_MODE"] = "restricted";
         environment["POSTGRES_POOL_SIZE"] = "2";
@@ -37,7 +39,7 @@ internal static class Integration
         environment["POSTGRES_MAX_ROWS"] = "50";
         environment["POSTGRES_QUERY_TIMEOUT"] = "3";
         environment["POSTGRES_LOG_LEVEL"] = "trace";
-        await using (var client = await McpClient.StartAsync(command, environment))
+        await using (McpClient client = await McpClient.StartAsync(command, environment))
         {
             await VerifyToolsAsync(client);
             await VerifyPoolsAsync(client);
@@ -112,18 +114,21 @@ internal static class Integration
 
     private static async Task VerifyPoolsAsync(McpClient client)
     {
-        var requests = Enumerable.Range(0, 24).Select(index =>
+        (string Alias, Task<JsonNode> Task)[] requests = [.. Enumerable.Range(0, 24).Select(index =>
         {
             string alias = index % 2 == 0 ? "a" : "b";
-            return (Alias: alias, Task: client.OkAsync("execute_sql", new { database = alias,
-                sql = "SELECT current_database() AS db, value, pg_backend_pid() AS pid FROM marker CROSS JOIN LATERAL (SELECT pg_sleep(0.03)) s" }));
-        }).ToArray();
+            return (Alias: alias, Task: client.OkAsync("execute_sql", new
+            {
+                database = alias,
+                sql = "SELECT current_database() AS db, value, pg_backend_pid() AS pid FROM marker CROSS JOIN LATERAL (SELECT pg_sleep(0.03)) s"
+            }));
+        })];
         JsonNode[] results = await Task.WhenAll(requests.Select(item => item.Task));
         var pids = new Dictionary<string, HashSet<int>> { ["a"] = [], ["b"] = [] };
         for (int index = 0; index < results.Length; index++)
         {
             string alias = requests[index].Alias;
-            var row = Check.Rows(results[index]).Single();
+            Dictionary<string, JsonNode?> row = Check.Rows(results[index]).Single();
             Check.That(results[index]["database"].Text() == alias && row["db"].Text() == (alias == "a" ? "tenant_a" : "tenant_b")
                 && row["value"].Text() == (alias == "a" ? "A_ONLY" : "B_ONLY"), "Concurrent requests crossed database boundaries.");
             pids[alias].Add(row["pid"].Int());
@@ -131,7 +136,8 @@ internal static class Integration
         Check.That(!pids["a"].Overlaps(pids["b"]) && pids.Values.All(set => set.Count <= 2), "Backend pools exceeded bounds or crossed targets.");
         JsonNode[] copies = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.OkAsync("execute_sql", new
         {
-            database = "a_copy", sql = "SELECT current_database(),value,pg_backend_pid() FROM marker"
+            database = "a_copy",
+            sql = "SELECT current_database(),value,pg_backend_pid() FROM marker"
         })));
         foreach (JsonNode result in copies)
         {
@@ -143,7 +149,7 @@ internal static class Integration
 
     private static async Task VerifyBoundariesAsync(McpClient client)
     {
-        foreach (var (target, code, state) in new (string, string, string?)[]
+        foreach ((string target, string code, string? state) in new (string, string, string?)[]
         {
             ("unconfigured", "postgresql_error", "3D000"), ("denied", "postgresql_error", "42501"),
             ("missing", "postgresql_error", "3D000"), ("bad_auth", "postgresql_error", "28P01"),
@@ -154,8 +160,8 @@ internal static class Integration
         await client.FailsAsync("list_databases", new { target = "unconfigured" }, "invalid_target");
         await client.FailsAsync("list_databases", new { target = "offline" }, "connection_error");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT * FROM secret" }, "postgresql_error", "42501");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "b", sql = "SELECT value FROM marker" }))["rows"], new[] { new[] { "B_ONLY" } }, "Denied targets fell back to another database.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT id FROM scoped_rows ORDER BY id" }))["rows"], new[] { new[] { 1 } }, "RLS was bypassed.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "b", sql = "SELECT value FROM marker" }))["rows"], ExpectedRows.BOnly, "Denied targets fell back to another database.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT id FROM scoped_rows ORDER BY id" }))["rows"], ExpectedRows.One, "RLS was bypassed.");
         Console.WriteLine("PASS unknown, denied, missing, bad-auth, offline targets, permissions and RLS");
     }
 
@@ -192,10 +198,10 @@ internal static class Integration
             Check.Equal(clipped["clipped_cells"], new[] { new { row = 0, column = 0 } }, "Cell clipping coordinates were incorrect.");
             Check.That(clipped["rows"]![0]![0].Text().EnumerateRunes().Count() <= 256, "Clipped cell exceeded Unicode character budget.");
         }
-        foreach (var (sql, code) in new[] { ("SELECT ARRAY[1,2]", "unsupported_result_type"), ("SELECT interval '1 month'", "unsupported_result_value"), ("SELECT 1e100::numeric", "unsupported_result_value") })
+        foreach ((string sql, string code) in new[] { ("SELECT ARRAY[1,2]", "unsupported_result_type"), ("SELECT interval '1 month'", "unsupported_result_value"), ("SELECT 1e100::numeric", "unsupported_result_value") })
             await client.FailsAsync("execute_sql", new { database = "a", sql }, code);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT 1e100::numeric::text" }))["rows"], new[] { new[] { "1" + new string('0', 100) } }, "Explicit numeric text conversion changed the value.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT extract(month FROM interval '1 month')::integer" }))["rows"], new[] { new[] { 1 } }, "Explicit interval conversion changed the value.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT extract(month FROM interval '1 month')::integer" }))["rows"], ExpectedRows.One, "Explicit interval conversion changed the value.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT 1", limit = 51 }, "invalid_limit");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT 1", offset = -1 }, "invalid_offset");
         Console.WriteLine("PASS row/byte pagination, text/binary/Unicode clipping, unsupported values and limits");
@@ -231,11 +237,11 @@ internal static class Integration
             "explain_query did not map the error position past its EXPLAIN prefix.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(10)::text" }, "timeout");
         JsonNode quoted = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $$a;b$$ AS d, E'escaped\\';still-string' AS e, 'ordinary;string' AS s; -- tail" });
-        Check.Equal(quoted["rows"], new[] { new[] { "a;b", "escaped';still-string", "ordinary;string" } }, "Quoted SQL single-statement parsing changed values.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], new[] { new[] { "A_ONLY" } }, "Read-only protection changed fixture data.");
+        Check.Equal(quoted["rows"], ExpectedRows.QuotedValues, "Quoted SQL single-statement parsing changed values.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], ExpectedRows.AOnly, "Read-only protection changed fixture data.");
         // Class-42 errors raised while executing (current_setting, reg* input functions, SPI inside query_to_xml) echo row values; only
         // errors positioned in the caller's statement may forward server text.
-        foreach (var (sql, state) in new[] { ("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"), ("SELECT app.fail_with_sensitive_diagnostic()", "P0001"),
+        foreach ((string sql, string state) in new[] { ("SELECT CAST('sensitive-error-marker' AS integer)", "22P02"), ("SELECT app.fail_with_sensitive_diagnostic()", "P0001"),
             ("SELECT app.fail_with_sensitive_access_error()", "42501"),
             ("SELECT current_setting(v) FROM (VALUES ('sensitive-error-marker')) s(v)", "42704"),
             ("SELECT v::regclass FROM (VALUES ('sensitive-error-marker')) s(v)", "42P01"),
@@ -247,7 +253,7 @@ internal static class Integration
             Check.That(diagnostic["error"]?["hint"] is null && diagnostic["error"]?["server_hint"] is null && diagnostic["error"]?["server_message"] is null,
                 "PostgreSQL message or hint leaked in error envelope.");
         }
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT 'sensitive-result-marker'" }))["rows"], new[] { new[] { "sensitive-result-marker" } }, "Result confidentiality probe did not return the marker.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT 'sensitive-result-marker'" }))["rows"], ExpectedRows.SensitiveMarker, "Result confidentiality probe did not return the marker.");
         Console.WriteLine("PASS SQL guards, read-only DML/CTE protection, quoted literals, syntax errors and timeout");
     }
 
@@ -260,14 +266,15 @@ internal static class Integration
         // Untyped values take their type from context, like quoted literals; null and booleans bind as SQL values.
         Check.Equal((await client.OkAsync("execute_sql", new
         {
-            database = "a", sql = "SELECT count(*)::int AS c, $3::int IS NULL AS n, $4::bool AS b FROM orders WHERE id > $1 AND id <= $2",
+            database = "a",
+            sql = "SELECT count(*)::int AS c, $3::int IS NULL AS n, $4::bool AS b FROM orders WHERE id > $1 AND id <= $2",
             parameters = new object?[] { 1, "3", null, true }
         }))["rows"], new[] { new object[] { 2, true, true } }, "Context-typed parameters returned the wrong rows.");
         JsonNode paged = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT g FROM generate_series(1, $1::int) g ORDER BY g", parameters = new object[] { 5 }, limit = 2, offset = 2 });
-        Check.That(Check.Rows(paged).Select(row => row["g"]!.GetValue<int>()).SequenceEqual(new[] { 3, 4 }) && paged["next_offset"]!.GetValue<int>() == 4,
+        Check.That(Check.Rows(paged).Select(row => row["g"]!.GetValue<int>()).SequenceEqual([3, 4]) && paged["next_offset"]!.GetValue<int>() == 4,
             "Parameterized pagination did not re-bind values for the next page.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT $1::jsonb->>'k' AS k", parameters = new object[] { "{\"k\":\"v\"}" } }))["rows"],
-            new[] { new[] { "v" } }, "A JSON document passed as a string did not cast to jsonb.");
+            ExpectedRows.JsonCastValue, "A JSON document passed as a string did not cast to jsonb.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = new object[] { new { k = 1 } } }, "invalid_parameters");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1", parameters = Enumerable.Repeat<object>(1, 257).ToArray() }, "invalid_parameters");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT $1, $2", parameters = new object[] { 1 } }, "postgresql_error", "08P01");
@@ -283,11 +290,11 @@ internal static class Integration
 
     private static async Task VerifyCatalogAsync(McpClient client)
     {
-        var schemas = Check.Rows(await client.OkAsync("list_schemas", new { database = "a", prefix = "app" })).Select(row => row["schema_name"].Text());
-        Check.That(schemas.SequenceEqual(new[] { "app" }), "Schema prefix filter returned incorrect schemas.");
+        IEnumerable<string> schemas = Check.Rows(await client.OkAsync("list_schemas", new { database = "a", prefix = "app" })).Select(row => row["schema_name"].Text());
+        Check.That(schemas.SequenceEqual(["app"]), "Schema prefix filter returned incorrect schemas.");
         var objects = Check.Rows(await client.OkAsync("list_objects", new { database = "a", schema = "public", type = "table", limit = 50 })).Select(row => row["name"].Text()).ToHashSet();
         Check.That(objects.Contains("orders") && !objects.Contains("secret"), "Catalog object privilege filtering failed.");
-        Check.Equal((await client.OkAsync("list_objects", new { database = "a", schema = "public' OR 1=1 --" }))["rows"], System.Array.Empty<int[]>(), "Schema filter accepted SQL injection.");
+        Check.Equal((await client.OkAsync("list_objects", new { database = "a", schema = "public' OR 1=1 --" }))["rows"], Array.Empty<int[]>(), "Schema filter accepted SQL injection.");
         var allObjects = new List<Dictionary<string, JsonNode?>>();
         int offset = 0;
         while (true)
@@ -299,11 +306,11 @@ internal static class Integration
             Check.That(next > offset, "Object pagination did not advance.");
             offset = next;
         }
-        Check.That(allObjects.Select(row => row["type"].Text()).ToHashSet().IsSupersetOf(new[] { "function", "procedure", "view", "sequence" }), "Paged object discovery lost an object type.");
+        Check.That(allObjects.Select(row => row["type"].Text()).ToHashSet().IsSupersetOf(["function", "procedure", "view", "sequence"]), "Paged object discovery lost an object type.");
         JsonNode columns = await client.OkAsync("get_object_details", new { database = "a", schema = "public", name = "orders", section = "columns", limit = 2 });
-        Check.That(Check.Rows(columns["page"]!).Select(row => row["name"].Text()).SequenceEqual(new[] { "id", "customer" }), "First detail column page incorrect.");
+        Check.That(Check.Rows(columns["page"]!).Select(row => row["name"].Text()).SequenceEqual(["id", "customer"]), "First detail column page incorrect.");
         JsonNode more = await client.OkAsync("get_object_details", new { database = "a", schema = "public", name = "orders", section = "columns", limit = 2, offset = columns["page"]!["next_offset"].Int() });
-        Check.That(Check.Rows(more["page"]!).Select(row => row["name"].Text()).SequenceEqual(new[] { "note" }), "Second detail column page incorrect.");
+        Check.That(Check.Rows(more["page"]!).Select(row => row["name"].Text()).SequenceEqual(["note"]), "Second detail column page incorrect.");
         foreach (string section in new[] { "constraints", "indexes", "triggers", "definition" })
         {
             JsonNode detail = await client.OkAsync("get_object_details", new { database = "a", schema = "public", name = "orders", section, limit = 2 });
@@ -329,13 +336,13 @@ internal static class Integration
             Check.That(result["database"].Text() == "a" && result["section"].Text() == section, "Health section returned incorrect identity.");
         }
         JsonNode indexes = await client.OkAsync("analyze_indexes", new { database = "a", schema = "public", table = "orders", limit = 3 });
-        var duplicates = Check.Rows(indexes["result"]!).Where(row => row["index_name"].Text().StartsWith("orders_customer_duplicate", StringComparison.Ordinal)).ToArray();
+        Dictionary<string, JsonNode?>[] duplicates = [.. Check.Rows(indexes["result"]!).Where(row => row["index_name"].Text().StartsWith("orders_customer_duplicate", StringComparison.Ordinal))];
         Check.That(duplicates.Length == 2 && duplicates.All(row => row["duplicate_count"].Int() == 1), "Structural duplicate index evidence incorrect.");
         // Reset fixture-owned statistics and create timed probes: setup call counts do not prove ranking.
         await fixture.SqlAsync("tenant_a", "SELECT extensions.pg_stat_statements_reset(); SELECT pg_sleep(0.15) AS a_timed_workload_marker;");
         await fixture.SqlAsync("tenant_b", "SELECT pg_sleep(0.35) AS b_timed_workload_marker;");
         JsonNode workload = await client.OkAsync("get_top_queries", new { database = "a", order_by = "total_time", limit = 2 });
-        var workloadRows = Check.Rows(workload["result"]!).ToArray();
+        Dictionary<string, JsonNode?>[] workloadRows = [.. Check.Rows(workload["result"]!)];
         Check.That(workloadRows.Any(row => (row["query_text"]?.Text() ?? "").Contains("a_timed_workload_marker", StringComparison.Ordinal)), "Timed local workload probe absent from ranking.");
         Check.That(workloadRows.All(row => !(row["query_text"]?.Text() ?? "").Contains("b_timed_workload_marker", StringComparison.Ordinal)), "Workload evidence crossed database boundaries.");
         // The fixture installs the server's default extension version: toplevel exists from PostgreSQL 14 (1.9) and is null before.
@@ -370,11 +377,11 @@ internal static class Integration
         JsonNode[] recovered = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.OkAsync("explain_query", new { database = "a", sql })));
         Check.That(recovered.All(plan => plan["plan"]!["total_cost"].Number() == baselineCost), "Hypothetical indexes leaked after partial failure or success.");
         JsonNode combined = await client.OkAsync("explain_query", new { database = "a", sql, indexes = new[] { candidate[0], "CREATE INDEX ON public.tuning(id)" } });
-        Check.That(combined["hypothetical_indexes"].Array().Select(item => item!["candidate"].Int()).SequenceEqual(new[] { 0, 1 }), "Combined candidates lost attribution.");
+        Check.That(combined["hypothetical_indexes"].Array().Select(item => item!["candidate"].Int()).SequenceEqual([0, 1]), "Combined candidates lost attribution.");
         Check.That(combined["comparison"]!["with_indexes_total_cost"].Number() == whatIf["comparison"]!["with_indexes_total_cost"].Number(), "Independent hypothetical candidate unexpectedly changed selected fixture plan.");
         await client.FailsAsync("explain_query", new { database = "a", sql = "SELECT * FROM tuning", analyze = true, indexes = candidate }, "invalid_options");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) AS n FROM pg_indexes WHERE tablename='tuning'" }))["rows"], new[] { new[] { 0 } }, "HypoPG created a permanent index.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], new[] { new[] { "A_ONLY" } }, "Plan analysis mutated fixture data.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) AS n FROM pg_indexes WHERE tablename='tuning'" }))["rows"], ExpectedRows.Zero, "HypoPG created a permanent index.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" }))["rows"], ExpectedRows.AOnly, "Plan analysis mutated fixture data.");
         Console.WriteLine("PASS estimated/JSON/ANALYZE plans, HypoPG cost comparison, candidate attribution and partial-failure cleanup");
     }
 
@@ -385,7 +392,7 @@ internal static class Integration
             ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { a = $"Host=127.0.0.1;Port={port};Username=mcp_writer;Password=writer-disposable;Database=tenant_a" })
         };
         writerEnvironment.Remove("POSTGRES_ACCESS_MODE");
-        await using var client = await McpClient.StartAsync(command, writerEnvironment);
+        await using McpClient client = await McpClient.StartAsync(command, writerEnvironment);
         JsonNode executeSql = await client.ToolAsync("execute_sql");
         Check.That(!executeSql["annotations"]!["readOnlyHint"].Flag() && executeSql["annotations"]!["destructiveHint"].Flag()
             && executeSql["description"].Text().Contains("read_only=false commits", StringComparison.Ordinal),
@@ -400,7 +407,7 @@ internal static class Integration
             "Unrestricted read-only rejection did not name the write opt-in.");
         JsonNode mutation = await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO marker VALUES ('WRITE_OK')", read_only = false });
         Check.That(mutation["rows_affected"].Int() == 1, "Write opt-in did not report affected rows.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker ORDER BY value" }))["rows"], new[] { new[] { "A_ONLY" }, new[] { "WRITE_OK" } }, "Write transaction did not commit.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker ORDER BY value" }))["rows"], ExpectedRows.AOnlyThenWriteOk, "Write transaction did not commit.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker RETURNING *", offset = 1, read_only = false }, "invalid_offset");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "SELECT * FROM secret", read_only = false }, "postgresql_error", "42501");
         await client.OkAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker WHERE value='WRITE_OK'", read_only = false });
@@ -411,12 +418,12 @@ internal static class Integration
         Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "DELETE FROM marker WHERE value = $1 RETURNING value", parameters = new object[] { quoted }, read_only = false }))["rows"],
             new[] { new[] { quoted } }, "Parameterized write did not store the value verbatim.");
         await client.OkAsync("execute_sql", new { database = "a", sql = "CREATE TABLE mcp_write_test(id integer CONSTRAINT mcp_write_test_pk PRIMARY KEY)", read_only = false });
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT to_regclass('public.mcp_write_test')::text" }))["rows"], new[] { new[] { "mcp_write_test" } }, "Destructive DDL did not commit.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT to_regclass('public.mcp_write_test')::text" }))["rows"], ExpectedRows.WriteTestTable, "Destructive DDL did not commit.");
         await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test SELECT 100/(g-2) FROM generate_series(1,3) g", read_only = false }, "postgresql_error", "22012");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], new[] { new[] { 0 } }, "Failed write transaction did not roll back.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], ExpectedRows.Zero, "Failed write transaction did not roll back.");
         JsonNode returning = await client.OkAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test SELECT g FROM generate_series(1,10) g RETURNING id", limit = 3, read_only = false });
         Check.That(returning["truncated"].Flag() && returning["next_offset"] is null, "Write RETURNING incorrectly advertised replay pagination.");
-        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], new[] { new[] { 10 } }, "Truncated RETURNING did not commit all writes.");
+        Check.Equal((await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT count(*) FROM mcp_write_test" }))["rows"], ExpectedRows.Ten, "Truncated RETURNING did not commit all writes.");
         // Integrity errors name the violated constraint, never the conflicting key values.
         JsonNode duplicate = (await client.FailsAsync("execute_sql", new { database = "a", sql = "INSERT INTO mcp_write_test VALUES (7)", read_only = false }, "postgresql_error", "23505"))["error"]!;
         Check.That(duplicate["constraint"].Text() == "mcp_write_test_pk" && duplicate["server_message"] is null,
@@ -437,15 +444,15 @@ internal static class Integration
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var fileEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS_FILE"] = path };
         fileEnvironment.Remove("POSTGRES_TARGETS");
-        await using (var client = await McpClient.StartAsync(command, fileEnvironment))
+        await using (McpClient client = await McpClient.StartAsync(command, fileEnvironment))
         {
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", target = "primary", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-                new[] { new[] { "tenant_b", "B_ONLY" } }, "Optional seed file did not select another physical database.");
+                ExpectedRows.TenantBWithBOnly, "Optional seed file did not select another physical database.");
             Check.That(await File.ReadAllTextAsync(path) == seed, "Dynamic selection rewrote the protected seed file.");
             await client.StopAsync();
             Check.Confidential(client.StandardError, "reader-disposable", path);
         }
-        foreach (var (key, value, validationCommand) in new[]
+        foreach ((string key, string value, Command validationCommand) in new[]
         {
             ("POSTGRES_TARGETS", seed, command.With("--validate")),
             ("POSTGRES_TARGETS_FILE", path, command.With("--validate")),
@@ -467,19 +474,22 @@ internal static class Integration
             ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a"
         };
         discoveryEnvironment.Remove("POSTGRES_TARGETS");
-        await using (var client = await McpClient.StartAsync(command, discoveryEnvironment))
+        await using (McpClient client = await McpClient.StartAsync(command, discoveryEnvironment))
         {
             JsonNode listed = await client.OkAsync("list_databases");
-            var initial = Check.Rows(listed["databases"]!).ToArray();
+            Dictionary<string, JsonNode?>[] initial = [.. Check.Rows(listed["databases"]!)];
             Check.That(initial.Any(row => row["name"].Text() == "tenant_a" && row["is_current"].Flag())
                 && initial.Any(row => row["name"].Text() == "tenant_b" && !row["is_current"].Flag()),
                 "Environment-only primary seed did not discover other physical databases or mark the bootstrap database.");
-            var requests = Enumerable.Range(0, 24).Select(index =>
+            (string Database, Task<JsonNode> Task)[] requests = [.. Enumerable.Range(0, 24).Select(index =>
             {
                 string database = index % 2 == 0 ? "tenant_a" : "tenant_b";
-                return (Database: database, Task: client.OkAsync("execute_sql", new { database,
-                    sql = "SELECT current_database(),value FROM marker CROSS JOIN LATERAL (SELECT pg_sleep(0.02)) s" }));
-            }).ToArray();
+                return (Database: database, Task: client.OkAsync("execute_sql", new
+                {
+                    database,
+                    sql = "SELECT current_database(),value FROM marker CROSS JOIN LATERAL (SELECT pg_sleep(0.02)) s"
+                }));
+            })];
             JsonNode[] results = await Task.WhenAll(requests.Select(request => request.Task));
             for (int index = 0; index < results.Length; index++)
                 Check.Equal(results[index]["rows"], new[] { new[] { requests[index].Database,
@@ -492,8 +502,12 @@ internal static class Integration
             var fresh = Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Select(row => row["name"].Text()).ToHashSet();
             Check.That(fresh.Contains("tenant_after_start") && fresh.Contains(PostgresFixture.PunctuationDatabase)
                 && !fresh.Contains("tenant_no_connections"), "Live discovery cached the catalog or included a nonconnectable database.");
-            Check.Equal((await client.OkAsync("execute_sql", new { database = PostgresFixture.PunctuationDatabase, target = "primary",
-                sql = "SELECT current_database(),value FROM marker" }))["rows"],
+            Check.Equal((await client.OkAsync("execute_sql", new
+            {
+                database = PostgresFixture.PunctuationDatabase,
+                target = "primary",
+                sql = "SELECT current_database(),value FROM marker"
+            }))["rows"],
                 new[] { new[] { PostgresFixture.PunctuationDatabase, "DYNAMIC_ONLY" } }, "Punctuation in a physical name escaped its connection-string boundary.");
             await fixture.SqlAsync("postgres", "REVOKE CONNECT ON DATABASE tenant_after_start FROM PUBLIC,mcp_reader;");
             Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).All(row => row["name"].Text() != "tenant_after_start"),
@@ -502,7 +516,7 @@ internal static class Integration
             await client.FailsAsync("execute_sql", new { database = "physical_missing", target = "primary", sql = "SELECT 1" }, "postgresql_error", "3D000");
             await client.FailsAsync("execute_sql", new { database = "tenant_b", target = "unknown_profile", sql = "SELECT 1" }, "invalid_target");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT value FROM marker" }))["rows"],
-                new[] { new[] { "B_ONLY" } }, "Failed dynamic selection fell back or poisoned another database.");
+                ExpectedRows.BOnly, "Failed dynamic selection fell back or poisoned another database.");
             await client.StopAsync();
             Check.Confidential(client.StandardError, "reader-disposable");
         }
@@ -510,17 +524,19 @@ internal static class Integration
         {
             ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new Dictionary<string, string>
             {
-                ["a"] = connection + "tenant_b", ["primary"] = connection + "tenant_a", ["tenant_b"] = connection + "tenant_a"
+                ["a"] = connection + "tenant_b",
+                ["primary"] = connection + "tenant_a",
+                ["tenant_b"] = connection + "tenant_a"
             })
         };
-        await using (var client = await McpClient.StartAsync(command, precedenceEnvironment))
+        await using (McpClient client = await McpClient.StartAsync(command, precedenceEnvironment))
         {
             Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Single(row => row["is_current"].Flag())["name"].Text() == "tenant_a",
                 "Default profile did not prefer primary.");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", sql = "SELECT current_database()" }))["rows"],
-                new[] { new[] { "tenant_a" } }, "Exact configured alias no longer selected its bootstrap database.");
+                ExpectedRows.TenantA, "Exact configured alias no longer selected its bootstrap database.");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", target = "primary", sql = "SELECT current_database()" }))["rows"],
-                new[] { new[] { "tenant_b" } }, "Explicit profile treated a physical database name as an alias.");
+                ExpectedRows.TenantB, "Explicit profile treated a physical database name as an alias.");
         }
         Console.WriteLine("PASS optional immutable protected seed file, env/profile conflict rejection, environment-only primary seed, concurrent physical selection, nine optional targets, live create/revoke, profile precedence and punctuation-safe names");
     }
@@ -528,11 +544,11 @@ internal static class Integration
     private static async Task VerifyOptionalTargetAsync(McpClient client)
     {
         Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_b", target = "primary", sql = "SELECT value FROM marker" }))["rows"],
-            new[] { new[] { "B_ONLY" } }, "Explicit target failed to select another physical database.");
+            ExpectedRows.BOnly, "Explicit target failed to select another physical database.");
         Check.That(Check.Rows((await client.OkAsync("list_databases", new { target = "primary" }))["databases"]!).Any(row => row["name"].Text() == "tenant_b"),
             "Explicit discovery profile lost an accessible database.");
         Check.That(Check.Rows(await client.OkAsync("list_schemas", new { database = "tenant_b", target = "primary", prefix = "app" }))
-            .Select(row => row["schema_name"].Text()).SequenceEqual(new[] { "app" }), "Explicit profile schema discovery failed.");
+            .Select(row => row["schema_name"].Text()).SequenceEqual(["app"]), "Explicit profile schema discovery failed.");
         Check.That(Check.Rows(await client.OkAsync("list_objects", new { database = "tenant_b", target = "primary", schema = "public", type = "table" }))
             .Any(row => row["name"].Text() == "marker"), "Explicit profile object discovery failed.");
         Check.That(Check.Rows((await client.OkAsync("get_object_details", new { database = "tenant_b", target = "primary", schema = "public", name = "marker", section = "columns" }))["page"]!)
@@ -556,11 +572,11 @@ internal static class Integration
         // 1.8 is the oldest supported layout (PostgreSQL 13) and has no toplevel; 1.7 predates total_exec_time. Both install on 13-19.
         await fixture.SqlAsync("stats_ext_v18", "CREATE EXTENSION pg_stat_statements VERSION '1.8'; SELECT pg_sleep(0.02) AS stats_ext_v18_marker;");
         await fixture.SqlAsync("stats_ext_v17", "CREATE EXTENSION pg_stat_statements VERSION '1.7'; SELECT pg_sleep(0.02) AS stats_ext_v17_marker;");
-        await using var client = await McpClient.StartAsync(command, singleProfile);
+        await using McpClient client = await McpClient.StartAsync(command, singleProfile);
         foreach (string order in new[] { "total_time", "mean_time", "calls", "rows", "reads" })
         {
             JsonNode ranked = await client.OkAsync("get_top_queries", new { database = "stats_ext_v18", order_by = order, limit = 5 });
-            var rows = Check.Rows(ranked["result"]!).ToArray();
+            Dictionary<string, JsonNode?>[] rows = [.. Check.Rows(ranked["result"]!)];
             Check.That(rows.Length > 0 && rows.All(row => row.ContainsKey("toplevel") && row["toplevel"] is null),
                 "Extension 1.8 must return a consistently null toplevel column.");
             Check.That(ranked["notes"].Text().Contains("toplevel is null", StringComparison.Ordinal), "Missing toplevel was not explained.");
@@ -578,15 +594,16 @@ internal static class Integration
 
     private static async Task VerifyPoolCapacityAsync(Command command, Dictionary<string, string> environment, PostgresFixture fixture, string connection)
     {
-        string[] databases = Enumerable.Range(0, 10).Select(index => "pool_churn_" + index).ToArray();
+        string[] databases = [.. Enumerable.Range(0, 10).Select(index => "pool_churn_" + index)];
         foreach (string database in databases) await fixture.CreateDatabaseAsync(database);
         var poolEnvironment = new Dictionary<string, string>(environment)
         {
             ["POSTGRES_CONNECTION_STRING"] = connection + "tenant_a",
-            ["POSTGRES_POOL_SIZE"] = "32", ["POSTGRES_MAX_CONCURRENT_CALLS"] = "16"
+            ["POSTGRES_POOL_SIZE"] = "32",
+            ["POSTGRES_MAX_CONCURRENT_CALLS"] = "16"
         };
         poolEnvironment.Remove("POSTGRES_TARGETS");
-        await using (var client = await McpClient.StartAsync(command, poolEnvironment))
+        await using (McpClient client = await McpClient.StartAsync(command, poolEnvironment))
         {
             foreach (string database in databases)
             {
@@ -596,8 +613,8 @@ internal static class Integration
             }
             for (int index = 0; index < 10; index++)
                 await client.FailsAsync("execute_sql", new { database = "failed_pool_" + index, sql = "SELECT 1" }, "postgresql_error", "3D000");
-            Task<JsonNode>[] active = databases.Take(8).Select(database =>
-                client.FailsAsync("execute_sql", new { database, sql = "SELECT pg_sleep(10)::text" }, "timeout")).ToArray();
+            Task<JsonNode>[] active = [.. databases.Take(8).Select(database =>
+                client.FailsAsync("execute_sql", new { database, sql = "SELECT pg_sleep(10)::text" }, "timeout"))];
             bool saturated = false;
             for (int attempt = 0; attempt < 20; attempt++)
             {
@@ -613,7 +630,7 @@ internal static class Integration
             Check.That(elapsed.Elapsed < TimeSpan.FromSeconds(4.5), "Capacity waiting reset the original query deadline.");
             await Task.WhenAll(active);
             Check.Equal((await client.OkAsync("execute_sql", new { database = databases[9], sql = "SELECT value FROM marker" }))["rows"],
-                new[] { new[] { "DYNAMIC_ONLY" } }, "Timed-out capacity wait leaked a lease or poisoned later selection.");
+                ExpectedRows.DynamicOnly, "Timed-out capacity wait leaked a lease or poisoned later selection.");
         }
         Check.That(await fixture.RuntimeBackendCountAsync() == 0, "Runtime disposal retained physical-database backends.");
         Console.WriteLine("PASS environment-only bounded idle churn, failed-name recovery, busy-pool capacity, original-deadline cancellation and deterministic disposal");
@@ -624,7 +641,7 @@ internal static class Integration
         // The query timeout and sleep far exceed every bound below, so only cancellation can stop the backend,
         // and a timeout error cannot be mistaken for the (deliberately absent) response to the cancelled request.
         var cancellationEnvironment = new Dictionary<string, string>(environment) { ["POSTGRES_QUERY_TIMEOUT"] = "60" };
-        await using var client = await McpClient.StartAsync(command, cancellationEnvironment);
+        await using McpClient client = await McpClient.StartAsync(command, cancellationEnvironment);
         try
         {
             Check.That(await fixture.RuntimeBackendCountAsync(activeOnly: true) == 0, "Cancellation scenario started with an active runtime backend.");
@@ -643,14 +660,17 @@ internal static class Integration
             await client.CancelAsync(request, "verifier cancellation");
             Check.That(await WaitForActiveBackendsAsync(0, TimeSpan.FromSeconds(10)), "A cancelled MCP request left its PostgreSQL backend running.");
             // MCP: receivers should not answer a cancelled request. The server's observed behavior is silence, not an error envelope.
-            Check.That(await Task.WhenAny(request.Response, Task.Delay(TimeSpan.FromSeconds(2))) != request.Response, "The server answered a cancelled MCP request.");
+            using var silenceWindow = new CancellationTokenSource();
+            Task first = await Task.WhenAny(request.Response, Task.Delay(TimeSpan.FromSeconds(2), silenceWindow.Token));
+            await silenceWindow.CancelAsync();
+            Check.That(first != request.Response, "The server answered a cancelled MCP request.");
             // Hold every pooled connection (POSTGRES_POOL_SIZE=2) at once: a single leaked connection or lease from the cancelled call would leave
             // one slot unavailable, so the second sleep could never become active alongside the first.
-            Task<JsonNode>[] saturating = Enumerable.Range(0, 2).Select(_ => client.OkAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(2)::text" })).ToArray();
+            Task<JsonNode>[] saturating = [.. Enumerable.Range(0, 2).Select(_ => client.OkAsync("execute_sql", new { database = "a", sql = "SELECT pg_sleep(2)::text" }))];
             Check.That(await WaitForActiveBackendsAsync(2, TimeSpan.FromSeconds(10)), "After MCP cancellation the pool could not run POSTGRES_POOL_SIZE queries concurrently; a pooled connection or lease leaked.");
             await Task.WhenAll(saturating);
             JsonNode followUp = await client.OkAsync("execute_sql", new { database = "a", sql = "SELECT value FROM marker" });
-            Check.Equal(followUp["rows"], new[] { new[] { "A_ONLY" } }, "A call after MCP cancellation returned unexpected data.");
+            Check.Equal(followUp["rows"], ExpectedRows.AOnly, "A call after MCP cancellation returned unexpected data.");
             Check.That(!request.Response.IsCompleted, "The cancelled MCP request was answered after later calls completed.");
             client.Abandon(request);
         }
@@ -672,18 +692,18 @@ internal static class Integration
         ProcessResult preflight = await Processes.RunAsync(command.With("--validate"), validationEnvironment);
         Check.That(preflight.Output.Length == 0, "Validation contaminated protocol stdout.");
         Check.That(!preflight.Error.Contains("[warning]", StringComparison.Ordinal), "An unprivileged login over loopback produced a security warning.");
-        JsonNode[] reports = preflight.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
-        Check.That(reports.Select(report => report["database"].Text()).ToHashSet().SetEquals(new[] { "a", "b" })
-            && reports.Select(report => report["rows"]![0]![0].Text()).ToHashSet().SetEquals(new[] { "tenant_a", "tenant_b" }), "Preflight did not validate both configured targets.");
+        JsonNode[] reports = [.. preflight.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!)];
+        Check.That(reports.Select(report => report["database"].Text()).ToHashSet().SetEquals(["a", "b"])
+            && reports.Select(report => report["rows"]![0]![0].Text()).ToHashSet().SetEquals(["tenant_a", "tenant_b"]), "Preflight did not validate both configured targets.");
         var baseEnvironment = new Dictionary<string, string>(environment);
         baseEnvironment.Remove("POSTGRES_TARGETS");
         baseEnvironment["POSTGRES_CONNECTION_STRING"] = connection[..^"Database=".Length];
-        await using (var client = await McpClient.StartAsync(command, baseEnvironment))
+        await using (McpClient client = await McpClient.StartAsync(command, baseEnvironment))
         {
             Check.That(Check.Rows((await client.OkAsync("list_databases"))["databases"]!).Single(row => row["is_current"].Flag())["name"].Text() == "postgres",
                 "Connection string without Database did not bootstrap postgres.");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "tenant_a", sql = "SELECT value FROM marker" }))["rows"],
-                new[] { new[] { "A_ONLY" } }, "Default postgres bootstrap prevented physical selection.");
+                ExpectedRows.AOnly, "Default postgres bootstrap prevented physical selection.");
         }
         ProcessResult unsafeCli = await Processes.RunAsync(command.With("--sensitive-cli-marker"), environment, expected: 1);
         Check.That(unsafeCli.Output.Length == 0, "Unknown CLI input contaminated stdout.");
@@ -721,7 +741,7 @@ internal static class Integration
             ("POSTGRES_CONNECTION_STRING", "Host=localhost;Password=\"sensitive-configuration-marker", "not a valid Npgsql key=value connection string"),
             ("POSTGRES_TARGETS", "{\"a\":\"postgres://sensitive-configuration-marker@localhost/postgres\"}", "not postgres:// URLs"),
         ];
-        foreach (var (key, value, expected) in mistakes)
+        foreach ((string key, string value, string expected) in mistakes)
         {
             ProcessResult bad = await Processes.RunAsync(command.With("--validate"), new Dictionary<string, string>(unset) { [key] = value }, expected: 1);
             Check.That(bad.Output.Length == 0 && bad.Error.Contains(expected, StringComparison.Ordinal), $"Configuration mistake was not explained: {expected}.");
@@ -729,16 +749,16 @@ internal static class Integration
         }
         ProcessResult notJson = await Processes.RunAsync(command.With("--validate"), new Dictionary<string, string>(environment) { ["POSTGRES_DATABASES"] = "app_db" }, expected: 1);
         Check.That(notJson.Error.Contains("must be a JSON array of database names", StringComparison.Ordinal), "A non-JSON POSTGRES_DATABASES was not explained.");
-        foreach (var (key, value) in new[] { ("POSTGRES_POOL_SIZE", "0"), ("POSTGRES_MAX_CONCURRENT_CALLS", "0"), ("POSTGRES_MAX_RESULT_BYTES", "4095"), ("POSTGRES_MAX_ROWS", "0"), ("POSTGRES_MAX_CELL_CHARS", "0"), ("POSTGRES_QUERY_TIMEOUT", "0"), ("POSTGRES_ACCESS_MODE", "invalid") })
+        foreach ((string key, string value) in new[] { ("POSTGRES_POOL_SIZE", "0"), ("POSTGRES_MAX_CONCURRENT_CALLS", "0"), ("POSTGRES_MAX_RESULT_BYTES", "4095"), ("POSTGRES_MAX_ROWS", "0"), ("POSTGRES_MAX_CELL_CHARS", "0"), ("POSTGRES_QUERY_TIMEOUT", "0"), ("POSTGRES_ACCESS_MODE", "invalid") })
         {
             var invalidEnvironment = new Dictionary<string, string>(validationEnvironment) { [key] = value };
             ProcessResult bad = await Processes.RunAsync(command.With("--validate"), invalidEnvironment, expected: 1);
             Check.That(bad.Output.Length == 0, "Invalid resource configuration contaminated stdout.");
             Check.Confidential(bad.Error, "reader-disposable");
         }
-        foreach (var (cli, expected) in new[] { (true, "--query-timeout must be 1..600."), (false, "POSTGRES_QUERY_TIMEOUT must be 1..600.") })
+        foreach ((bool cli, string expected) in new[] { (true, "--query-timeout must be 1..600."), (false, "POSTGRES_QUERY_TIMEOUT must be 1..600.") })
         {
-            var rangeEnvironment = cli ? validationEnvironment : new Dictionary<string, string>(validationEnvironment) { ["POSTGRES_QUERY_TIMEOUT"] = "0" };
+            Dictionary<string, string> rangeEnvironment = cli ? validationEnvironment : new Dictionary<string, string>(validationEnvironment) { ["POSTGRES_QUERY_TIMEOUT"] = "0" };
             ProcessResult bad = await Processes.RunAsync(cli ? command.With("--query-timeout", "0", "--validate") : command.With("--validate"), rangeEnvironment, expected: 1);
             Check.That(bad.Error.Contains(expected, StringComparison.Ordinal), $"Range error did not name the setting that was used: {expected}");
         }
@@ -766,7 +786,7 @@ internal static class Integration
         // Name resolution of .invalid fails without network traffic; the warning comes from configuration alone.
         // The login name is the marker: no part of the connection string may appear in a warning.
         const string remote = "Host=tls-warning.invalid;Username=sensitive-tls-marker;Database=d;Timeout=2";
-        foreach (var (mode, warns) in new[] { ("", true), (";SSL Mode=Prefer", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
+        foreach ((string mode, bool warns) in new[] { ("", true), (";SSL Mode=Prefer", true), (";SSL Mode=Require", true), (";SSL Mode=VerifyFull", false) })
         {
             var tls = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new { remote = remote + mode }) };
             ProcessResult result = await Processes.RunAsync(command.With("--validate"), tls, expected: 1);

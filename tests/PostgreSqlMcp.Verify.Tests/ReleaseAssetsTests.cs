@@ -79,9 +79,6 @@ public sealed class ReleaseAssetsTests
     }
 
     [Fact]
-    public async Task A_hashed_remote_asset_that_differs_is_rejected()
-    {
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ReleaseAssets.PlanUploadsAsync([Local("a.zip")], [new("a.zip", "uploaded", null)], _ => Task.FromResult(new string('e', 64))));
-    }
+    public async Task A_hashed_remote_asset_that_differs_is_rejected() => await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                                                                                   ReleaseAssets.PlanUploadsAsync([Local("a.zip")], [new("a.zip", "uploaded", null)], _ => Task.FromResult(new string('e', 64))));
 }

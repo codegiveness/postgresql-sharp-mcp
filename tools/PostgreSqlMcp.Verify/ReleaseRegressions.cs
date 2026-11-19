@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Formats.Tar;
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,7 +12,7 @@ using System.Text.RegularExpressions;
 namespace PostgreSqlMcp.Verify;
 
 /// <summary>Offline regressions for release re-run safety and archive reproducibility; no network, no publication.</summary>
-internal static class ReleaseRegressions
+internal static partial class ReleaseRegressions
 {
     public static void Run()
     {
@@ -31,7 +32,7 @@ internal static class ReleaseRegressions
     private static void ToolPackageNames()
     {
         string[] names = [.. NuGetTool.FileNames("tool", "1.2.3")];
-        Check.That(names.Length == 6 && names[^1] == "tool.1.2.3.nupkg" && names[..^1].All(name => Regex.IsMatch(name, @"\Atool\.(win|linux|osx)-(x64|arm64)\.1\.2\.3\.nupkg\z")),
+        Check.That(names.Length == 6 && names[^1] == "tool.1.2.3.nupkg" && names[..^1].All(name => ToolPackageFileName().IsMatch(name)),
             "The .NET tool must be one pointer package, published last, plus one package per RID.");
         Check.That(names.Distinct().Count() == names.Length && NuGetTool.PackageIds("tool").Count() == names.Length, "Tool package ids must be unique and match the file names.");
     }
@@ -54,13 +55,13 @@ internal static class ReleaseRegressions
         LocalAsset[] local = [a, b, sums];
         Task<string> NoDownload(string name) => throw new VerificationException($"Unexpected download of {name}.");
 
-        var none = await ReleaseAssets.PlanUploadsAsync(local, [], NoDownload);
+        IReadOnlyList<LocalAsset> none = await ReleaseAssets.PlanUploadsAsync(local, [], NoDownload);
         Check.That(none.Count == 3, "A fresh release must upload every built asset.");
 
-        var partial = await ReleaseAssets.PlanUploadsAsync(local, [new("a.tar.gz", "uploaded", Digest(a))], NoDownload);
+        IReadOnlyList<LocalAsset> partial = await ReleaseAssets.PlanUploadsAsync(local, [new("a.tar.gz", "uploaded", Digest(a))], NoDownload);
         Check.That(partial.Select(asset => asset.Name).SequenceEqual(["b.zip", "SHA256SUMS"]), "A re-run must upload only the missing assets.");
 
-        var complete = await ReleaseAssets.PlanUploadsAsync(local,
+        IReadOnlyList<LocalAsset> complete = await ReleaseAssets.PlanUploadsAsync(local,
             [new("a.tar.gz", "uploaded", Digest(a)), new("b.zip", "uploaded", "sha256:" + b.Sha256.ToUpperInvariant()), new("SHA256SUMS", "uploaded", Digest(sums))], NoDownload);
         Check.That(complete.Count == 0, "Identical existing assets must not be uploaded again.");
 
@@ -72,11 +73,11 @@ internal static class ReleaseRegressions
         // Assets without a SHA-256 API digest are downloaded and hashed.
         var downloaded = new List<string>();
         Task<string> Download(string name) { downloaded.Add(name); return Task.FromResult(name == "a.tar.gz" ? a.Sha256 : Built(name, "tampered").Sha256); }
-        var viaDownload = await ReleaseAssets.PlanUploadsAsync([a], [new("a.tar.gz", "uploaded", null)], Download);
+        IReadOnlyList<LocalAsset> viaDownload = await ReleaseAssets.PlanUploadsAsync([a], [new("a.tar.gz", "uploaded", null)], Download);
         Check.That(viaDownload.Count == 0 && downloaded.SequenceEqual(["a.tar.gz"]), "A missing digest must fall back to hashing the downloaded asset.");
         await Fails("tampered asset without API digest", () => ReleaseAssets.PlanUploadsAsync([b], [new("b.zip", "uploaded", "sha1:abc")], Download));
 
-        var parsed = ReleaseAssets.Parse("""{"assets":[{"name":"x","state":"uploaded","digest":"sha256:ab"},{"name":"y","state":"uploaded","digest":null},{"name":"z","state":"starter"}]}""");
+        IReadOnlyList<RemoteAsset> parsed = ReleaseAssets.Parse("""{"assets":[{"name":"x","state":"uploaded","digest":"sha256:ab"},{"name":"y","state":"uploaded","digest":null},{"name":"z","state":"starter"}]}""");
         Check.That(parsed.Count == 3 && parsed[0].Digest == "sha256:ab" && parsed[1].Digest is null && parsed[2].State == "starter" && parsed[2].Digest is null,
             "GitHub release asset JSON was parsed incorrectly.");
     }
@@ -117,7 +118,7 @@ internal static class ReleaseRegressions
             File.SetLastWriteTimeUtc(file, new DateTime(2032, 6, 18, 5, 6, 7, DateTimeKind.Utc));
         ReleaseArchive.CreateTarGz(source, tarSecond);
         Check.That(File.ReadAllBytes(tarFirst).AsSpan().SequenceEqual(File.ReadAllBytes(tarSecond)), "tar.gz archives must not depend on on-disk modification times.");
-        using var tarFile = File.OpenRead(tarFirst);
+        using FileStream tarFile = File.OpenRead(tarFirst);
         using var gunzip = new GZipStream(tarFile, CompressionMode.Decompress);
         using var memory = new MemoryStream();
         gunzip.CopyTo(memory);
@@ -140,9 +141,9 @@ internal static class ReleaseRegressions
         string Package(string name, params (string Entry, string Content)[] entries)
         {
             string path = Path.Combine(temporary.Path, name);
-            using var file = File.Create(path);
+            using FileStream file = File.Create(path);
             using var zip = new ZipArchive(file, ZipArchiveMode.Create);
-            foreach (var (entry, content) in entries)
+            foreach ((string entry, string content) in entries)
                 using (var writer = new StreamWriter(zip.CreateEntry(entry).Open(), Encoding.UTF8)) writer.Write(content);
             return path;
         }
@@ -171,17 +172,17 @@ internal static class ReleaseRegressions
         string second = SbomNormalizer.Normalize(Generated(Guid.NewGuid().ToString(), "2031-01-01T00:00:00Z", "b"), buildTime);
         Check.That(first == second, "SBOMs generated from the same content with different random serials and wall-clock times must normalize to identical bytes.");
 
-        using JsonDocument document = JsonDocument.Parse(first);
+        using var document = JsonDocument.Parse(first);
         JsonElement root = document.RootElement;
         Check.That(root.EnumerateObject().Select(property => property.Name).SequenceEqual(["bomFormat", "specVersion", "serialNumber", "version", "metadata", "components"])
             && root.GetProperty("components").EnumerateArray().Select(component => component.GetProperty("name").GetString()).SequenceEqual(["b", "a"]),
             "SBOM normalization must keep the generated property and component order.");
         Check.That(root.GetProperty("metadata").GetProperty("timestamp").GetString() == "2026-03-04T03:06:07Z", "The SBOM timestamp must be the given build time in UTC.");
         string serial = root.GetProperty("serialNumber").GetString()!;
-        Check.That(Regex.IsMatch(serial, "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOptions.CultureInvariant),
+        Check.That(SbomSerialNumber().IsMatch(serial),
             "The SBOM serial number must be an RFC 4122 URN with a version 8 UUID.");
 
-        string Serial(string json) => JsonDocument.Parse(json).RootElement.GetProperty("serialNumber").GetString()!;
+        static string Serial(string json) => JsonElement.Parse(json).GetProperty("serialNumber").GetString()!;
         Check.That(Serial(SbomNormalizer.Normalize(Generated("x", "y", "other"), buildTime)) != serial, "Changed SBOM content must change the serial number.");
         Check.That(Serial(SbomNormalizer.Normalize(Generated("x", "y", "b"), buildTime.AddSeconds(1))) != serial, "A different build time must change the serial number.");
         try { SbomNormalizer.Normalize("""{"bomFormat":"CycloneDX","metadata":{"timestamp":"t"}}""", buildTime); }
@@ -194,16 +195,16 @@ internal static class ReleaseRegressions
     {
         using TemporaryDirectory temporary = new();
         string project = Directory.CreateDirectory(Path.Combine(temporary.Path, "probe")).FullName;
-        File.WriteAllText(Path.Combine(project, "Probe.csproj"),
+        await File.WriteAllTextAsync(Path.Combine(project, "Probe.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework><PackageId>Probe</PackageId><Version>1.0.0</Version></PropertyGroup></Project>");
-        File.WriteAllText(Path.Combine(project, "Probe.cs"), "internal sealed class Probe { }");
+        await File.WriteAllTextAsync(Path.Combine(project, "Probe.cs"), "internal sealed class Probe { }");
         string dotnet = Processes.FindExecutable("dotnet");
 
         async Task<string> Pack(string output)
         {
             foreach (string folder in new[] { "bin", "obj" })
                 if (Directory.Exists(Path.Combine(project, folder))) Directory.Delete(Path.Combine(project, folder), recursive: true);
-            await Processes.RunAsync(new(dotnet, "pack", "Probe.csproj", "-c", "Release", "-o", output, "-p:DeterministicTimestamp=" + ReleaseArchive.ZipTimestamp.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")),
+            await Processes.RunAsync(new(dotnet, "pack", "Probe.csproj", "-c", "Release", "-o", output, "-p:DeterministicTimestamp=" + ReleaseArchive.ZipTimestamp.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)),
                 timeout: 300, directory: project);
             return Path.Combine(output, "Probe.1.0.0.nupkg");
         }
@@ -211,8 +212,10 @@ internal static class ReleaseRegressions
         string first = await Pack(Path.Combine(temporary.Path, "first"));
         await Task.Delay(TimeSpan.FromSeconds(2.5));
         string second = await Pack(Path.Combine(temporary.Path, "second"));
-        Check.That(File.ReadAllBytes(first).AsSpan().SequenceEqual(File.ReadAllBytes(second)), "dotnet pack must produce identical .nupkg bytes with the fixed timestamp.");
-        using ZipArchive package = ZipFile.OpenRead(first);
+        byte[] firstBytes = await File.ReadAllBytesAsync(first);
+        byte[] secondBytes = await File.ReadAllBytesAsync(second);
+        Check.That(firstBytes.AsSpan().SequenceEqual(secondBytes), "dotnet pack must produce identical .nupkg bytes with the fixed timestamp.");
+        await using ZipArchive package = await ZipFile.OpenReadAsync(first);
         Check.That(package.Entries.Count > 0 && package.Entries.All(entry => entry.LastWriteTime.DateTime == ReleaseArchive.ZipTimestamp.DateTime),
             "Every .nupkg entry must carry the fixed timestamp.");
     }
@@ -255,7 +258,7 @@ internal static class ReleaseRegressions
         Names("A server.json package version mismatch", Problems(Tree("0.7.3", "0.7.3", "0.7.3", "0.7.3", "0.7.2")), "packages[0] (@scope/app)");
         Names("A missing server.json", Problems(Tree("0.7.3", "0.7.3", "0.7.3", null, "0.7.3")), ProductVersion.ServerManifest + " is missing");
 
-        var major = Problems(Tree("1.0.0", "1.0.0", "1.0.0", "1.0.0", "1.0.0"));
+        IReadOnlyList<string> major = Problems(Tree("1.0.0", "1.0.0", "1.0.0", "1.0.0", "1.0.0"));
         Names("Major 1 with every manifest consistent", major, "stays on 0.x");
         Names("A malformed application version", Problems(Tree("0.7", "0.7", "0.7", "0.7", "0.7")), "is not <major>.<minor>.<patch>");
         Check.That(Problems(Tree("1.0.0", "0.9.0", "1.0.0", "1.0.0", "1.0.0")).Count == 2, "A mismatch and a major violation must both be reported, not just the first.");
@@ -279,9 +282,9 @@ internal static class ReleaseRegressions
         string[] required = ["build", "lint"];
         (IReadOnlyList<string> Pending, IReadOnlyList<string> Failed) Evaluate(params CheckRun[] runs) => RequiredChecks.Evaluate("github-actions", required, runs);
 
-        var (greenPending, greenFailed) = Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", "completed", "success"), Run(3, "unrelated", "completed", "failure"));
+        (IReadOnlyList<string>? greenPending, IReadOnlyList<string>? greenFailed) = Evaluate(Run(1, "build", "completed", "success"), Run(2, "lint", "completed", "success"), Run(3, "unrelated", "completed", "failure"));
         Check.That(greenPending.Count == 0 && greenFailed.Count == 0, "Success must pass and checks that are not required must be ignored.");
-        var (lenientPending, lenientFailed) = Evaluate(Run(1, "build", "completed", "skipped"), Run(2, "lint", "completed", "neutral"));
+        (IReadOnlyList<string>? lenientPending, IReadOnlyList<string>? lenientFailed) = Evaluate(Run(1, "build", "completed", "skipped"), Run(2, "lint", "completed", "neutral"));
         Check.That(lenientPending.Count == 0 && lenientFailed.Count == 0, "Skipped and neutral conclusions must pass.");
 
         Check.That(Evaluate(Run(1, "build", "completed", "success")) is { Pending: [var missing], Failed: [] } && missing.StartsWith("lint ", StringComparison.Ordinal),
@@ -325,7 +328,7 @@ internal static class ReleaseRegressions
     private static async Task RequiredCheckPolling()
     {
         string[] required = ["build"];
-        TimeSpan tick = TimeSpan.FromMilliseconds(2);
+        var tick = TimeSpan.FromMilliseconds(2);
         int fetches = 0;
         Func<Task<IReadOnlyList<CheckRun>>> Sequence(params string?[] conclusions) => () =>
         {
@@ -351,4 +354,10 @@ internal static class ReleaseRegressions
 
         await Fails("a missing check", () => RequiredChecks.RequireAsync("test", "github-actions", required, () => Task.FromResult<IReadOnlyList<CheckRun>>([]), TimeSpan.Zero, tick));
     }
+
+    [GeneratedRegex(@"\Atool\.(win|linux|osx)-(x64|arm64)\.1\.2\.3\.nupkg\z")]
+    private static partial Regex ToolPackageFileName();
+
+    [GeneratedRegex("^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOptions.CultureInvariant)]
+    private static partial Regex SbomSerialNumber();
 }

@@ -3,6 +3,7 @@
 
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using FsCheck;
 using FsCheck.Fluent;
 
@@ -14,15 +15,15 @@ internal static class FuzzChecks
     {
         var random = new Random(0x50474D43);
         string[] fragments = ["a", "Z", "0", " ", "'", "\"", "\\", ";", "$", "/*", "*/", "--", "\r\n", "é", "界", "🧪"];
-        var payloads = Arb.Array(Arb.From(Gen.Elements(fragments)));
-        var depths = Arb.From(Gen.Choose(1, 5), depth => Enumerable.Range(1, depth - 1));
+        Arbitrary<string[]> payloads = Arb.Array(Arb.From(Gen.Elements(fragments)));
+        Arbitrary<int> depths = Arb.From(Gen.Choose(1, 5), depth => Enumerable.Range(1, depth - 1));
         const int casesPerEncoding = 43;
         for (int encoding = 0; encoding < 3; encoding++)
         {
             int quoteKind = encoding;
             string[]? failedParts = null;
             int failedDepth = 0;
-            var property = Prop.ForAll(payloads, depths, async (parts, depth) =>
+            Property property = Prop.ForAll(payloads, depths, async (parts, depth) =>
             {
                 try
                 {
@@ -36,7 +37,7 @@ internal static class FuzzChecks
                     string comment = string.Concat(Enumerable.Repeat("/* ignored SELECT; ", depth))
                         + string.Concat(Enumerable.Repeat(" COMMIT; */", depth));
                     string sql = $"{comment}\nSELECT {literal} AS value; -- ignored RESET;\n{comment}";
-                    var result = await client.OkAsync("execute_sql", new { database = "a", sql });
+                    JsonNode result = await client.OkAsync("execute_sql", new { database = "a", sql });
                     Check.Equal(result["rows"]![0]![0], expected, "Quoted SQL property changed the returned value.");
                     Check.That(!result["truncated"].Flag(), "Small SQL property value was unexpectedly truncated.");
                     await client.FailsAsync("execute_sql", new { database = "a", sql = sql + "\nSELECT 987654321" }, "invalid_sql");

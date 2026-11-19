@@ -89,7 +89,7 @@ internal static class PinnedTools
         {
             if (entry.EntryType is TarEntryType.GlobalExtendedAttributes or TarEntryType.ExtendedAttributes) continue;
             string name = entry.Name;
-            Check.That(name.Length > 0 && !name.StartsWith('/') && !name.Contains('\\') && !name.Split('/').Contains(".."),
+            Check.That(name.Length > 0 && name is not ['/', ..] && !name.Contains('\\', StringComparison.Ordinal) && !name.Split('/').Contains(".."),
                 "Pinned tool archive contains an unsafe path.");
             Check.That(entry.EntryType is TarEntryType.RegularFile or TarEntryType.V7RegularFile or TarEntryType.Directory,
                 "Pinned tool archive contains a link or special entry.");

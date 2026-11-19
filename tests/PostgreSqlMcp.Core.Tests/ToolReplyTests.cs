@@ -24,13 +24,14 @@ public sealed class ToolReplyTests
         ToolReply.Configure(new ServerOptions
         {
             Targets = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>()),
-            Unrestricted = unrestricted, MaxResultBytes = maxResultBytes
+            Unrestricted = unrestricted,
+            MaxResultBytes = maxResultBytes
         });
 
     private static JsonElement Json(CallToolResult result)
     {
         TextContentBlock text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content));
-        return JsonDocument.Parse(text.Text).RootElement.Clone();
+        return JsonElement.Parse(text.Text);
     }
 
     private static JsonElement ErrorOf(CallToolResult result)
@@ -182,7 +183,7 @@ public sealed class ToolReplyTests
     };
 
     [Theory]
-    [MemberData(nameof(Transport))]
+    [MemberData(nameof(Transport), DisableDiscoveryEnumeration = true)]
     public async Task Provider_and_unexpected_failures_get_fixed_messages(Exception failure, string code)
     {
         CallToolResult result = await Run(failure);
@@ -217,7 +218,7 @@ public sealed class ToolReplyTests
     public async Task A_rejected_write_message_depends_on_the_access_mode()
     {
         Configure(unrestricted: true, maxResultBytes: 65536);
-        string unrestricted = (await ErrorMessage("25006"));
+        string unrestricted = await ErrorMessage("25006");
         Configure(unrestricted: false, maxResultBytes: 65536);
         string restricted = await ErrorMessage("25006");
 

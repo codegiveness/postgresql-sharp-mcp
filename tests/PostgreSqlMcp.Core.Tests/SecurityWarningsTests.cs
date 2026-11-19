@@ -55,7 +55,7 @@ public sealed class SecurityWarningsTests
     [Fact]
     public void More_than_five_aliases_are_summarised()
     {
-        var targets = Enumerable.Range(1, 8).Select(i => ($"p{i}", "Host=db.example.test;Database=app;Username=reader;SSL Mode=Require")).ToArray();
+        (string, string)[] targets = [.. Enumerable.Range(1, 8).Select(i => ($"p{i}", "Host=db.example.test;Database=app;Username=reader;SSL Mode=Require"))];
 
         string warning = Assert.Single(SecurityWarnings.Tls(Options(targets)));
 

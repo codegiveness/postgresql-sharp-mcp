@@ -43,7 +43,7 @@ internal static class SarifGate
         List<Finding> high = [];
         foreach (string file in files.Order(StringComparer.Ordinal))
         {
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(file));
+            using var document = JsonDocument.Parse(File.ReadAllBytes(file));
             JsonElement root = document.RootElement;
             Require(Text(root, "version") == "2.1.0", "Unsupported SARIF report version.");
             JsonElement runs = Array(root, "runs");

@@ -42,18 +42,18 @@ public static class SecurityWarnings
         // One line per distinct server login (host, port, user, mode) naming its profiles: lock aliases of one connection
         // string share a line, while profiles that reach different ports or users are each named.
         var groups = new Dictionary<(string Host, int Port, string? User, SslMode Mode), List<string>>();
-        foreach (var (alias, connectionString) in options.Targets.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        foreach ((string alias, string connectionString) in options.Targets.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             var builder = new NpgsqlConnectionStringBuilder(connectionString);
             if (builder.SslMode is SslMode.VerifyCA or SslMode.VerifyFull) continue;
             string host = builder.Host ?? "";
             if (TlsPolicy.IsLocalHost(host)) continue;
-            var key = (host, builder.Port, builder.Username, builder.SslMode);
+            (string Host, int Port, string? User, SslMode Mode) key = (host, builder.Port, builder.Username, builder.SslMode);
             if (!groups.TryGetValue(key, out List<string>? aliases)) groups[key] = aliases = [];
             aliases.Add(alias);
         }
         var warnings = new List<string>();
-        foreach (var ((_, _, _, mode), aliases) in groups)
+        foreach (((string _, int _, string? _, SslMode mode), List<string> aliases) in groups)
         {
             string names = aliases.Count == 1 ? $"profile {aliases[0]}"
                 : $"profiles {string.Join(", ", aliases.Take(5))}{(aliases.Count > 5 ? $" and {aliases.Count - 5} more" : "")}";
@@ -62,7 +62,7 @@ public static class SecurityWarnings
                 SslMode.Disable => "does not encrypt the connection",
                 SslMode.Require => "encrypts without verifying the server certificate",
                 SslMode.Allow => "encrypts only if the server requires TLS and never verifies the server certificate",
-                _ => "encrypts only if the server offers TLS and never verifies the server certificate"
+                SslMode.Prefer or SslMode.VerifyCA or SslMode.VerifyFull or _ => "encrypts only if the server offers TLS and never verifies the server certificate"
             };
             warnings.Add($"{names}: SSL Mode={mode} to a non-local host {effect}, so someone on the network path could read the traffic or impersonate the server. " +
                 "This is fine on a trusted network; to harden, set SSL Mode=VerifyFull in the connection string (add Root Certificate=<CA file> for a private CA).");
@@ -74,7 +74,7 @@ public static class SecurityWarnings
     public static async Task<IReadOnlyList<string>> RolesAsync(DatabaseRegistry registry, SqlExecutor executor, CancellationToken ct = default)
     {
         var warnings = new List<string>();
-        foreach (var (target, _) in registry.LoginTargets())
+        foreach ((string target, string _) in registry.LoginTargets())
         {
             try
             {

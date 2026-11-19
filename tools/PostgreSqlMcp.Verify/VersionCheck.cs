@@ -8,7 +8,7 @@ internal static class VersionCheck
 {
     public static void Run(string root)
     {
-        var problems = ProductVersion.Inconsistencies(root);
+        IReadOnlyList<string> problems = ProductVersion.Inconsistencies(root);
         Check.That(problems.Count == 0, "Version check failed:" + string.Concat(problems.Select(problem => "\n- " + problem)));
         Console.WriteLine($"Version {ProductVersion.ReadProject(root)} is consistent across {ProductVersion.ProjectFile}, {ProductVersion.NpmManifest} (including optionalDependencies) and {ProductVersion.ServerManifest}.");
     }

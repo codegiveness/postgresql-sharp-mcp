@@ -35,12 +35,12 @@ internal static class TlsPolicy
     {
         string host = entry.Trim();
         if (host.Length == 0 || host[0] is '/' or '@') return true; // Unix-domain socket directory or abstract socket.
-        if (host.StartsWith('['))
+        if (host[0] == '[')
         {
-            int close = host.IndexOf(']');
+            int close = host.IndexOf(']', StringComparison.Ordinal);
             host = close > 0 ? host[1..close] : host;
         }
-        else if (host.Count(c => c == ':') == 1) host = host[..host.IndexOf(':')]; // host:port
+        else if (host.Count(c => c == ':') == 1) host = host[..host.IndexOf(':', StringComparison.Ordinal)]; // host:port
         return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
             || (IPAddress.TryParse(host, out IPAddress? address) && IPAddress.IsLoopback(address));
     }

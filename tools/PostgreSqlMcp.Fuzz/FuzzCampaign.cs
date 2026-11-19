@@ -43,7 +43,7 @@ internal static class FuzzCampaign
                 Path.Combine(target, "PostgreSqlMcp.Core.dll"), "PostgreSqlMcp.Core.SqlGuard");
 
             string assembly = Path.Combine(target, "PostgreSqlMcp.Fuzz.dll");
-            string[] seeds = Directory.GetFiles(Path.Combine(project, "corpus")).Order(StringComparer.Ordinal).ToArray();
+            string[] seeds = [.. Directory.GetFiles(Path.Combine(project, "corpus")).Order(StringComparer.Ordinal)];
             if (seeds.Length == 0) throw new InvalidOperationException("The checked-in fuzz regression corpus is empty.");
             foreach (string seed in seeds)
             {
@@ -59,7 +59,7 @@ internal static class FuzzCampaign
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(exception is ArgumentException or PlatformNotSupportedException
+            await Console.Error.WriteLineAsync(exception is ArgumentException or PlatformNotSupportedException
                 ? exception.Message : $"Fuzz campaign failed ({exception.GetType().Name}); sensitive exception details suppressed.");
             return 1;
         }
@@ -72,7 +72,7 @@ internal static class FuzzCampaign
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(180));
             using var client = new HttpClient();
-            using HttpResponseMessage response = await client.GetAsync(BridgeUrl, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            using HttpResponseMessage response = await client.GetAsync(new Uri(BridgeUrl, UriKind.RelativeOrAbsolute), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             response.EnsureSuccessStatusCode();
             await using (Stream input = await response.Content.ReadAsStreamAsync(deadline.Token))
             await using (FileStream output = File.Create(temporary))
@@ -99,7 +99,7 @@ internal static class FuzzCampaign
     private static async Task RunProcessAsync(string root, string executable, int timeoutSeconds, IReadOnlyDictionary<string, string?>? environment, params string[] arguments)
     {
         // libFuzzer and dotnet progress stays live on the console.
-        var result = await ProcessRunner.RunAsync(new ProcessSpec(executable, arguments)
+        ProcessResult result = await ProcessRunner.RunAsync(new ProcessSpec(executable, arguments)
         {
             WorkingDirectory = root,
             Environment = environment,

@@ -43,7 +43,7 @@ internal static class ToolInstallerRegressions
 
         string valid = Write(writer => writer.WriteEntry(Regular(Member)));
         string installed = await PinnedTools.InstallArchiveAsync(PinnedTo(valid), valid, Path.Combine(temporary.Path, "installed"));
-        Check.That(File.ReadAllBytes(installed).AsSpan().SequenceEqual(Payload), "Valid archive: extracted content differs.");
+        Check.That((await File.ReadAllBytesAsync(installed)).AsSpan().SequenceEqual(Payload), "Valid archive: extracted content differs.");
         if (!OperatingSystem.IsWindows())
             Check.That(File.GetUnixFileMode(installed).HasFlag(UnixFileMode.UserExecute), "Valid archive: executable bit missing.");
 

@@ -60,7 +60,7 @@ public sealed class SqlParametersTests
     [Fact]
     public void At_most_256_parameters_are_accepted()
     {
-        string Json(int count) => JsonSerializer.Serialize(Enumerable.Range(0, count));
+        static string Json(int count) => JsonSerializer.Serialize(Enumerable.Range(0, count));
 
         Assert.Equal(256, SqlParameters.Normalize(Values(Json(256)))!.Count);
         Assert.Equal("Supply at most 256 parameters.", Rejected(Json(257)).Message);
@@ -81,7 +81,7 @@ public sealed class SqlParametersTests
     public void Size_counts_bytes_not_characters()
     {
         // 65537 two-byte characters are 131074 bytes although they are only 65537 characters long.
-        var tooBig = new[] { JsonSerializer.SerializeToElement(new string('é', 65537)) };
+        JsonElement[] tooBig = [JsonSerializer.SerializeToElement(new string('é', 65537))];
 
         Assert.Equal("Parameters must total at most 131072 UTF-8 bytes.", Assert.Throws<ToolException>(() => SqlParameters.Normalize(tooBig)).Message);
         Assert.NotNull(SqlParameters.Normalize([JsonSerializer.SerializeToElement(new string('é', 65536))]));
@@ -90,7 +90,7 @@ public sealed class SqlParametersTests
     [Fact]
     public void Nulls_and_other_scalars_have_their_own_small_cost()
     {
-        var values = Enumerable.Repeat(JsonSerializer.SerializeToElement((string?)null), 256).ToArray();
+        JsonElement[] values = [.. Enumerable.Repeat(JsonSerializer.SerializeToElement((string?)null), 256)];
 
         Assert.All(SqlParameters.Normalize(values)!, Assert.Null);
     }

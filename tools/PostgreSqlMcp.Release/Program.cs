@@ -9,8 +9,9 @@ using System.Text.RegularExpressions;
 
 return await Release.RunAsync(args);
 
-internal static class Release
+internal static partial class Release
 {
+    private static readonly string[] CredentialMarkers = ["TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL"];
     private const string NuGetPackageId = "codegiveness.postgresql-sharp-mcp";
     private static readonly string[] Rids = ["linux-x64", "linux-arm64", "win-x64", "osx-x64", "osx-arm64"];
 
@@ -39,7 +40,7 @@ internal static class Release
                 await RequiredChecks.RunAsync(root, args);
                 return 0;
             }
-            var metadata = publication ? ReadPublicationContext(args) : ReadMetadata(root);
+            (string Version, string NpmName) metadata = publication ? ReadPublicationContext(args) : ReadMetadata(root);
             switch (command)
             {
                 case "metadata":
@@ -70,7 +71,7 @@ internal static class Release
                             throw new InvalidOperationException("Generated SBOM lacks application dependencies.");
                     }
                     // The checked-out commit's time (not the wall clock) keeps the SBOM byte-identical across rebuilds of the same source.
-                    var commitTime = await CaptureAsync("git", ["log", "-1", "--format=%ct", "HEAD"], root);
+                    ProcessResult commitTime = await CaptureAsync("git", ["log", "-1", "--format=%ct", "HEAD"], root);
                     if (commitTime.ExitCode != 0 || !long.TryParse(commitTime.Output.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long commitSeconds))
                         throw new InvalidOperationException("Cannot read the checked-out commit time for the SBOM timestamp.");
                     await File.WriteAllTextAsync(bom, SbomNormalizer.Normalize(await File.ReadAllTextAsync(bom), DateTimeOffset.FromUnixTimeSeconds(commitSeconds)));
@@ -93,7 +94,7 @@ internal static class Release
         }
         catch (Exception error)
         {
-            Console.Error.WriteLine($"Release operation failed: {error.Message}");
+            await Console.Error.WriteLineAsync($"Release operation failed: {error.Message}");
             return 1;
         }
     }
@@ -102,11 +103,11 @@ internal static class Release
     {
         if (!ProductVersion.IsReleaseTag(tag))
             throw new InvalidOperationException("Release tag must be v<major>.<minor>.<patch> with an optional prerelease suffix.");
-        var revision = await CaptureAsync("git", ["rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"], root);
+        ProcessResult revision = await CaptureAsync("git", ["rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"], root);
         if (revision.ExitCode != 0)
             throw new InvalidOperationException("Release tag must already exist and point to a commit.");
         string commit = revision.Output.Trim();
-        var ancestry = await CaptureAsync("git", ["merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"], root);
+        ProcessResult ancestry = await CaptureAsync("git", ["merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"], root);
         if (ancestry.ExitCode != 0)
             throw new InvalidOperationException("Release tag must point to a commit on origin/main.");
         await OutputAsync("commit", commit);
@@ -136,7 +137,7 @@ internal static class Release
         string version = document.RootElement.GetProperty("version").GetString() ?? "";
         string name = document.RootElement.GetProperty("npmName").GetString() ?? "";
         if (!ProductVersion.IsReleaseTag("v" + version) ||
-            !Regex.IsMatch(name, @"\A(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*\z", RegexOptions.CultureInvariant))
+            !NpmPackageName().IsMatch(name))
             throw new InvalidOperationException("Publication context must contain a valid release version and npm package name.");
         return (version, name);
     }
@@ -162,7 +163,7 @@ internal static class Release
 
     private static async Task ChecksumsAsync(string root)
     {
-        var files = ArtifactFiles(root, ReadMetadata(root)).Order(StringComparer.Ordinal).ToArray();
+        string[] files = [.. ArtifactFiles(root, ReadMetadata(root)).Order(StringComparer.Ordinal)];
         var checksums = new List<string>(files.Length);
         foreach (string file in files)
             checksums.Add(await Sha256Async(file) + "  " + Path.GetFileName(file));
@@ -171,17 +172,17 @@ internal static class Release
 
     private static async Task<string> Sha256Async(string file)
     {
-        await using var stream = File.OpenRead(file);
+        await using FileStream stream = File.OpenRead(file);
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
     }
 
     private static string[] ArtifactFiles(string root, (string Version, string NpmName) metadata)
     {
-        string[] archives = Rids.Select(rid => Path.Combine(root, "artifacts/archives", "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz"))).ToArray();
+        string[] archives = [.. Rids.Select(rid => Path.Combine(root, "artifacts/archives", "postgresql-sharp-mcp-" + rid + (rid == "win-x64" ? ".zip" : ".tar.gz")))];
         // The pointer package and one self-contained package per RID.
-        string[] nuget = NuGetTool.FileNames(NuGetPackageId, metadata.Version).Select(name => Path.Combine(root, "artifacts/packages", name)).ToArray();
+        string[] nuget = [.. NuGetTool.FileNames(NuGetPackageId, metadata.Version).Select(name => Path.Combine(root, "artifacts/packages", name))];
         // Platform packages first: the main package's optionalDependencies point at them.
-        string[] npm = NpmPackages(metadata.NpmName).Select(name => Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, metadata.Version))).ToArray();
+        string[] npm = [.. NpmPackages(metadata.NpmName).Select(name => Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, metadata.Version)))];
         string sbom = Path.Combine(root, "artifacts/sbom/bom.json");
         string[] files = [.. archives, .. nuget, .. npm, sbom];
         if (files.Any(file => !File.Exists(file)))
@@ -199,7 +200,7 @@ internal static class Release
         var local = new List<LocalAsset>();
         foreach (string file in files.Append(provenance))
             local.Add(new LocalAsset(Path.GetFileName(file), file, await Sha256Async(file)));
-        var lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
+        ProcessResult lookup = await CaptureAsync("gh", ["api", $"repos/{repo}/releases/tags/{tag}"], root);
         IReadOnlyList<RemoteAsset> existing = [];
         if (lookup.ExitCode == 0) existing = ReleaseAssets.Parse(lookup.Output);
         else
@@ -207,11 +208,11 @@ internal static class Release
             // Only a genuine 404 means absent; authorization/network errors must not create a second release.
             if (!lookup.Error.Contains("HTTP 404", StringComparison.Ordinal)) throw new InvalidOperationException("GitHub release lookup failed.");
             var create = new List<string> { "release", "create", tag, "--repo", repo, "--verify-tag", "--title", tag, "--generate-notes" };
-            if (tag.Contains('-')) create.Add("--prerelease");
+            if (tag.Contains('-', StringComparison.Ordinal)) create.Add("--prerelease");
             await RunAsync("gh", create, root);
         }
         // A re-run never replaces a published asset: existing ones must be byte-identical, only missing ones are uploaded.
-        var missing = await ReleaseAssets.PlanUploadsAsync(local, existing, async name =>
+        IReadOnlyList<LocalAsset> missing = await ReleaseAssets.PlanUploadsAsync(local, existing, async name =>
         {
             string directory = Directory.CreateTempSubdirectory("postgresql-release-asset-").FullName;
             try
@@ -253,7 +254,7 @@ internal static class Release
             try
             {
                 await NuGetRegistry.DownloadAsync(http, id, version, registry);
-                var differences = NuGetRegistry.ComparePayload(package, registry);
+                IReadOnlyList<string> differences = NuGetRegistry.ComparePayload(package, registry);
                 if (differences.Count > 0)
                     throw new InvalidOperationException($"NuGet {id} {version} already exists with a different payload ({string.Join("; ", differences.Take(5))}); refusing to treat it as published.");
             }
@@ -273,14 +274,14 @@ internal static class Release
         string[] bundles = Directory.Exists(directory) ? Directory.GetFiles(directory) : [];
         if (bundles.Length != 1) throw new InvalidOperationException("Expected exactly one attestation bundle in provenance/.");
         using var bundle = JsonDocument.Parse(await File.ReadAllTextAsync(bundles[0]));
-        var envelope = bundle.RootElement.GetProperty("dsseEnvelope");
+        JsonElement envelope = bundle.RootElement.GetProperty("dsseEnvelope");
         if (!(bundle.RootElement.GetProperty("mediaType").GetString() ?? "").StartsWith("application/vnd.dev.sigstore.bundle", StringComparison.Ordinal) ||
             envelope.GetProperty("payloadType").GetString() != "application/vnd.in-toto+json")
             throw new InvalidOperationException("Attestation bundle is not a Sigstore in-toto bundle.");
         using var statement = JsonDocument.Parse(Convert.FromBase64String(envelope.GetProperty("payload").GetString() ?? ""));
         if (statement.RootElement.GetProperty("predicateType").GetString() != "https://slsa.dev/provenance/v1")
             throw new InvalidOperationException("Attestation bundle does not contain SLSA provenance.");
-        var attested = statement.RootElement.GetProperty("subject").EnumerateArray()
+        IOrderedEnumerable<string> attested = statement.RootElement.GetProperty("subject").EnumerateArray()
             .Select(subject => subject.GetProperty("name").GetString() + "  " + subject.GetProperty("digest").GetProperty("sha256").GetString())
             .Order(StringComparer.Ordinal);
         var published = new List<string>(files.Length);
@@ -326,7 +327,7 @@ internal static class Release
     private static async Task StageNpmPackageAsync(string root, string name, string version, bool dryRun, string isolated,
         Dictionary<string, string?> environment, string[] configuration)
     {
-        var lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json",
+        ProcessResult lookup = await CaptureAsync("npm", ["view", name + "@" + version, "version", "--json",
             "--registry", "https://registry.npmjs.org/", .. configuration], isolated, environment);
         if (lookup.ExitCode == 0)
         {
@@ -349,7 +350,7 @@ internal static class Release
         if (!absent) throw new InvalidOperationException($"npm lookup failed for {name}; check registry availability.");
         string package = Path.GetFullPath(Path.Combine(root, "artifacts/packages", NpmPlatform.TarballName(name, version)));
         var arguments = new List<string> { "stage", "publish", package, "--ignore-scripts", "--access", "public",
-            "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-') ? "next" : "latest" };
+            "--provenance", "--registry", "https://registry.npmjs.org/", "--tag", version.Contains('-', StringComparison.Ordinal) ? "next" : "latest" };
         arguments.AddRange(configuration);
         if (dryRun) arguments.Add("--dry-run");
         await RunAsync("npm", arguments, isolated, environment);
@@ -375,7 +376,7 @@ internal static class Release
     // environment variables replaced, so a tool that echoes its token cannot leak it into logs.
     private static async Task RunAsync(string executable, IEnumerable<string> args, string root, IReadOnlyDictionary<string, string?>? environment = null)
     {
-        var result = await ProcessRunner.RunAsync(Spec(executable, args, root, environment, OutputPolicy.Redact(CredentialValues())));
+        ProcessResult result = await ProcessRunner.RunAsync(Spec(executable, args, root, environment, OutputPolicy.Redact(CredentialValues())));
         if (result.ExitCode != 0) throw new InvalidOperationException($"{executable} failed (exit {result.ExitCode}); its output above has known credential values redacted.");
     }
 
@@ -387,7 +388,10 @@ internal static class Release
         new(executable, args) { WorkingDirectory = root, Environment = environment, Timeout = TimeSpan.FromMinutes(15), Output = output };
 
     private static IEnumerable<string?> CredentialValues() => Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
-        .Where(variable => new[] { "TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL" }.Any(marker => ((string)variable.Key).Contains(marker, StringComparison.OrdinalIgnoreCase)))
+        .Where(variable => CredentialMarkers.Any(marker => ((string)variable.Key).Contains(marker, StringComparison.OrdinalIgnoreCase)))
         .Select(variable => (string?)variable.Value)
         .Where(value => value?.Length >= 8);
+
+    [GeneratedRegex(@"\A(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*\z", RegexOptions.CultureInvariant)]
+    private static partial Regex NpmPackageName();
 }

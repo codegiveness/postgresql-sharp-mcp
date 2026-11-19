@@ -78,12 +78,12 @@ public static class DatabaseLockCheck
     /// </summary>
     public static async Task<IReadOnlyList<string>> VerifyAsync(DatabaseRegistry registry, SqlExecutor executor, CancellationToken ct = default)
     {
-        string[] locked = registry.AllowedDatabaseNames
+        IReadOnlyList<string> locked = registry.AllowedDatabaseNames
             ?? throw new InvalidOperationException("The PostgreSQL lock check requires a configured database lock.");
         var parameters = new Dictionary<string, object?> { ["databases"] = locked };
         var findings = new List<string>();
         var checkedDatabases = new HashSet<(string Login, string Database)>();
-        foreach (var (target, login) in registry.LoginTargets())
+        foreach ((string target, string login) in registry.LoginTargets())
         {
             string discovery = registry.GetDiscoveryDatabase(target);
             try
@@ -112,7 +112,7 @@ public static class DatabaseLockCheck
         {
             var command = new NpgsqlBatchCommand(sql);
             if (parameters is not null)
-                foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+                foreach ((string name, object? value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
             await using SessionReader result = await session.ExecuteReaderAsync([command], System.Data.CommandBehavior.Default, token).ConfigureAwait(false);
             NpgsqlDataReader reader = result.Reader;
             var values = new List<string>();

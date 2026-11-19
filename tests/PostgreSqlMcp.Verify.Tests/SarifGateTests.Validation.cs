@@ -36,7 +36,7 @@ public sealed partial class SarifGateTests
     {
         Write(Path.Combine(Baseline, "nested", "deeper"), "scan.sarif", Report(Run([Result(fingerprint: "f")])));
         Write(Path.Combine(Candidate, "nested", "deeper"), "scan.sarif", Report(Run([Result(fingerprint: "f")])));
-        var output = new StringWriter();
+        using var output = new StringWriter();
 
         SarifGate.Run(Baseline, Candidate, output);
 

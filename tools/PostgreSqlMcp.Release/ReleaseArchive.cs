@@ -23,7 +23,7 @@ internal static class ReleaseArchive
     /// <summary>Writes a zip whose bytes depend only on file names, contents and modes, not on on-disk timestamps.</summary>
     public static void CreateZip(string directory, string archive)
     {
-        using var file = File.Create(archive);
+        using FileStream file = File.Create(archive);
         using var zip = new ZipArchive(file, ZipArchiveMode.Create);
         foreach (string path in OrderedFiles(directory))
         {
@@ -31,7 +31,7 @@ internal static class ReleaseArchive
             entry.LastWriteTime = ZipTimestamp;
             // Unix mode in the high 16 bits: S_IFREG (0x8000) plus the permission bits, like the .NET default entry.
             entry.ExternalAttributes = (0x8000 | (int)EntryMode(path)) << 16;
-            using var source = File.OpenRead(path);
+            using FileStream source = File.OpenRead(path);
             using Stream target = entry.Open();
             source.CopyTo(target);
         }
@@ -43,15 +43,18 @@ internal static class ReleaseArchive
     /// </summary>
     public static void CreateTarGz(string directory, string archive)
     {
-        using var file = File.Create(archive);
+        using FileStream file = File.Create(archive);
         using var gzip = new GZipStream(file, CompressionLevel.Optimal);
         using var tar = new TarWriter(gzip, TarEntryFormat.Gnu, leaveOpen: true);
         foreach (string path in OrderedFiles(directory))
         {
-            using var data = File.OpenRead(path);
+            using FileStream data = File.OpenRead(path);
             tar.WriteEntry(new GnuTarEntry(TarEntryType.RegularFile, EntryName(directory, path))
             {
-                Uid = 0, Gid = 0, UserName = "", GroupName = "",
+                Uid = 0,
+                Gid = 0,
+                UserName = "",
+                GroupName = "",
                 ModificationTime = DateTimeOffset.UnixEpoch,
                 Mode = EntryMode(path),
                 DataStream = data

@@ -20,7 +20,7 @@ public sealed partial class SbomNormalizerTests
     [GeneratedRegex("^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")]
     private static partial Regex UuidVersion8();
 
-    private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement.Clone();
+    private static JsonElement Parse(string json) => JsonElement.Parse(json);
 
     [Fact]
     public void Output_does_not_depend_on_the_random_serial_or_the_wall_clock_timestamp() =>
@@ -48,7 +48,7 @@ public sealed partial class SbomNormalizerTests
     [Fact]
     public void Changed_content_or_a_different_build_time_changes_the_serial()
     {
-        string Serial(string json) => Parse(json).GetProperty("serialNumber").GetString()!;
+        static string Serial(string json) => Parse(json).GetProperty("serialNumber").GetString()!;
         string reference = Serial(SbomNormalizer.Normalize(Bom(), BuildTime));
 
         Assert.NotEqual(reference, Serial(SbomNormalizer.Normalize(Bom(component: "Other"), BuildTime)));

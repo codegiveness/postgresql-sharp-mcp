@@ -24,7 +24,7 @@ public static class SqlParameters
         if (values is null || values.Length == 0) return null;
         if (values.Length > MaxCount)
             throw new ToolException("invalid_parameters", $"Supply at most {MaxCount} parameters.");
-        var texts = new string?[values.Length];
+        string?[] texts = new string?[values.Length];
         long bytes = 0;
         for (int i = 0; i < values.Length; i++)
         {
@@ -36,12 +36,12 @@ public static class SqlParameters
                 JsonValueKind.Number => value.GetRawText(),
                 JsonValueKind.True => "true",
                 JsonValueKind.False => "false",
-                _ => throw new ToolException("invalid_parameters",
+                JsonValueKind.Object or JsonValueKind.Array or _ => throw new ToolException("invalid_parameters",
                     $"Parameter ${i + 1} must be a string, number, boolean or null. Pass JSON documents and arrays as a string and cast, for example ${i + 1}::jsonb.")
             };
             if (texts[i] is { } text)
             {
-                if (text.Contains('\0'))
+                if (text.Contains('\0', StringComparison.Ordinal))
                     throw new ToolException("invalid_parameters", $"Parameter ${i + 1} must not contain NUL characters.");
                 bytes += Encoding.UTF8.GetByteCount(text);
             }

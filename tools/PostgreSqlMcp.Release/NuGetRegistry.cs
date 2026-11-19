@@ -16,7 +16,7 @@ internal static class NuGetRegistry
 
     public static async Task<bool> HasVersionAsync(HttpClient http, string id, string version)
     {
-        using HttpResponseMessage response = await http.GetAsync($"{FlatContainer}{id}/index.json");
+        using HttpResponseMessage response = await http.GetAsync(new Uri($"{FlatContainer}{id}/index.json", UriKind.RelativeOrAbsolute));
         if (response.StatusCode == HttpStatusCode.NotFound) return false;
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -39,9 +39,9 @@ internal static class NuGetRegistry
     public static async Task DownloadAsync(HttpClient http, string id, string version, string destination)
     {
         string lower = version.ToLowerInvariant();
-        using HttpResponseMessage response = await http.GetAsync($"{FlatContainer}{id}/{lower}/{id}.{lower}.nupkg", HttpCompletionOption.ResponseHeadersRead);
+        using HttpResponseMessage response = await http.GetAsync(new Uri($"{FlatContainer}{id}/{lower}/{id}.{lower}.nupkg", UriKind.RelativeOrAbsolute), HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
-        await using var file = File.Create(destination);
+        await using FileStream file = File.Create(destination);
         await response.Content.CopyToAsync(file);
     }
 
@@ -64,7 +64,7 @@ internal static class NuGetRegistry
         var payload = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (ZipArchiveEntry entry in zip.Entries)
         {
-            if (entry.FullName == RepositorySignatureEntry || entry.FullName.EndsWith('/')) continue;
+            if (entry.FullName is RepositorySignatureEntry or [.., '/']) continue;
             using Stream content = entry.Open();
             if (!payload.TryAdd(entry.FullName, Convert.ToHexStringLower(SHA256.HashData(content))))
                 throw new InvalidOperationException($"Package contains duplicate entry '{entry.FullName}'.");

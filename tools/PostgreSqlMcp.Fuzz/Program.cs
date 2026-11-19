@@ -14,9 +14,9 @@ Fuzzer.LibFuzzer.Run(data =>
     CheckSql(Encoding.UTF8.GetString(data));
     if (data.Length % 2 == 0)
     {
-        var characters = new char[data.Length / 2];
+        char[] characters = new char[data.Length / 2];
         for (int index = 0; index < characters.Length; index++)
-            characters[index] = (char)(data[index * 2] | data[index * 2 + 1] << 8);
+            characters[index] = (char)(data[index * 2] | (data[(index * 2) + 1] << 8));
         CheckSql(new string(characters));
     }
 });
@@ -29,7 +29,7 @@ static void CheckSql(string sql)
     catch (ToolException exception) when (exception.Code == "invalid_sql") { return; }
 
     Require(sql.StartsWith(normalized, StringComparison.Ordinal), "Normalization must retain an exact input prefix.");
-    Require(normalized.Length > 0 && normalized.Length <= 131072 && !normalized.Contains('\0'), "Accepted SQL violates the input bounds.");
+    Require(normalized.Length > 0 && normalized.Length <= 131072 && !normalized.Contains('\0', StringComparison.Ordinal), "Accepted SQL violates the input bounds.");
     Require(SqlGuard.Validate(normalized, out string normalizedKeyword) == normalized && normalizedKeyword == keyword,
         "Normalization must be idempotent and preserve the first keyword.");
 

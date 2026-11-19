@@ -16,7 +16,10 @@ internal static class TlsChecks
 {
     private const string Failed = "tls_verification_failed";
     private const string VerifyFull = ";SSL Mode=VerifyFull";
+    private static readonly string[] VerifiedProfiles = ["bridge_root_only", "bridge_verify", "bridge_ca", "loopback", "name_mismatch", "multi_local"];
 
+    /// <param name="command">The server command under test.</param>
+    /// <param name="environment">The base environment for the spawned server.</param>
     /// <param name="login">The fixture's disposable reader login (user, password, database), without host or port.</param>
     public static async Task RunAsync(Command command, Dictionary<string, string> environment, string login)
     {
@@ -42,7 +45,7 @@ internal static class TlsChecks
             ["multi_mixed"] = $"Host=127.0.0.1:{tls.LoopbackPort},{tls.BridgeAddress}:5432;{login}"
         };
         var served = new Dictionary<string, string>(environment) { ["POSTGRES_TARGETS"] = JsonSerializer.Serialize(targets) };
-        await using (var client = await McpClient.StartAsync(command, served))
+        await using (McpClient client = await McpClient.StartAsync(command, served))
         {
             foreach (string alias in new[] { "bridge_verify", "name_mismatch" })
             {
@@ -58,10 +61,15 @@ internal static class TlsChecks
                 "A login was sent to the server before its certificate was verified.");
             var expected = new Dictionary<string, string>
             {
-                ["bridge_default"] = "tls", ["bridge_root_only"] = "tls", ["bridge_ca"] = "tls", ["bridge_require"] = "tls",
-                ["loopback_default"] = "tls", ["loopback_disable"] = "plaintext", ["multi_local"] = "tls"
+                ["bridge_default"] = "tls",
+                ["bridge_root_only"] = "tls",
+                ["bridge_ca"] = "tls",
+                ["bridge_require"] = "tls",
+                ["loopback_default"] = "tls",
+                ["loopback_disable"] = "plaintext",
+                ["multi_local"] = "tls"
             };
-            foreach (var (alias, transport) in expected)
+            foreach ((string alias, string transport) in expected)
             {
                 JsonNode page = await client.OkAsync("execute_sql", new
                 {
@@ -72,14 +80,14 @@ internal static class TlsChecks
             }
             await client.StopAsync();
             string startup = client.StandardError;
-            string[] warnings = startup.Split('\n').Where(line => line.StartsWith("[warning] profile", StringComparison.Ordinal)).ToArray();
+            string[] warnings = [.. startup.Split('\n').Where(line => line.StartsWith("[warning] profile", StringComparison.Ordinal))];
             Check.That(warnings.Any(line => line.StartsWith("[warning] profile bridge_default: SSL Mode=Prefer", StringComparison.Ordinal)
                     && line.Contains("SSL Mode=VerifyFull", StringComparison.Ordinal)),
                 "The Prefer default to a non-loopback host was not advised about with the VerifyFull remedy.");
             Check.That(warnings.Any(line => line.StartsWith("[warning] profile bridge_require: SSL Mode=Require", StringComparison.Ordinal))
                     && warnings.Any(line => line.StartsWith("[warning] profile multi_mixed: SSL Mode=Prefer", StringComparison.Ordinal)),
                 "An unverified SSL Mode on a non-loopback host was not warned about.");
-            Check.That(new[] { "bridge_root_only", "bridge_verify", "bridge_ca", "loopback", "name_mismatch", "multi_local" }.All(name => !warnings.Any(line => line.Contains(name, StringComparison.Ordinal))),
+            Check.That(VerifiedProfiles.All(name => !warnings.Any(line => line.Contains(name, StringComparison.Ordinal))),
                 "A verified or loopback-only profile was reported as unverified.");
             Check.Confidential(startup, "reader-disposable");
         }

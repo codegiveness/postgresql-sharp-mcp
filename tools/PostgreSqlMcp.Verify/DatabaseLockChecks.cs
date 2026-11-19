@@ -47,17 +47,19 @@ internal static class DatabaseLockChecks
         }
 
         string connection = $"Host=127.0.0.1;Port={fixture.Port};Username=mcp_locked;Password={Password};Database=";
-        var connectionMode = Processes.CleanEnvironment();
+        Dictionary<string, string> connectionMode = Processes.CleanEnvironment();
         connectionMode["POSTGRES_CONNECTION_STRING"] = connection + "postgres";
         connectionMode["POSTGRES_DATABASES"] = LockList;
         connectionMode["POSTGRES_REQUIRE_DATABASE_LOCK"] = "true";
         // The existing refusal scenarios exercise strict mode; advisory (the default) is covered by removing this.
         connectionMode["POSTGRES_DATABASE_LOCK_MODE"] = "strict";
-        var targetsMode = Processes.CleanEnvironment();
+        Dictionary<string, string> targetsMode = Processes.CleanEnvironment();
         targetsMode["POSTGRES_TARGETS"] = JsonSerializer.Serialize(new Dictionary<string, string>
         {
             // Ordinal-first default profile bootstraps from a database outside the lock.
-            ["admin"] = connection + "postgres", ["main"] = connection + "lock_a", ["protected"] = connection + "lock_protected"
+            ["admin"] = connection + "postgres",
+            ["main"] = connection + "lock_a",
+            ["protected"] = connection + "lock_protected"
         });
         targetsMode["POSTGRES_DATABASES"] = LockList;
         targetsMode["POSTGRES_REQUIRE_DATABASE_LOCK"] = "true";
@@ -78,7 +80,7 @@ internal static class DatabaseLockChecks
 
     private static async Task VerifyRequireSwitchAsync(Command command, Dictionary<string, string> connectionMode, Dictionary<string, string> targetsMode)
     {
-        foreach (var mode in new[] { connectionMode, targetsMode })
+        foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
         {
             var unlocked = new Dictionary<string, string>(mode);
             unlocked.Remove("POSTGRES_DATABASES");
@@ -106,9 +108,9 @@ internal static class DatabaseLockChecks
 
     private static async Task VerifyConnectionModeAsync(Command command, Dictionary<string, string> environment)
     {
-        await using var client = await McpClient.StartAsync(command, environment);
+        await using McpClient client = await McpClient.StartAsync(command, environment);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-            new[] { new[] { "lock_b", "LOCK_B" } }, "Connection-string lock did not select an allowed database.");
+            ExpectedRows.LockB, "Connection-string lock did not select an allowed database.");
         JsonNode listed = await client.OkAsync("list_databases");
         Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag() && listed["database_lock_mode"].Text() == "strict",
             "Connection-string list_databases exposed databases outside the lock or did not report the strict lock.");
@@ -134,11 +136,12 @@ internal static class DatabaseLockChecks
         string[] names = [.. Locked, .. Enumerable.Range(1, 40).Select(i => $"lock_absent_{i:D2}")];
         var environment = new Dictionary<string, string>(connectionMode)
         {
-            ["POSTGRES_DATABASES"] = JsonSerializer.Serialize(names), ["POSTGRES_POOL_SIZE"] = "32"
+            ["POSTGRES_DATABASES"] = JsonSerializer.Serialize(names),
+            ["POSTGRES_POOL_SIZE"] = "32"
         };
-        await using var client = await McpClient.StartAsync(command, environment);
+        await using McpClient client = await McpClient.StartAsync(command, environment);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-            new[] { new[] { "lock_b", "LOCK_B" } }, "A 42-name lock did not select an allowed database.");
+            ExpectedRows.LockB, "A 42-name lock did not select an allowed database.");
         Check.That(ListedNames(await client.OkAsync("list_databases")).SequenceEqual(Locked),
             "A 42-name lock listed databases that do not exist or are outside the lock.");
         await ExpectLockRejectionAsync(client, new { database = "lock_protected" });
@@ -148,11 +151,11 @@ internal static class DatabaseLockChecks
 
     private static async Task VerifyTargetsModeAsync(Command command, Dictionary<string, string> environment)
     {
-        await using var client = await McpClient.StartAsync(command, environment);
+        await using McpClient client = await McpClient.StartAsync(command, environment);
         Check.Equal((await client.OkAsync("execute_sql", new { database = "main", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-            new[] { new[] { "lock_a", "LOCK_A" } }, "Alias inside the lock did not resolve to its bootstrap database.");
+            ExpectedRows.LockA, "Alias inside the lock did not resolve to its bootstrap database.");
         Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", target = "protected", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-            new[] { new[] { "lock_b", "LOCK_B" } }, "A profile with an out-of-lock bootstrap database could not select an allowed database.");
+            ExpectedRows.LockB, "A profile with an out-of-lock bootstrap database could not select an allowed database.");
         // Alias, physical name and explicit target routes to databases outside the lock.
         await ExpectLockRejectionAsync(client, new { database = "protected" });
         await ExpectLockRejectionAsync(client, new { database = "admin" });
@@ -173,13 +176,13 @@ internal static class DatabaseLockChecks
 
     private static async Task VerifyValidateAsync(Command command, Dictionary<string, string> connectionMode, Dictionary<string, string> targetsMode)
     {
-        foreach (var mode in new[] { connectionMode, targetsMode })
+        foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
         {
             ProcessResult validation = await Processes.RunAsync(command.With("--validate"), mode);
             Check.That(validation.Output.Length == 0, "Locked validation contaminated stdout.");
             Check.That(validation.Error.Contains("Database lock verified", StringComparison.Ordinal), "Validation did not run the PostgreSQL lock check.");
-            JsonNode[] reports = validation.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Where(line => line.StartsWith('{')).Select(line => JsonNode.Parse(line)!).ToArray();
+            JsonNode[] reports = [.. validation.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line is ['{', ..]).Select(line => JsonNode.Parse(line)!)];
             Check.That(reports.Length > 0 && reports.All(report => report["rows"]![0]![0].Text() is "lock_a" or "lock_b"),
                 "Validation connected through a database outside the lock.");
             Check.Confidential(validation.Error, Password);
@@ -202,12 +205,12 @@ internal static class DatabaseLockChecks
             ("GRANT pg_execute_server_program TO mcp_locked;", "REVOKE pg_execute_server_program FROM mcp_locked;", "pg_execute_server_program"),
             ("ALTER DATABASE lock_protected OWNER TO mcp_locked;", "ALTER DATABASE lock_protected OWNER TO postgres;", "owns database lock_protected")
         ];
-        foreach (var (harden, restore, expected) in cases)
+        foreach ((string harden, string restore, string expected) in cases)
         {
             await fixture.SqlAsync("postgres", harden);
             try
             {
-                foreach (var mode in new[] { connectionMode, targetsMode })
+                foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
                 {
                     await ExpectRefusalAsync(command, mode, expected);
                     await ExpectRefusalAsync(command.With("--validate"), mode, expected);
@@ -219,7 +222,7 @@ internal static class DatabaseLockChecks
         await fixture.SqlAsync("lock_b", "CREATE EXTENSION dblink;");
         try
         {
-            foreach (var mode in new[] { connectionMode, targetsMode })
+            foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
                 await ExpectRefusalAsync(command, mode, "database lock_b: extension dblink is installed");
         }
         finally { await fixture.SqlAsync("lock_b", "DROP EXTENSION dblink;"); }
@@ -227,7 +230,7 @@ internal static class DatabaseLockChecks
         await fixture.SqlAsync("lock_b", "GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO mcp_locked;");
         try
         {
-            foreach (var mode in new[] { connectionMode, targetsMode })
+            foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
             {
                 await ExpectRefusalAsync(command, mode, "database lock_b: login can execute server-file function pg_read_binary_file(text)");
                 await ExpectRefusalAsync(command.With("--validate"), mode, "login can execute server-file function pg_read_binary_file(text)");
@@ -239,7 +242,7 @@ internal static class DatabaseLockChecks
         try
         {
             await fixture.SqlAsync("lock_b", "GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO mcp_file_reader;");
-            foreach (var mode in new[] { connectionMode, targetsMode })
+            foreach (Dictionary<string, string>? mode in new[] { connectionMode, targetsMode })
                 await ExpectRefusalAsync(command.With("--validate"), mode, "database lock_b: login can execute server-file function pg_read_binary_file(text)");
         }
         finally
@@ -281,7 +284,7 @@ internal static class DatabaseLockChecks
         {
             // A CLI value overrides the strict environment setting.
             await ExpectAdvisoryAsync(command.With("--validate", "--database-lock-mode", "advisory"), connectionMode, "is a superuser");
-            await using var client = await McpClient.StartAsync(command, Advisory(connectionMode));
+            await using McpClient client = await McpClient.StartAsync(command, Advisory(connectionMode));
             JsonNode listed = await client.OkAsync("list_databases");
             Check.That(ListedNames(listed).SequenceEqual(Locked) && listed["database_lock"].Flag() && listed["database_lock_mode"].Text() == "advisory",
                 "Advisory list_databases exposed databases outside the lock or did not report the advisory mode.");
@@ -292,7 +295,7 @@ internal static class DatabaseLockChecks
                 && !(instructions + description).Contains("verified to confine", StringComparison.Ordinal),
                 "Advisory mode was not disclosed, or was described as PostgreSQL confinement.");
             Check.Equal((await client.OkAsync("execute_sql", new { database = "lock_b", sql = "SELECT current_database(),value FROM marker" }))["rows"],
-                new[] { new[] { "lock_b", "LOCK_B" } }, "Advisory lock did not select an allowed database.");
+                ExpectedRows.LockB, "Advisory lock did not select an allowed database.");
             foreach (string outside in new[] { "lock_protected", "postgres" })
                 await ExpectLockRejectionAsync(client, new { database = outside });
             await client.StopAsync();
@@ -316,20 +319,20 @@ internal static class DatabaseLockChecks
         (string Tool, JsonObject Extra)[] tools =
         [
             ("execute_sql", new() { ["sql"] = "SELECT 1" }), ("explain_query", new() { ["sql"] = "SELECT 1" }),
-            ("list_schemas", new()), ("list_objects", new()),
+            ("list_schemas", []), ("list_objects", []),
             ("get_object_details", new() { ["schema"] = "public", ["name"] = "marker" }),
-            ("get_top_queries", new()), ("analyze_indexes", new()), ("analyze_db_health", new())
+            ("get_top_queries", []), ("analyze_indexes", []), ("analyze_db_health", [])
         ];
-        foreach (var (tool, extra) in tools)
+        foreach ((string tool, JsonObject extra) in tools)
         {
             var call = (JsonObject)arguments.DeepClone();
-            foreach (var (key, value) in extra) call[key] = value?.DeepClone();
+            foreach ((string key, JsonNode? value) in extra) call[key] = value?.DeepClone();
             JsonNode error = await client.FailsAsync(tool, call, "invalid_target");
             Check.That(error["error"]!["message"].Text().Contains("database lock", StringComparison.Ordinal), $"{tool} was not rejected by the database lock.");
         }
     }
 
-    private static string[] ListedNames(JsonNode listed) => Check.Rows(listed["databases"]!).Select(row => row["name"].Text()).ToArray();
+    private static string[] ListedNames(JsonNode listed) => [.. Check.Rows(listed["databases"]!).Select(row => row["name"].Text())];
 
     // pg_stat_database.sessions exists from PostgreSQL 14. PostgreSQL 13 has no session counter, so committed plus rolled-back
     // transactions stand in: any session the server used to check or query the database would have run at least one.

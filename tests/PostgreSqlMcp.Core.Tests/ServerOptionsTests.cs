@@ -26,7 +26,7 @@ public sealed class ServerOptionsTests
     {
         lock (EnvironmentLock)
         {
-            var saved = Variables.ToDictionary(name => name, name => Environment.GetEnvironmentVariable("POSTGRES_" + name));
+            Dictionary<string, string?> saved = Variables.ToDictionary(name => name, name => Environment.GetEnvironmentVariable("POSTGRES_" + name));
             try
             {
                 foreach (string name in Variables) Environment.SetEnvironmentVariable("POSTGRES_" + name, null);
@@ -418,10 +418,10 @@ public sealed class ServerOptionsTests
     [InlineData("postgres://reader:synthetic-secret-value@db.example.test/app")]
     [InlineData("postgresql://reader:synthetic-secret-value@db.example.test/app")]
     [InlineData("  POSTGRES://reader:synthetic-secret-value@db.example.test/app")]
-    public void Url_connection_strings_are_refused_without_echoing_them(string url)
+    public void Url_connection_strings_are_refused_without_echoing_them(string connectionString)
     {
-        string fromEnvironment = RejectedEnv(("CONNECTION_STRING", url));
-        string fromTargets = RejectedEnv(("TARGETS", JsonSerializer.Serialize(new Dictionary<string, string> { ["a"] = url })));
+        string fromEnvironment = RejectedEnv(("CONNECTION_STRING", connectionString));
+        string fromTargets = RejectedEnv(("TARGETS", JsonSerializer.Serialize(new Dictionary<string, string> { ["a"] = connectionString })));
 
         Assert.Contains("is a postgres:// URL, which is not supported", fromEnvironment, StringComparison.Ordinal);
         Assert.StartsWith("Targets profile values must be Npgsql key=value connection strings, not postgres:// URLs", fromTargets, StringComparison.Ordinal);

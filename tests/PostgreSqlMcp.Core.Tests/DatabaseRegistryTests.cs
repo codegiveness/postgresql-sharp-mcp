@@ -13,7 +13,9 @@ public sealed class DatabaseRegistryTests
 
     private static ServerOptions Options(Dictionary<string, string> targets, string[]? allowed = null, int poolSize = 8) => new()
     {
-        Targets = new ReadOnlyDictionary<string, string>(targets), AllowedDatabases = allowed, PoolSize = poolSize
+        Targets = new ReadOnlyDictionary<string, string>(targets),
+        AllowedDatabases = allowed,
+        PoolSize = poolSize
     };
 
     private static ToolException InvalidTarget(Action action)
@@ -139,7 +141,7 @@ public sealed class DatabaseRegistryTests
 
         Assert.Equal("second", registry.GetDiscoveryDatabase("inside"));
         Assert.Equal("first", registry.GetDiscoveryDatabase("outside"));
-        Assert.Equal(["first", "second"], registry.AllowedDatabaseNames!);
+        Assert.Equal(["first", "second"], registry.AllowedDatabaseNames);
     }
 
     [Fact]
@@ -177,7 +179,8 @@ public sealed class DatabaseRegistryTests
     {
         await using var registry = new DatabaseRegistry(Options(new()
         {
-            ["a"] = "Host=h.example.test;Username=u;Database=x", ["b"] = "Username=u;Database=y;Host=h.example.test"
+            ["a"] = "Host=h.example.test;Username=u;Database=x",
+            ["b"] = "Username=u;Database=y;Host=h.example.test"
         }));
 
         Assert.Equal(registry.Resolve("x", "a", out _).ConnectionString, registry.Resolve("y", "b", out _).ConnectionString);

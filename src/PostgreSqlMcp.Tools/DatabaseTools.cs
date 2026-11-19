@@ -10,23 +10,16 @@ using PostgreSqlMcp.Core;
 namespace PostgreSqlMcp.Tools;
 
 [McpServerToolType]
-public sealed class DatabaseTools
+public sealed class DatabaseTools(SqlExecutor executor, ServerOptions options, DatabaseRegistry registry)
 {
-    private readonly SqlExecutor _executor;
-    private readonly ServerOptions _options;
-    private readonly DatabaseRegistry _registry;
-
-    public DatabaseTools(SqlExecutor executor, ServerOptions options, DatabaseRegistry registry)
-    {
-        _executor = executor;
-        _options = options;
-        _registry = registry;
-    }
+    private readonly SqlExecutor _executor = executor;
+    private readonly ServerOptions _options = options;
+    private readonly DatabaseRegistry _registry = registry;
 
     [McpServerTool(Name = "list_databases", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Discover accessible databases from the live PostgreSQL catalog, with paging and is_current. Optional target selects a configured connection profile; newly accessible databases need no configuration edit.")]
-    public Task<CallToolResult> ListDatabases(CancellationToken ct, [Description(ParameterText.Limit)] int? limit = null,
-        [Description(ParameterText.Offset)] int offset = 0, [Description(ParameterText.Target)] string? target = null) =>
+    public Task<CallToolResult> ListDatabases([Description(ParameterText.Limit)] int? limit = null,
+        [Description(ParameterText.Offset)] int offset = 0, [Description(ParameterText.Target)] string? target = null, CancellationToken ct = default) =>
         ToolReply.Run("", async () =>
         {
             ct.ThrowIfCancellationRequested();
@@ -45,26 +38,32 @@ public sealed class DatabaseTools
                 limit, offset, ct: ct, target: profile).ConfigureAwait(false);
             return new
             {
-                target = profile, databases,
+                target = profile,
+                databases,
                 access_mode = _options.Unrestricted ? "unrestricted" : "restricted",
                 database_lock = _registry.AllowedDatabaseNames is not null,
                 // Omitted (null) without a lock; advisory means PostgreSQL grants were not required to confine the login.
                 database_lock_mode = _registry.AllowedDatabaseNames is null ? null : _options.StrictDatabaseLock ? "strict" : "advisory",
-                limits = new { max_rows = _options.MaxRows, max_result_bytes = _options.MaxResultBytes,
-                    max_cell_chars = _options.MaxCellChars, query_timeout_seconds = _options.QueryTimeout }
+                limits = new
+                {
+                    max_rows = _options.MaxRows,
+                    max_result_bytes = _options.MaxResultBytes,
+                    max_cell_chars = _options.MaxCellChars,
+                    query_timeout_seconds = _options.QueryTimeout
+                }
             };
         });
 
     [McpServerTool(Name = "list_schemas", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Page schemas with USAGE privilege on an explicit target; system schemas excluded by default.")]
     public Task<CallToolResult> ListSchemas(
-        CancellationToken ct,
         [Description(ParameterText.Database)] string database,
         [Description("Optional literal, case-sensitive schema name prefix.")] string? prefix = null,
         [Description(ParameterText.Limit)] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
         [Description(ParameterText.IncludeSystem)] bool include_system = false,
-        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             return await _executor.QueryAsync(database, SchemasSql, new Dictionary<string, object?>
@@ -77,7 +76,6 @@ public sealed class DatabaseTools
     [McpServerTool(Name = "list_objects", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Page visible objects by schema/type/literal name filter. System objects excluded by default; identity_arguments distinguish overloaded routines.")]
     public Task<CallToolResult> ListObjects(
-        CancellationToken ct,
         [Description(ParameterText.Database)] string database,
         [Description(ParameterText.SchemaFilter)] string? schema = null,
         [Description("table, view, materialized_view, sequence, function, procedure, or extension; omitted means all.")] string? type = null,
@@ -85,7 +83,8 @@ public sealed class DatabaseTools
         [Description(ParameterText.Limit)] int? limit = null,
         [Description(ParameterText.Offset)] int offset = 0,
         [Description(ParameterText.IncludeSystem)] bool include_system = false,
-        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             string? objectType = NormalizeType(type);
@@ -101,7 +100,6 @@ public sealed class DatabaseTools
     [McpServerTool(Name = "get_object_details", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description("Inspect one object section: columns, constraints, indexes, triggers, definition, parameters. Resolve ambiguity with type/identity_arguments. Table definitions are structural fragments. Clipping is explicit.")]
     public Task<CallToolResult> GetObjectDetails(
-        CancellationToken ct,
         [Description(ParameterText.Database)] string database,
         [Description("Exact, case-sensitive schema name.")] string schema,
         [Description("Exact, case-sensitive object name.")] string name,
@@ -111,7 +109,8 @@ public sealed class DatabaseTools
         [Description("Exact pg_get_function_identity_arguments text from list_objects, including argument names. Empty string selects a zero-argument routine.")] string? identity_arguments = null,
         [Description("Optional object type (as in list_objects), useful when a relation and routine share a name.")] string? type = null,
         [Description(ParameterText.IncludeSystem)] bool include_system = false,
-        [Description(ParameterText.Target)] string? target = null) => ToolReply.Run(database, async () =>
+        [Description(ParameterText.Target)] string? target = null,
+        CancellationToken ct = default) => ToolReply.Run(database, async () =>
         {
             ValidatePage(limit, offset);
             if (string.IsNullOrEmpty(schema) || string.IsNullOrEmpty(name))
@@ -140,7 +139,7 @@ public sealed class DatabaseTools
                 long objectId = Convert.ToInt64(row[0], CultureInfo.InvariantCulture);
                 string resolvedType = (string)row[1]!;
                 string sql = SelectDetailsSql(resolvedType, selectedSection);
-                QueryPage page = await session.QueryAsync(sql, new Dictionary<string, object?> { ["object_id"] = objectId }, limit, offset, token).ConfigureAwait(false);
+                QueryPage page = await session.QueryAsync(sql, new Dictionary<string, object?> { ["object_id"] = objectId }, limit, offset, ct: token).ConfigureAwait(false);
                 return new { database, schema, name, type = resolvedType, identity_arguments, section = selectedSection, page };
             }, ct: ct, target: target).ConfigureAwait(false);
         });
@@ -149,7 +148,7 @@ public sealed class DatabaseTools
     {
         if (limit < 1 || limit > _options.MaxRows)
             throw new ToolException("invalid_limit", $"limit must be between 1 and {_options.MaxRows}.");
-        if (offset < 0 || offset > 1000000)
+        if (offset is < 0 or > 1000000)
             throw new ToolException("invalid_offset", "offset must be 0..1000000.");
     }
 

@@ -69,7 +69,7 @@ internal static class Program
         catch (Exception ex)
         {
             // Unexpected parser/provider/process exceptions can embed inputs, including credentials.
-            Console.Error.WriteLine(ex is VerificationException ? ex.Message : $"Verification failed ({ex.GetType().Name}); sensitive exception details suppressed.");
+            await Console.Error.WriteLineAsync(ex is VerificationException ? ex.Message : $"Verification failed ({ex.GetType().Name}); sensitive exception details suppressed.");
             return 1;
         }
     }
@@ -97,7 +97,7 @@ internal static class Check
     public static JsonArray Array(this JsonNode? node) => node!.AsArray();
     public static IEnumerable<Dictionary<string, JsonNode?>> Rows(JsonNode page)
     {
-        string[] names = page["columns"].Array().Select(c => c!["name"].Text()).ToArray();
+        string[] names = [.. page["columns"].Array().Select(c => c!["name"].Text())];
         return page["rows"].Array().Select(row => names.Zip(row.Array()).ToDictionary(pair => pair.First, pair => pair.Second));
     }
 
@@ -161,12 +161,14 @@ internal static class Processes
     }
 }
 
-internal static class Unix
+internal static partial class Unix
 {
-    [DllImport("libc", SetLastError = true)]
-    private static extern int kill(int pid, int signal);
-    [DllImport("libc")]
-    private static extern uint geteuid();
+    [LibraryImport("libc", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial int kill(int pid, int signal);
+    [LibraryImport("libc")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static partial uint geteuid();
     public static bool IsRoot => !OperatingSystem.IsWindows() && geteuid() == 0;
     public static void Terminate(Process process) => Check.That(kill(process.Id, 15) == 0, "Could not deliver SIGTERM to native MCP process.");
 }

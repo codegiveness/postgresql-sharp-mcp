@@ -52,7 +52,8 @@ public sealed partial class SarifGateTests : IDisposable
             {
                 ["driver"] = new JsonObject
                 {
-                    ["name"] = "SyntheticScanner", ["semanticVersion"] = version,
+                    ["name"] = "SyntheticScanner",
+                    ["semanticVersion"] = version,
                     ["rules"] = new JsonArray((rules ?? [new JsonObject { ["id"] = "R1" }, new JsonObject { ["id"] = "R2" }]).Select(rule => rule.DeepClone()).ToArray())
                 }
             },
@@ -74,7 +75,7 @@ public sealed partial class SarifGateTests : IDisposable
     {
         Write(Baseline, "scan.sarif", baseline);
         Write(Candidate, "scan.sarif", candidate);
-        var output = new StringWriter();
+        using var output = new StringWriter();
         SarifGate.Run(Baseline, Candidate, output);
         return output.ToString();
     }
@@ -84,7 +85,7 @@ public sealed partial class SarifGateTests : IDisposable
     {
         Write(Baseline, "scan.sarif", baseline);
         Write(Candidate, "scan.sarif", candidate);
-        var output = new StringWriter();
+        using var output = new StringWriter();
         try { SarifGate.Run(Baseline, Candidate, output); }
         catch (VerificationException) { }
         return output.ToString();
@@ -94,7 +95,7 @@ public sealed partial class SarifGateTests : IDisposable
     {
         Write(Baseline, "scan.sarif", baseline);
         Write(Candidate, "scan.sarif", candidate);
-        var output = new StringWriter();
+        using var output = new StringWriter();
         VerificationException ex = Assert.Throws<VerificationException>(() => SarifGate.Run(Baseline, Candidate, output));
         return (ex.Message, output.ToString());
     }

@@ -10,7 +10,7 @@ using System.Xml.Linq;
 /// The application version lives in PostgreSqlMcp.csproj &lt;Version&gt;. npm/package.json, its platform optionalDependencies and
 /// server.json repeat it, and every release tag is v&lt;Version&gt;. This release line stays on 0.x.
 /// </summary>
-internal static class ProductVersion
+internal static partial class ProductVersion
 {
     public static readonly string ProjectFile = Path.Combine("src", "PostgreSqlMcp", "PostgreSqlMcp.csproj");
     public static readonly string NpmManifest = Path.Combine("npm", "package.json");
@@ -19,7 +19,10 @@ internal static class ProductVersion
     // The tag grammar the release workflow has always accepted: <major>.<minor>.<patch> with an optional prerelease; no build metadata.
     private const string TagPattern = @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z";
 
-    public static bool IsReleaseTag(string tag) => Regex.IsMatch(tag, TagPattern, RegexOptions.CultureInvariant);
+    public static bool IsReleaseTag(string tag) => ReleaseTag().IsMatch(tag);
+
+    [GeneratedRegex(TagPattern, RegexOptions.CultureInvariant)]
+    private static partial Regex ReleaseTag();
 
     public static string Version(XDocument project) => project.Descendants("Version").Single().Value;
 
@@ -42,8 +45,8 @@ internal static class ProductVersion
         using (var npm = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, NpmManifest))))
         {
             Expect(problems, NpmManifest + " version", Text(npm.RootElement, "version"), version);
-            if (npm.RootElement.TryGetProperty("optionalDependencies", out var dependencies) && dependencies.ValueKind == JsonValueKind.Object)
-                foreach (var dependency in dependencies.EnumerateObject())
+            if (npm.RootElement.TryGetProperty("optionalDependencies", out JsonElement dependencies) && dependencies.ValueKind == JsonValueKind.Object)
+                foreach (JsonProperty dependency in dependencies.EnumerateObject())
                     Expect(problems, $"{NpmManifest} optionalDependencies {dependency.Name}", dependency.Value.ValueKind == JsonValueKind.String ? dependency.Value.GetString() : null, version);
             else
                 problems.Add($"{NpmManifest} has no optionalDependencies object listing the platform packages.");
@@ -57,10 +60,10 @@ internal static class ProductVersion
         }
         using var registry = JsonDocument.Parse(File.ReadAllText(server));
         Expect(problems, ServerManifest + " version", Text(registry.RootElement, "version"), version);
-        if (registry.RootElement.TryGetProperty("packages", out var packages) && packages.ValueKind == JsonValueKind.Array && packages.GetArrayLength() > 0)
+        if (registry.RootElement.TryGetProperty("packages", out JsonElement packages) && packages.ValueKind == JsonValueKind.Array && packages.GetArrayLength() > 0)
         {
             int index = 0;
-            foreach (var package in packages.EnumerateArray())
+            foreach (JsonElement package in packages.EnumerateArray())
             {
                 string label = $"{ServerManifest} packages[{index.ToString(CultureInfo.InvariantCulture)}]" +
                     (package.ValueKind == JsonValueKind.Object && Text(package, "identifier") is { } identifier ? $" ({identifier})" : "") + " version";
@@ -74,7 +77,7 @@ internal static class ProductVersion
     }
 
     private static string? Text(JsonElement element, string property) =>
-        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        element.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     private static void Expect(List<string> problems, string source, string? actual, string version)
     {

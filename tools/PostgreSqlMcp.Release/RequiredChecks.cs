@@ -20,17 +20,17 @@ internal sealed record RequiredCheckPolicy(string App, IReadOnlyList<string> Com
     public static RequiredCheckPolicy Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
+        JsonElement root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("The required-checks policy must be a JSON object.");
-        foreach (var property in root.EnumerateObject())
+        foreach (JsonProperty property in root.EnumerateObject())
             if (property.Name is not ("app" or "commit" or "pullRequest"))
                 throw new InvalidOperationException($"The required-checks policy has an unknown property '{property.Name}'.");
-        string app = root.TryGetProperty("app", out var slug) && slug.ValueKind == JsonValueKind.String ? slug.GetString()! : "";
+        string app = root.TryGetProperty("app", out JsonElement slug) && slug.ValueKind == JsonValueKind.String ? slug.GetString()! : "";
         if (app.Length == 0) throw new InvalidOperationException("The required-checks policy must name the app that reports the checks.");
-        var commit = Names(root, "commit");
-        var pullRequest = Names(root, "pullRequest");
+        List<string> commit = Names(root, "commit");
+        List<string> pullRequest = Names(root, "pullRequest");
         if (commit.Count == 0) throw new InvalidOperationException("The required-checks policy must require at least one commit check.");
-        var duplicate = commit.Concat(pullRequest).GroupBy(name => name, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        IGrouping<string, string>? duplicate = commit.Concat(pullRequest).GroupBy(name => name, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null) throw new InvalidOperationException($"The required-checks policy lists '{duplicate.Key}' more than once.");
         return new RequiredCheckPolicy(app, commit, pullRequest);
     }
@@ -38,9 +38,9 @@ internal sealed record RequiredCheckPolicy(string App, IReadOnlyList<string> Com
     private static List<string> Names(JsonElement root, string property)
     {
         var names = new List<string>();
-        if (!root.TryGetProperty(property, out var array)) return names;
+        if (!root.TryGetProperty(property, out JsonElement array)) return names;
         if (array.ValueKind != JsonValueKind.Array) throw new InvalidOperationException($"The required-checks policy property '{property}' must be an array of names.");
-        foreach (var item in array.EnumerateArray())
+        foreach (JsonElement item in array.EnumerateArray())
         {
             string name = item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
             if (string.IsNullOrWhiteSpace(name) || name != name.Trim())
@@ -51,7 +51,7 @@ internal sealed record RequiredCheckPolicy(string App, IReadOnlyList<string> Com
     }
 }
 
-internal static class RequiredChecks
+internal static partial class RequiredChecks
 {
     public static readonly string PolicyFile = Path.Combine(".github", "required-checks.json");
 
@@ -69,7 +69,7 @@ internal static class RequiredChecks
         var failed = new List<string>();
         foreach (string name in required)
         {
-            if (!newest.TryGetValue(name, out var run)) pending.Add($"{name} (not reported by {app})");
+            if (!newest.TryGetValue(name, out CheckRun? run)) pending.Add($"{name} (not reported by {app})");
             else if (run.Status != "completed") pending.Add($"{name} ({run.Status})");
             else if (run.Conclusion is not ("success" or "skipped" or "neutral")) failed.Add($"{name} ({run.Conclusion ?? "no conclusion"})");
         }
@@ -87,7 +87,7 @@ internal static class RequiredChecks
         var clock = Stopwatch.StartNew();
         while (true)
         {
-            var (pending, failed) = Evaluate(app, required, await fetch());
+            (IReadOnlyList<string>? pending, IReadOnlyList<string>? failed) = Evaluate(app, required, await fetch());
             if (failed.Count > 0)
                 throw new InvalidOperationException($"Required checks failed on {description}: {string.Join(", ", failed)}.");
             if (pending.Count == 0)
@@ -124,18 +124,18 @@ internal static class RequiredChecks
                 default: throw new InvalidOperationException("Usage: required-checks --sha <commit> [--policy-file path] [--wait-minutes 0-120]");
             }
         }
-        if (sha is null || !Regex.IsMatch(sha, "\\A[0-9a-f]{40}\\z", RegexOptions.CultureInvariant))
+        if (sha is null || !CommitHash().IsMatch(sha))
             throw new InvalidOperationException("--sha must be a full lowercase 40-character commit hash.");
         string repository = Environment.GetEnvironmentVariable("GITHUB_REPOSITORY") ?? "";
-        if (!Regex.IsMatch(repository, "\\A[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\\z", RegexOptions.CultureInvariant))
+        if (!RepositoryName().IsMatch(repository))
             throw new InvalidOperationException("GITHUB_REPOSITORY must be <owner>/<repo>.");
         string token = Environment.GetEnvironmentVariable("GH_TOKEN") ?? "";
         if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("GH_TOKEN is required to read check runs.");
 
         var policy = RequiredCheckPolicy.Parse(await File.ReadAllTextAsync(policyFile ?? Path.Combine(root, PolicyFile)));
-        using var http = GitHubChecks.CreateClient(token);
+        using HttpClient http = GitHubChecks.CreateClient(token);
         var github = new GitHubChecks(http, repository);
-        TimeSpan wait = TimeSpan.FromMinutes(waitMinutes);
+        var wait = TimeSpan.FromMinutes(waitMinutes);
         await RequireAsync($"commit {sha}", policy.App, policy.Commit, () => github.CheckRunsAsync(sha), wait, PollInterval);
         if (policy.PullRequest.Count > 0)
         {
@@ -147,6 +147,12 @@ internal static class RequiredChecks
             await RequireAsync($"the merged pull request head {head}", policy.App, policy.PullRequest, () => github.CheckRunsAsync(head), wait, PollInterval);
         }
     }
+
+    [GeneratedRegex("\\A[0-9a-f]{40}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex CommitHash();
+
+    [GeneratedRegex("\\A[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex RepositoryName();
 }
 
 /// <summary>The two GitHub REST reads the gate needs; any failed request fails the gate rather than being treated as "no checks".</summary>
@@ -170,13 +176,13 @@ internal sealed class GitHubChecks(HttpClient http, string repository)
         var runs = new List<CheckRun>();
         for (int page = 1; page <= MaxPages; page++)
         {
-            using var document = await GetAsync($"repos/{repository}/commits/{sha}/check-runs?per_page={PageSize}&page={page.ToString(CultureInfo.InvariantCulture)}");
-            var root = document.RootElement;
-            var batch = root.GetProperty("check_runs");
-            foreach (var run in batch.EnumerateArray())
+            using JsonDocument document = await GetAsync($"repos/{repository}/commits/{sha}/check-runs?per_page={PageSize}&page={page.ToString(CultureInfo.InvariantCulture)}");
+            JsonElement root = document.RootElement;
+            JsonElement batch = root.GetProperty("check_runs");
+            foreach (JsonElement run in batch.EnumerateArray())
                 runs.Add(new CheckRun(run.GetProperty("id").GetInt64(), run.GetProperty("name").GetString() ?? "", run.GetProperty("status").GetString() ?? "",
                     run.GetProperty("conclusion").GetString(),
-                    run.TryGetProperty("app", out var app) && app.ValueKind == JsonValueKind.Object ? app.GetProperty("slug").GetString() : null));
+                    run.TryGetProperty("app", out JsonElement app) && app.ValueKind == JsonValueKind.Object ? app.GetProperty("slug").GetString() : null));
             if (runs.Count >= root.GetProperty("total_count").GetInt32() || batch.GetArrayLength() == 0) return runs;
         }
         throw new InvalidOperationException($"Commit {sha} reports more than {MaxPages * PageSize} check runs; refusing to judge a partial list.");
@@ -185,12 +191,11 @@ internal sealed class GitHubChecks(HttpClient http, string repository)
     /// <summary>The head commit of the one merged pull request into main whose merge commit is <paramref name="sha"/>.</summary>
     public async Task<string> MergedPullRequestHeadAsync(string sha)
     {
-        using var document = await GetAsync($"repos/{repository}/commits/{sha}/pulls?per_page={PageSize}");
-        var merged = document.RootElement.EnumerateArray()
+        using JsonDocument document = await GetAsync($"repos/{repository}/commits/{sha}/pulls?per_page={PageSize}");
+        JsonElement[] merged = [.. document.RootElement.EnumerateArray()
             .Where(pull => pull.GetProperty("merged_at").ValueKind == JsonValueKind.String &&
                            pull.GetProperty("merge_commit_sha").GetString() == sha &&
-                           pull.GetProperty("base").GetProperty("ref").GetString() == "main")
-            .ToArray();
+                           pull.GetProperty("base").GetProperty("ref").GetString() == "main")];
         if (merged.Length != 1)
             throw new InvalidOperationException($"Commit {sha} must be the merge commit of exactly one pull request into main, found {merged.Length}; pull-request checks cannot be judged.");
         return merged[0].GetProperty("head").GetProperty("sha").GetString() ?? throw new InvalidOperationException("The merged pull request has no head commit.");
@@ -198,13 +203,13 @@ internal sealed class GitHubChecks(HttpClient http, string repository)
 
     public async Task<string> TreeAsync(string commit)
     {
-        using var document = await GetAsync($"repos/{repository}/git/commits/{commit}");
+        using JsonDocument document = await GetAsync($"repos/{repository}/git/commits/{commit}");
         return document.RootElement.GetProperty("tree").GetProperty("sha").GetString() ?? throw new InvalidOperationException($"Commit {commit} has no tree.");
     }
 
     private async Task<JsonDocument> GetAsync(string path)
     {
-        using var response = await http.GetAsync(path);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(path, UriKind.RelativeOrAbsolute));
         // The body is not echoed: error responses can repeat request details.
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"GitHub API request failed with HTTP {(int)response.StatusCode} for {path.Split('?')[0]}.");
