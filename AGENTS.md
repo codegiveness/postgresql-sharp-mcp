@@ -1,44 +1,61 @@
-# Development guidance for coding agents
+# Guide for coding agents
 
-## Scope and authority
+This is a short, tool-neutral orientation for any coding agent working on this repository. The binding rules are in [CLAUDE.md](CLAUDE.md); read it before you change anything. The git and pull-request process is in [docs/git-workflow.md](docs/git-workflow.md).
 
-- Work only on the requested change. Preserve unrelated work and inspect existing patterns before editing.
-- Development builds, disposable fixtures and artifact installation do not authorize remote activity. Pushing commits/tags, opening issues/PRs, creating releases, publishing packages or changing repository settings require explicit user authorization. Workflow files do not grant that authority.
-- Never include credentials, real connection strings, private application identifiers, customer SQL or database results in code, logs, documentation, issue drafts or evidence. Use placeholder configuration and disposable synthetic data.
+## What this is
 
-## Git workflow
+`postgresql-sharp-mcp` is a PostgreSQL [Model Context Protocol](https://modelcontextprotocol.io/) server written in C#/.NET. It lets AI assistants discover databases, inspect schemas, run SQL (read-only by default), explain query plans and check index and database health. It is distributed as an npm package, a .NET tool, a standalone binary and a container image. [README.md](README.md) describes installation and use; [docs/architecture.md](docs/architecture.md) describes the design.
 
-Follow [docs/git-workflow.md](docs/git-workflow.md) for branches, worktrees, commits, pull requests, merging, releases and branch cleanup. Its [What agents may do](docs/git-workflow.md#what-agents-may-do) table is binding. In short:
+## Layout
 
-- Do each task in its own worktree on a new `<type>/<description>` branch from `origin/main`. Never switch the branch of, or edit files in, a working tree you did not create for the task.
-- On the VMware shared folder, pass `git -c safe.directory=<path>` per command; do not change global git config.
-- A task's request may authorize pushing its own branch, opening a draft PR or opening an issue. Merging, deleting any branch, creating/moving/deleting tags, dispatching releases and changing settings, labels, rulesets or branch protection each need a separate explicit maintainer OK.
-- Never push or force-push `main`, and never force-push a branch you do not own; use `--force-with-lease` on your own task branch only.
+| Path | Contents |
+| --- | --- |
+| `src/PostgreSqlMcp.Core` | Configuration, SQL guard and database behavior |
+| `src/PostgreSqlMcp.Tools` | The MCP tools |
+| `src/PostgreSqlMcp` | App: stdio host and command line |
+| `tools/PostgreSqlMcp.Build` | Builds npm and NuGet package artifacts |
+| `tools/PostgreSqlMcp.Verify` | Verifier: integration, package, SARIF, release and coverage checks |
+| `tools/PostgreSqlMcp.Release` | Release and publication tooling |
+| `tools/PostgreSqlMcp.Fuzz` | Coverage-guided fuzz campaign for the SQL lexer |
+| `tools/PostgreSqlMcp.NpmInstall` | Installer that ships inside the npm platform packages |
+| `tools/Shared` | Source shared by the `tools/` projects (process runner, repository root) |
+| `npm/` | Source `package.json` of the npm main package (built by the builder; do not install it directly) |
+| `docs/` | Architecture, assurance, security posture, roadmap and the git workflow |
 
-## Meaningful and traceable changes
+## Build, test and verify
 
-- Establish the user-visible problem and acceptance criteria before implementation. Connect changes to those criteria, not activity counts.
-- For a bug, capture a reproducible failure and demonstrate the same scenario after the fix. Prefer regression coverage for plausible consumer-visible errors rather than source-text, wiring or mock-echo assertions.
-- Keep changes focused and reviewable. Useful issues and PRs record the problem, relevant alternatives, behavior, compatibility/security impact and observed evidence. Existing issue links are helpful, not mandatory for small corrections.
-- Do not manufacture commits, split trivial changes into extra PRs, invent reviews, approve your own PR, trade stars/answers or create empty discussions for profile recognition. Attribute work truthfully.
+Prerequisites, versions and the full verification guide are in [CONTRIBUTING.md](CONTRIBUTING.md). The common commands, run from the repository root:
 
-## Implementation and evidence
+```bash
+dotnet build postgresql-sharp-mcp.slnx -c Release
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- integration
+dotnet format style postgresql-sharp-mcp.slnx --verify-no-changes --no-restore --severity warn
+```
 
-- Preserve the `Core <- Tools <- App` dependency direction. Read affected callers and update the full contract when behavior changes.
-- Keep all maintained implementation and automation in C#/.NET. npm JSON and workflow/container configuration may invoke external package/runner tools; do not reintroduce JavaScript/Python/Bash launchers or scripts. The npm CLI's Node prerequisite is installation-only, not the server runtime.
-- Restore committed portable/per-RID NuGet locks in locked mode. Regenerate changed graphs deliberately and review actual versions/hashes; never disable locking to get a release green.
-- Keep MCP stdout reserved for JSON-RPC and diagnostics on stderr. Respect PostgreSQL permissions and read-only transaction boundaries; a SQL lexer or static scan does not prove isolation.
-- Use the verification entrypoints in [CONTRIBUTING.md](CONTRIBUTING.md). Exercise changed runtime behavior, not just compilation. For packaging changes, install built artifacts and run their actual entrypoints. Documentation-only changes require link and command review.
-- Test only databases you own or are explicitly authorized to use. The .NET verifier's `integration` command creates a disposable Docker fixture; do not substitute an operator's database.
-- State which commands/scenarios ran, observed results and verification gaps. Never infer hosted workflow success, registry publication, profile awards or repository protection from configuration alone.
-- Update affected help, docs, release notes, dependency notices and callers. Remove throwaway scaffolding; do not commit generated artifacts or secrets.
+`integration` builds the application and runs real MCP calls against a disposable PostgreSQL Docker fixture, so it needs Docker. Other checks, each described under [Verify behavior](CONTRIBUTING.md#verify-behavior) and [Build and install package artifacts](CONTRIBUTING.md#build-and-install-package-artifacts):
 
-## Automation and review
+```bash
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- sarif-regressions
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- release-regressions
+dotnet run --project tools/PostgreSqlMcp.Build -c Release -- package --output artifacts/packages
+dotnet run --project tools/PostgreSqlMcp.Verify -c Release -- packages --artifacts artifacts/packages
+```
 
-- Pin Actions to verified full commit SHAs with version comments. Use least-privilege job permissions and disable persisted checkout credentials. Publishing jobs may need narrowly scoped write permissions; validation jobs should remain read-only. The one exception is CodeQL's `pull-request-upload` job: for same-repository PRs only, it may hold `security-events: write` to upload candidate SARIF that has already been produced. It must not build or execute PR code.
-- Never execute untrusted pull-request code through privileged `pull_request_target` or `workflow_run` paths.
-- Review dependency updates and verify relevant behavior. Dependabot does not authorize automatic merging or publication.
-- Preserve the raw-SARIF fail-closed gate: baseline/candidate revisions must use the same scanner/query setup, and scan or extraction errors are not a clean result. Execute the comparator from trusted base source; review workflow changes separately.
-- Secret-scanner exceptions must combine exact synthetic values and paths; historical exceptions also name exact commits. Never blanket-ignore test directories, baseline real leaks, publish secret-bearing reports, or use inline suppression to hide a finding.
-- Container scans must examine the built image's OS and application packages. Do not replace them with Dockerfile-only scans, skip unfixed HIGH/CRITICAL findings, or silently disable a failed scanner.
-- Release artifacts are reviewable outputs, not authority to publish. Confirm each authorized publication job and registry endpoint before claiming availability.
+Documentation-only changes need link and command review instead of database runs. Say which commands you ran and what they showed.
+
+## Key constraints
+
+- Dependency direction is `Core <- Tools <- App`.
+- MCP stdout carries JSON-RPC only; diagnostics go to stderr.
+- All maintained implementation and automation is C#/.NET: no new JavaScript, Python or Bash scripts.
+- NuGet lock files are restored in locked mode; regenerate them deliberately and never disable locking.
+- Never commit credentials, real connection strings, customer SQL or database output. Test only against disposable databases you own.
+- Remote actions (push, issues, pull requests, tags, releases, publication, settings changes) need explicit authorization; see [What agents may do](docs/git-workflow.md#what-agents-may-do).
+- Coding style follows [Coding standards](CONTRIBUTING.md#coding-standards): every `.cs` file starts with the SPDX header, nullable references and warnings-as-errors are on.
+
+## Where to read more
+
+- Rules that bind agents: [CLAUDE.md](CLAUDE.md)
+- Branches, worktrees, commits, pull requests, releases: [docs/git-workflow.md](docs/git-workflow.md)
+- Build, verify, package and release details: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Vulnerability reports go through [SECURITY.md](SECURITY.md), never a public issue.
