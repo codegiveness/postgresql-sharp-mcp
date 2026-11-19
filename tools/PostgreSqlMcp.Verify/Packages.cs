@@ -88,9 +88,11 @@ internal static class Packages
         // SDK 10/11 resolve a shell-shim apphost for every install, and for a self-contained tool (framework folder "any") on a non-x64
         // Mac they download microsoft.netcore.app.host.osx-x64 although an executable-runner tool only gets a symlink. Consumers get that
         // package from nuget.org; this offline install offers the copy packing already restored into the global packages folder.
-        ProcessResult locals = await Processes.RunAsync(new(dotnet, "nuget", "locals", "global-packages", "--list"), environment);
-        string globalPackages = locals.Output.Trim()["global-packages:".Length..].Trim();
-        Check.That(Directory.Exists(globalPackages), "dotnet nuget locals did not report an existing global packages folder.");
+        // Ask with the caller's environment: `environment` points NUGET_PACKAGES at an empty isolated cache for the consumer install.
+        ProcessResult locals = await Processes.RunAsync(new(dotnet, "nuget", "locals", "global-packages", "--list"), Processes.CleanEnvironment());
+        string globalPackages = locals.Output.Split('\n').Select(line => line.Trim())
+            .Where(line => line.StartsWith("global-packages:", StringComparison.Ordinal)).Select(line => line["global-packages:".Length..].Trim()).SingleOrDefault() ?? "";
+        Check.That(Directory.Exists(globalPackages), $"dotnet nuget locals did not report an existing global packages folder: {locals.Output.Trim()}");
         // The install runs from local feeds with POSTGRES_* removed, so its diagnostics carry no credentials and are reported on failure.
         ProcessResult toolInstall = await Processes.RunAsync(new(dotnet, "tool", "install", packageId, "--version", version,
             "--tool-path", toolHome, "--configfile", config, "--add-source", globalPackages, "--no-cache"), environment, expected: null, timeout: 120);
